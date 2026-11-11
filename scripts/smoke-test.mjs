@@ -45,6 +45,8 @@ export const ENDPOINTS_TO_CHECK = [
   '/src/components/records/ActivityRecordModal.tsx',
   '/src/components/import/CsvImportModal.tsx',
   '/src/components/settings/SettingsView.tsx',
+  '/src/lib/uuidUtils.ts',
+  '/src/lib/realGlucoseLoader.ts',
 ];
 
 const ERROR_PATTERNS = [

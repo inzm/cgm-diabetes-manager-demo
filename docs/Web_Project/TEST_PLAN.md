@@ -44,7 +44,7 @@
 | **臨床分析計算**<br>([`src/lib/analysisCalculators.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/analysisCalculators.ts)) | ・食前血糖値（直前15分〜直後5分以内の最寄り値）の正確な抽出<br>・食後60〜180分ピーク値の特定と上昇幅（Δ）計算<br>・時間帯4区分（朝 06-11時、昼 12-17時、夕・夜 18-23時、夜間・未明 00-05時）のタイムゾーン非依存判定<br>・曜日別傾向・糖質インスリン推移における食事インスリン＋単体インスリン合算 |
 | **異常値抽出ステートマシン**<br>([`src/lib/anomalyExtractor.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/anomalyExtractor.ts)) | ・28分継続回復ルールおよび45分センサー欠損ギャップによるエピソード確定<br>・カスタム閾値（例: 低血糖 `< 80`, 高血糖 `> 160`）変更時の再判定と件数変化 |
 | **日時・タイムゾーン安全処理**<br>([`src/lib/dateUtils.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/dateUtils.ts)) | ・`buildWallClockIso` / `extractTimeStr` による -9時間ズレ防止<br>・`shiftLocalDateStr` / `getDayOfWeekFromDateStr` の境界日付検証 |
-| **画面間データ整合性統合テスト**<br>([`src/lib/__tests__/dataIntegrity.test.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/__tests__/dataIntegrity.test.ts)) | ・カレンダーセル、選択日サマリー、日次詳細、曜日別分析、糖質インスリン推移、時間帯別異常値分析のすべての数値（糖質・インスリン・異常値件数）が100%一致することの検証<br>・`user_settings` の食事区分別デフォルトインスリン設定（`enable_default_insulin` トグル ON/OFF および朝・昼・夕・間食の単位解決）の整合性検証 |
+| **画面間データ整合性統合テスト**<br>([`src/lib/__tests__/dataIntegrity.test.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/__tests__/dataIntegrity.test.ts)) | ・カレンダーセル、選択日サマリー、日次詳細、曜日別分析、糖質インスリン推移、時間帯別異常値分析のすべての数値（糖質・インスリン・異常値件数）が100%一致することの検証<br>・`user_settings` の食事区分別デフォルトインスリン設定（`enable_default_insulin` トグル ON/OFF および朝・昼・夕・間食の単位解決）の整合性検証<br>・決定論的UUID生成（[`src/lib/uuidUtils.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/uuidUtils.ts)）、論理削除カテゴリの再登録復活（`addOrReviveCategory`）、本番モード（`personal`）でのデモデータ自動投入ゼロ保証、バックアップ復元時のUUID正規化＆全4種メモリキャッシュ破棄の検証 |
 | **糖質自動推定エンジン**<br>([`src/lib/gemini.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/gemini.ts)) | ・日本食品標準成分表内蔵辞書による主要食品・料理の糖質量推定<br>・`localStorage` に一切依存しない安全な動作 |
 
 ### 2.2 Layer 3: Runtime Smoke Test & Doc/Security Gate
@@ -53,11 +53,11 @@
 | 検証項目 | 手法・判定基準 |
 | :--- | :--- |
 | **DDD 仕様書・コード同期 & セキュリティ検査 (`scripts/verify-docs-sync.mjs`)** | ソースコード変更時に対応する `SPEC_*.md` が同時更新されていること、仕様書内の参照ファイルパスがすべて実在すること、`src/` 内に `localStorage` へのAPIキー保存や虚偽の「安全に保管」表示が存在しないこと |
-| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | 稼働中の `http://localhost:3000` に対して全コンポーネントのリクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
+| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | 稼働中の `http://localhost:3000` に対して全31エンドポイントのリクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
 
 ### 2.3 Layer 4: Browser E2E テスト計画 (Playwright)
 
-Node.js 上の仮想環境（Vitest）では検出できない **「実ブラウザ（Chromium / Mobile Viewport）での初期描画速度」「UI操作によるマスタ情報の登録・編集・削除と記録モーダル選択肢の連動」「画面上に表示される計算ロジック結果（糖質合算・インスリン合算・食前→食後ピーク $\Delta$・異常値件数再計算）の正確性」「異常系バリデーション・CSV/バックアップI/O・オフライン耐障害性」** を機械的に保証するため、Playwright による以下の **9大 E2E テストスイート（`E2E-1` 〜 `E2E-9`）およびテスト設計規約（Section 2.4）** を定義します。
+Node.js 上の仮想環境（Vitest）では検出できない **「実ブラウザ（Chromium / Mobile Viewport）での初期描画速度」「UI操作によるマスタ情報の登録・編集・削除と記録モーダル選択肢の連動」「画面上に表示される計算ロジック結果（糖質合算・インスリン合算・食前→食後ピーク $\Delta$・異常値件数再計算）の正確性」「異常系バリデーション・CSV/バックアップI/O・オフライン耐障害性」** を機械的に保証するため、Playwright による以下の **12大 E2E テストスイート（`E2E-1` 〜 `E2E-12`）およびテスト設計規約（Section 2.4）** を定義します。
 
 #### E2E-1: 初期表示パフォーマンス SLA & ポートフォリオ自動リセット検証
 - **目的**: ユーザー離脱を防ぐため、初回アクセス時およびリロード時にカレンダー画面が基準時間内に確実に描画されること、およびポートフォリオモードの非永続化仕様を検証する。
@@ -132,6 +132,15 @@ Node.js 上の仮想環境（Vitest）では検出できない **「実ブラウ
      - `offline: true` の状態のまま、①カレンダーの月送り、②日次詳細ドロワーの24Hグラフ描画、③新規食事記録の追加と**「✨ 糖質を自動推定」（`src/lib/gemini.ts` 内蔵日本食品標準成分辞書への自動フォールバック）**、④データ分析画面の期間切替が、ネットワークエラーでクラッシュすることなく 0.1秒以内に完結すること。
   3. **オンライン復帰検知**: `context.setOffline(false)` に戻すとオフラインバナーが自動的に消去されること。
 
+#### E2E-10: 現在の日付の月までの表示・上限月左スワイプ遷移・ドロワー下スワイプリロード抑止 & 全タブ・下部バースワイプ検証
+- **目的**: モバイル・デスクトップにおける月移動上限ガード、左右スワイプによる月移動・タブ遷移、および日次詳細ドロワーの下スワイプ閉じる操作（ブラウザのプル・トゥ・リフレッシュ誤発火抑止）を検証する。
+
+#### E2E-11: デモ環境案内モーダル（初回＆ページ再読み込み時の毎回表示＝初期化の目印・bfcache復帰・キーボード操作）検証
+- **目的**: デモモードにおける `DemoWelcomeModal.tsx` の初回・リロード・`pageshow`（bfcache復帰）時の表示とデータ初期化連動、およびフォーカストラップ・Escapeキー操作を検証する。
+
+#### E2E-12: 論理削除済み同名カテゴリの復活（UNIQUE衝突防止）・手動初期化後のデモデータ再ハイドレーション抑止 & 全ID正規UUID検証
+- **目的**: カテゴリ削除後に同名カテゴリを再追加した際の既存レコード復活（`is_deleted: false`）、設定画面での「記録データを初期化」実行後にカレンダー・分析画面へ遷移してもデモデータが勝手に再投入されないこと（`markPatientManuallyCleared`）、およびエクスポートされたバックアップJSON内の全テーブル主キー・外部キーが正規UUID形式（`src/lib/uuidUtils.ts`）であることを検証する。
+
 ---
 
 ### 2.4 E2E テスト実装・品質保証規約（Zero-Error Policy & Anti-Flakiness）
@@ -156,7 +165,7 @@ Playwright E2E テストを実装・運用する際は、テスト自体の信�
 | `npm test` | Vitestによる全Unitテスト・画面間データ整合性テストの実行 |
 | `npm run test:watch` | 開発時のファイル変更連動自動テスト実行 |
 | `npm run test:smoke` | 開発サーバー（`localhost:3000`）に対するランタイムスモークテストの実行 |
-| `npm run test:e2e` | Playwright による全ブラウザ E2E テストスイート（`E2E-1` 〜 `E2E-9`）の実行 |
+| `npm run test:e2e` | Playwright による全ブラウザ E2E テストスイート（`E2E-1` 〜 `E2E-12`）の実行 |
 | `npm run test:e2e:regression` | デプロイ前自動ゲート用の Playwright E2E リグレッションテスト（`@regression`）の実行 |
 | `npm run typecheck` | TypeScript型検査（`tsc --noEmit`） |
 | `npm run build` | 本番Rollupバンドル整合性検査 |
@@ -167,12 +176,12 @@ Playwright E2E テストを実装・運用する際は、テスト自体の信�
 
 ## 4. DoD（Definition of Done: 完了条件）& 品質ゲート規約
 
-今後、すべての機能追加・改修・PRマージおよびデプロイにおいて、以下の **6重品質ゲート** をすべてクリアすることを必須とします。
+今後、すべての機能追加・改修・PRマージおよびデプロイにおいて、以下の **7重品質ゲート** をすべてクリアすることを必須とします。
 
 1. **仕様同期 & セキュリティ検査**: `npm run test:docs` がエラーゼロでパスすること（Git `pre-commit` フックでも強制）
 2. **型整合性**: `npm run typecheck` がエラーゼロであること
 3. **ロジック & 画面間データ整合性**: `npm test` で全Unit/統合テストがパスすること（Green）
-4. **静的ビルド**: `npm run build` が警告・エラーなく成功すること
+4. **静的ビルド**: `npm run build`（および `npm run build:personal` / `npm run build:portfolio`）が警告・エラーなく成功すること
 5. **ランタイム疎通**: `npm run test:smoke` で開発サーバー上にエラーオーバーレイが発生せず正常描画されること
 6. **期間局所スライス＆境界キャッシュ検証**: `setAnalysisBoundaryCache` および `buildAndCacheLocalizedPeriodSlice` による期間別キャッシュ再利用が単体テストで保証されること
-7. **デプロイ前ブラウザ E2E リグレッションゲート (`.github/workflows/deploy-pages.yml` & `e2e/app.spec.ts`)**: `npm run build:portfolio` 完了後、Cloudflare Pages へデプロイする前に `npm run test:e2e:regression`（`E2E-1` 〜 `E2E-9`）をヘッドレス Chromium で自動実行し、1件でも失敗またはコンソールエラーが発生した場合はデプロイを自動停止して本番環境のデグレを100%防止すること
+7. **デプロイ前ブラウザ E2E リグレッションゲート (`.github/workflows/deploy-pages.yml` & `e2e/app.spec.ts`)**: `npm run build:portfolio` 完了後、Cloudflare Pages へデプロイする前に `npm run test:e2e:regression`（`E2E-1` 〜 `E2E-12`）をヘッドレス Chromium で自動実行し、1件でも失敗またはコンソールエラーが発生した場合はデプロイを自動停止して本番環境のデグレを100%防止すること

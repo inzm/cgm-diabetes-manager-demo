@@ -1,5 +1,6 @@
 import { db } from './db';
 import { Category, EventMaster, FoodMaster } from '@/types/database';
+import { deterministicUuid, ensureUuid, isValidUuid } from './uuidUtils';
 
 const activeSeedPromises = new Map<string, Promise<void>>();
 const seededPatientsInSession = new Set<string>();
@@ -578,12 +579,13 @@ export const INITIAL_EVENTS: InitialEventDef[] = [
 /**
  * よく使う食品・活動・カテゴリの初期データを重複ゼロで投入・整合化する。
  * - 並行呼び出し時はシングルトンPromiseで排他制御を行う。
- * - 決定論的ID（`${patientId}_${key}`）を用いて冪等にupsertする。
- * - 過去にランダムUUIDで重複登録された同名カテゴリ・同名食品・同名活動が存在する場合は自動統合・削除する。
+ * - 決定論的UUID（`deterministicUuid(`${patientId}_${key}`)`）を用いて冪等にupsertする。
+ * - 過去にランダムUUIDまたは旧形式文字列IDで重複登録された同名カテゴリ・同名食品・同名活動が存在する場合は自動統合・削除する。
  */
 export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
+  const sampleStapleCatId = deterministicUuid(`${patientId}_cat_food_staple`);
   if (seededPatientsInSession.has(patientId)) {
-    const sampleCat = await db.categories.get(`${patientId}_cat_food_staple`);
+    const sampleCat = await db.categories.get(sampleStapleCatId);
     if (sampleCat) {
       return;
     }
@@ -607,13 +609,15 @@ export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
       const existingEvents = await db.event_master.where('user_id').equals(patientId).toArray();
       const existingEventById = new Map(existingEvents.map((e) => [e.id, e]));
 
-      // 1. 標準カテゴリを決定論的IDで作成（既存の削除・編集状態は維持しつつ、is_protectedのみ最新仕様へ同期）
+      // 1. 標準カテゴリを決定論的UUIDで作成（既存の削除・編集状態は維持しつつ、is_protectedのみ最新仕様へ同期）
       const canonicalCategories: Category[] = INITIAL_CATEGORIES.map((def) => {
-        const id = `${patientId}_${def.key}`;
-        const prev = existingCatById.get(id);
+        const legacyId = `${patientId}_${def.key}`;
+        const id = deterministicUuid(legacyId);
+        const prev = existingCatById.get(id) ?? existingCatById.get(legacyId);
         if (prev) {
           return {
             ...prev,
+            id,
             is_protected: def.is_protected,
             is_deleted: def.is_protected ? false : prev.is_deleted,
           };
@@ -641,32 +645,59 @@ export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
 
       const duplicateCatIdsToRemove: string[] = [];
       const catIdRemap = new Map<string, string>();
+      for (const def of INITIAL_CATEGORIES) {
+        const legacyId = `${patientId}_${def.key}`;
+        const id = deterministicUuid(legacyId);
+        catIdRemap.set(legacyId, id);
+      }
 
       for (const cat of allCategories) {
         const mapKey = `${cat.target_type}:${cat.category_name}`;
         const existingCanonical = canonicalCatMap.get(mapKey);
         if (!existingCanonical) {
-          canonicalCatMap.set(mapKey, cat);
+          if (!isValidUuid(cat.id)) {
+            const normalizedCatId = ensureUuid(cat.id);
+            const migratedCat: Category = { ...cat, id: normalizedCatId };
+            await db.categories.put(migratedCat);
+            duplicateCatIdsToRemove.push(cat.id);
+            catIdRemap.set(cat.id, normalizedCatId);
+            canonicalCatMap.set(mapKey, migratedCat);
+          } else {
+            canonicalCatMap.set(mapKey, cat);
+          }
         } else if (cat.id !== existingCanonical.id) {
           duplicateCatIdsToRemove.push(cat.id);
           catIdRemap.set(cat.id, existingCanonical.id);
         }
       }
 
-      // 3. 標準食品を決定論的IDで作成（未登録の初期食品のみ追加し、既存の編集・削除状態を保持）
+      // 3. 標準食品を決定論的UUIDで作成（未登録の初期食品のみ追加し、既存の編集・削除状態を保持）
       const canonicalFoodsToPut: FoodMaster[] = [];
       const canonicalFoodByName = new Map<string, FoodMaster>();
 
       for (const def of INITIAL_FOODS) {
-        const id = `${patientId}_${def.key}`;
-        const prev = existingFoodById.get(id);
+        const legacyId = `${patientId}_${def.key}`;
+        const id = deterministicUuid(legacyId);
+        const defaultCategoryId = deterministicUuid(`${patientId}_${def.categoryKey}`);
+        const prev = existingFoodById.get(id) ?? existingFoodById.get(legacyId);
         if (prev) {
-          canonicalFoodByName.set(prev.food_name, prev);
+          const normalizedCatId = prev.category_id
+            ? (catIdRemap.get(prev.category_id) ?? ensureUuid(prev.category_id, defaultCategoryId))
+            : defaultCategoryId;
+          const updatedPrev: FoodMaster = {
+            ...prev,
+            id,
+            category_id: normalizedCatId,
+          };
+          if (prev.id !== id || prev.category_id !== normalizedCatId) {
+            canonicalFoodsToPut.push(updatedPrev);
+          }
+          canonicalFoodByName.set(updatedPrev.food_name, updatedPrev);
         } else {
           const created: FoodMaster = {
             id,
             user_id: patientId,
-            category_id: `${patientId}_${def.categoryKey}`,
+            category_id: defaultCategoryId,
             food_name: def.food_name,
             base_amount: def.base_amount,
             unit: def.unit,
@@ -691,12 +722,21 @@ export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
       for (const food of allFoods) {
         const canonical = canonicalFoodByName.get(food.food_name);
         if (!canonical) {
-          canonicalFoodByName.set(food.food_name, food);
-          if (food.category_id && catIdRemap.has(food.category_id)) {
-            foodsToUpdateCategory.push({
-              ...food,
-              category_id: catIdRemap.get(food.category_id)!,
-            });
+          const normalizedId = ensureUuid(food.id);
+          const normalizedCatId = food.category_id
+            ? (catIdRemap.get(food.category_id) ?? ensureUuid(food.category_id))
+            : food.category_id;
+          const updatedFood: FoodMaster = {
+            ...food,
+            id: normalizedId,
+            category_id: normalizedCatId,
+          };
+          canonicalFoodByName.set(food.food_name, updatedFood);
+          if (normalizedId !== food.id || normalizedCatId !== food.category_id) {
+            foodsToUpdateCategory.push(updatedFood);
+            if (normalizedId !== food.id) {
+              duplicateFoodIdsToRemove.push(food.id);
+            }
           }
         } else if (food.id !== canonical.id) {
           duplicateFoodIdsToRemove.push(food.id);
@@ -710,20 +750,33 @@ export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
         await db.food_master.bulkDelete(duplicateFoodIdsToRemove);
       }
 
-      // 4. 標準活動を決定論的IDで作成（未登録の初期活動のみ追加し、既存の編集・削除状態を保持）
+      // 4. 標準活動を決定論的UUIDで作成（未登録の初期活動のみ追加し、既存の編集・削除状態を保持）
       const canonicalEventsToPut: EventMaster[] = [];
       const canonicalEventByName = new Map<string, EventMaster>();
 
       for (const def of INITIAL_EVENTS) {
-        const id = `${patientId}_${def.key}`;
-        const prev = existingEventById.get(id);
+        const legacyId = `${patientId}_${def.key}`;
+        const id = deterministicUuid(legacyId);
+        const defaultCategoryId = deterministicUuid(`${patientId}_${def.categoryKey}`);
+        const prev = existingEventById.get(id) ?? existingEventById.get(legacyId);
         if (prev) {
-          canonicalEventByName.set(prev.event_name, prev);
+          const normalizedCatId = prev.category_id
+            ? (catIdRemap.get(prev.category_id) ?? ensureUuid(prev.category_id, defaultCategoryId))
+            : defaultCategoryId;
+          const updatedPrev: EventMaster = {
+            ...prev,
+            id,
+            category_id: normalizedCatId,
+          };
+          if (prev.id !== id || prev.category_id !== normalizedCatId) {
+            canonicalEventsToPut.push(updatedPrev);
+          }
+          canonicalEventByName.set(updatedPrev.event_name, updatedPrev);
         } else {
           const created: EventMaster = {
             id,
             user_id: patientId,
-            category_id: `${patientId}_${def.categoryKey}`,
+            category_id: defaultCategoryId,
             event_name: def.event_name,
             default_duration: def.default_duration,
             memo: def.notes,
@@ -744,21 +797,31 @@ export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
 
       const duplicateEventMasterIdsToRemove: string[] = [];
       const eventsToUpdateCategory: EventMaster[] = [];
+      const stretchingId = deterministicUuid(`${patientId}_event_stretching`);
 
       for (const ev of allEventMasters) {
         // 旧名称「軽い運動」は「軽い運動・ストレッチ」に統合
-        if (ev.event_name === '軽い運動' && ev.id !== `${patientId}_event_stretching`) {
+        if (ev.event_name === '軽い運動' && ev.id !== stretchingId) {
           duplicateEventMasterIdsToRemove.push(ev.id);
           continue;
         }
         const canonical = canonicalEventByName.get(ev.event_name);
         if (!canonical) {
-          canonicalEventByName.set(ev.event_name, ev);
-          if (ev.category_id && catIdRemap.has(ev.category_id)) {
-            eventsToUpdateCategory.push({
-              ...ev,
-              category_id: catIdRemap.get(ev.category_id)!,
-            });
+          const normalizedId = ensureUuid(ev.id);
+          const normalizedCatId = ev.category_id
+            ? (catIdRemap.get(ev.category_id) ?? ensureUuid(ev.category_id))
+            : ev.category_id;
+          const updatedEv: EventMaster = {
+            ...ev,
+            id: normalizedId,
+            category_id: normalizedCatId,
+          };
+          canonicalEventByName.set(ev.event_name, updatedEv);
+          if (normalizedId !== ev.id || normalizedCatId !== ev.category_id) {
+            eventsToUpdateCategory.push(updatedEv);
+            if (normalizedId !== ev.id) {
+              duplicateEventMasterIdsToRemove.push(ev.id);
+            }
           }
         } else if (ev.id !== canonical.id) {
           duplicateEventMasterIdsToRemove.push(ev.id);

@@ -8,6 +8,8 @@ import {
 import { usePatient } from '@/contexts/PatientContext';
 import { db, requestPersistentStorage } from '@/lib/db';
 import {
+  invalidateAnalysisDatasetCache,
+  invalidateInMemoryRecentCache,
   isDemoCsvImportDisabled,
   isPortfolioMode,
   resetDemoDataToInitialState,
@@ -466,7 +468,14 @@ export const App: React.FC = () => {
 
           {activeTab === 'settings' && (
             <Suspense fallback={<ViewLoadingFallback />}>
-              <SettingsView onSettingsChanged={() => setRefreshKey((k) => k + 1)} />
+              <SettingsView
+                onSettingsChanged={() => {
+                  clearCalendarMonthlyCache();
+                  invalidateAnalysisDatasetCache();
+                  invalidateInMemoryRecentCache(currentPatientId);
+                  setRefreshKey((k) => k + 1);
+                }}
+              />
             </Suspense>
           )}
         </div>

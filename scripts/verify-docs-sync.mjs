@@ -154,6 +154,25 @@ export const SOURCE_TO_SPEC_RULES = [
     description: 'IndexedDB (Dexie.js) データベース定義',
   },
   {
+    prefix: 'src/lib/uuidUtils.ts',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_FOOD_MASTER.md',
+      'docs/Web_Project/SPEC_CSV_IMPORT.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+    ],
+    description: '決定論的UUID生成・UUID形式検証ユーティリティ',
+  },
+  {
+    prefix: 'src/lib/realGlucoseLoader.ts',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_CALENDAR.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+    ],
+    description: 'デモデータ遅延ハイドレーション・本番モードデータ保護ローダー',
+  },
+  {
     prefix: 'src/types/database.ts',
     specs: ['docs/Web_Project/ARCHITECTURE.md'],
     description: 'データベース・エンティティ型定義',

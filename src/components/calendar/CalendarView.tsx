@@ -14,6 +14,7 @@ import {
   ensureRealGlucoseDataLoaded,
   getInMemoryRecentSlice,
   invalidateInMemoryRecentCache,
+  isPatientManuallyCleared,
   isPortfolioMode,
 } from '@/lib/realGlucoseLoader';
 import { SelectedDaySummary } from './SelectedDaySummary';
@@ -53,6 +54,18 @@ let lastGlobalRefreshSignature = '';
 export function clearCalendarMonthlyCache(): void {
   monthlyCacheMap.clear();
   latestDateCacheMap.clear();
+  hasAutoJumpedPatients.clear();
+}
+
+export function hasCalendarMonthlyCache(): boolean {
+  return monthlyCacheMap.size > 0 || latestDateCacheMap.size > 0;
+}
+
+export function primeCalendarMonthlyCache(
+  patientId: string,
+  latestDateStr: string = '2026-08-25'
+): void {
+  latestDateCacheMap.set(patientId, latestDateStr);
 }
 
 function getMonthCacheKey(
@@ -153,7 +166,7 @@ async function findLatestDataDateStr(patientId: string): Promise<string | null> 
   if (latestDateCacheMap.has(patientId)) {
     return latestDateCacheMap.get(patientId) ?? null;
   }
-  if (isPortfolioMode()) {
+  if (isPortfolioMode() && !isPatientManuallyCleared(patientId)) {
     latestDateCacheMap.set(patientId, '2026-08-25');
     return '2026-08-25';
   }
@@ -221,25 +234,29 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const monthTransitionDirection = monthTransitionDirRef.current;
 
   const [selectedDate, setSelectedDate] = useState<string>(() =>
-    isPortfolioMode() ? '2026-08-25' : todayStr
+    isPortfolioMode() && !isPatientManuallyCleared(currentPatientId) ? '2026-08-25' : todayStr
   );
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const [hasOpenedDrawer, setHasOpenedDrawer] = useState<boolean>(false);
   const [localRefreshKey, setLocalRefreshKey] = useState<number>(0);
   const [latestDataDate, setLatestDataDate] = useState<string | null>(() =>
-    latestDateCacheMap.get(currentPatientId) ?? (isPortfolioMode() ? '2026-08-25' : null)
+    latestDateCacheMap.get(currentPatientId) ??
+    (isPortfolioMode() && !isPatientManuallyCleared(currentPatientId) ? '2026-08-25' : null)
   );
   const hasAutoJumpedRef = useRef<boolean>(false);
 
-  // Phase 2 バックグラウンド過去データ同期完了時に、2026年8月以外の月キャッシュを破棄し、過去月表示中なら再描画する
+  // Phase 2 バックグラウンド過去データ同期完了時に、最新データ月以外の月キャッシュを破棄し、過去月表示中なら再描画する
   useEffect(() => {
     const handleBackgroundHydration = () => {
+      const latestMonthPrefix = latestDataDate ? latestDataDate.slice(0, 7) : null;
+      const keepToken = latestMonthPrefix ? `:${latestMonthPrefix}:` : null;
       for (const key of Array.from(monthlyCacheMap.keys())) {
-        if (!key.includes(':2026-08:')) {
+        if (!keepToken || !key.includes(keepToken)) {
           monthlyCacheMap.delete(key);
         }
       }
-      if (!(year === 2026 && month === 8)) {
+      const currentMonthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+      if (currentMonthPrefix !== latestMonthPrefix) {
         setLocalRefreshKey((k) => k + 1);
       }
     };
@@ -247,7 +264,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     return () => {
       window.removeEventListener('cgm-background-hydration-complete', handleBackgroundHydration);
     };
-  }, [year, month]);
+  }, [year, month, latestDataDate]);
 
   const currentRefreshSignature = `${currentPatientId}:${refreshKey}:${localRefreshKey}:${hypoThreshold}:${hyperThreshold}`;
   if (lastGlobalRefreshSignature !== currentRefreshSignature) {
@@ -401,10 +418,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     return { year: lYear, month: lMonth, dateStr: latestDataDate };
   }, [latestDataDate, year, month]);
 
-  // 初回表示時、当月にデータがなく実データの最新月が存在する場合は自動的に最新実データ月へ移動する
+  // 初回表示時、portfolioモードかつ当月にデータがなく最新データ月が存在する場合のみ自動移動する（personalモードでは常に今日・当月を表示）
   useEffect(() => {
     if (isLoading) return;
-    if (hasCurrentMonthData || !latestDataMonthInfo || isPortfolioMode()) {
+    if (!isPortfolioMode() || hasCurrentMonthData || !latestDataMonthInfo) {
       hasAutoJumpedRef.current = true;
       hasAutoJumpedPatients.add(currentPatientId);
       return;

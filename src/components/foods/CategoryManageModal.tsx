@@ -2,10 +2,75 @@ import React, { useState, useEffect } from 'react';
 import { Category } from '@/types/database';
 import { db } from '@/lib/db';
 import { invalidateAnalysisDatasetCache } from '@/lib/realGlucoseLoader';
+import { invalidateFoodMasterMemoryCache } from '@/components/foods/FoodMasterView';
+import { deterministicUuid, ensureUuid } from '@/lib/uuidUtils';
 import { usePatient } from '@/contexts/PatientContext';
 import { X, Tag, Plus, Edit3, Trash2, Check } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { cn } from '@/lib/utils';
+
+/**
+ * カテゴリ新規追加（論理削除済み同名カテゴリが存在する場合は新規UUIDを採番せず復活更新）
+ * PostgreSQL UNIQUE (user_id, target_type, category_name) 制約との衝突を防止する
+ */
+export async function addOrReviveCategory(params: {
+  userId: string;
+  targetType: 'food' | 'event';
+  categoryName: string;
+  displayOrder: number;
+}): Promise<Category> {
+  const { userId, targetType, categoryName, displayOrder } = params;
+  const trimmed = categoryName.trim();
+  const now = new Date().toISOString();
+
+  const matchingRecords = await db.categories
+    .where('[user_id+target_type]')
+    .equals([userId, targetType])
+    .filter((c) => c.category_name === trimmed)
+    .toArray();
+
+  const activeExisting = matchingRecords.find((c) => !c.is_deleted);
+  if (activeExisting) {
+    throw new Error('同じ名前のカテゴリがすでに存在します。');
+  }
+
+  const deletedMatches = matchingRecords.filter((c) => c.is_deleted);
+  if (deletedMatches.length > 0) {
+    const deletedExisting = deletedMatches[0];
+    const normalizedId = ensureUuid(
+      deletedExisting.id,
+      `${userId}_cat_${targetType}_${trimmed}`
+    );
+    const revived: Category = {
+      ...deletedExisting,
+      id: normalizedId,
+      is_deleted: false,
+      display_order: displayOrder,
+      updated_at: now,
+    };
+    await db.categories.put(revived);
+    for (const extra of deletedMatches) {
+      if (extra.id !== normalizedId) {
+        await db.categories.delete(extra.id);
+      }
+    }
+    return revived;
+  }
+
+  const created: Category = {
+    id: crypto.randomUUID(),
+    user_id: userId,
+    target_type: targetType,
+    category_name: trimmed,
+    display_order: displayOrder,
+    is_protected: false,
+    is_deleted: false,
+    created_at: now,
+    updated_at: now,
+  };
+  await db.categories.add(created);
+  return created;
+}
 
 interface CategoryManageModalProps {
   isOpen: boolean;
@@ -89,27 +154,27 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
       setErrorMsg('カテゴリ名を入力してください。');
       return;
     }
-    if (categories.some((c) => c.category_name === trimmed)) {
+    if (categories.some((c) => c.category_name === trimmed && !c.is_deleted)) {
       setErrorMsg('同じ名前のカテゴリがすでに存在します。');
       return;
     }
 
-    const now = new Date().toISOString();
     const maxOrder = categories.reduce((max, c) => Math.max(max, c.display_order), 0);
 
-    await db.categories.add({
-      id: crypto.randomUUID(),
-      user_id: currentPatientId,
-      target_type: targetType,
-      category_name: trimmed,
-      display_order: maxOrder + 1,
-      is_protected: false,
-      is_deleted: false,
-      created_at: now,
-      updated_at: now,
-    });
+    try {
+      await addOrReviveCategory({
+        userId: currentPatientId,
+        targetType,
+        categoryName: trimmed,
+        displayOrder: maxOrder + 1,
+      });
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'カテゴリの追加に失敗しました。');
+      return;
+    }
 
     setNewCategoryName('');
+    invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
     onChanged();
   };
@@ -122,15 +187,35 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
 
   const handleSaveEdit = async (catId: string) => {
     if (isReadOnly) return;
+    setErrorMsg(null);
     const trimmed = editingName.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setErrorMsg('カテゴリ名を入力してください。');
+      return;
+    }
+    if (categories.some((c) => c.id !== catId && c.category_name === trimmed && !c.is_deleted)) {
+      setErrorMsg('同じ名前のカテゴリがすでに存在します。');
+      return;
+    }
 
-    await db.categories.update(catId, {
-      category_name: trimmed,
-      updated_at: new Date().toISOString(),
+    const nowIso = new Date().toISOString();
+    await db.transaction('rw', [db.categories], async () => {
+      const sameNameDeleted = await db.categories
+        .where('[user_id+target_type]')
+        .equals([currentPatientId, targetType])
+        .filter((c) => c.id !== catId && c.category_name === trimmed && c.is_deleted)
+        .primaryKeys();
+      if (sameNameDeleted.length > 0) {
+        await db.categories.bulkDelete(sameNameDeleted);
+      }
+      await db.categories.update(catId, {
+        category_name: trimmed,
+        updated_at: nowIso,
+      });
     });
     setEditingId(null);
     setEditingName('');
+    invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
     onChanged();
   };
@@ -152,7 +237,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
     const now = new Date().toISOString();
     const fallbackCatId =
       categories.find((c) => c.category_name === '未分類' || c.is_protected)?.id ||
-      `${currentPatientId}_cat_${targetType}_uncategorized`;
+      deterministicUuid(`${currentPatientId}_cat_${targetType}_uncategorized`);
 
     await db.transaction('rw', [db.categories, db.food_master, db.event_master], async () => {
       const existingFallback = await db.categories.get(fallbackCatId);
@@ -198,6 +283,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
       });
     });
 
+    invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
     onChanged();
   };

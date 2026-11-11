@@ -1,5 +1,6 @@
 import { LibreReading, HealthEvent } from '@/types/database';
 import { extractAnomalyEventsFromReadings } from '@/lib/anomalyExtractor';
+import { deterministicUuid } from '@/lib/uuidUtils';
 
 export interface CsvImportStartMessage {
   type: 'START_IMPORT';
@@ -157,7 +158,7 @@ self.onmessage = (e: MessageEvent<CsvImportStartMessage>) => {
       const existing = readingMap.get(isoTime);
       if (!existing || scanType === 'Historic') {
         readingMap.set(isoTime, {
-          id: `${patientId}_${isoTime}`,
+          id: deterministicUuid(`${patientId}_${isoTime}`),
           user_id: patientId,
           timestamp: isoTime,
           glucose_value: Math.round(glucose),

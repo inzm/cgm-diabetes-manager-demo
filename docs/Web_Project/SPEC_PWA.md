@@ -60,11 +60,11 @@
 ## 3. Service Worker キャッシュ戦略 (`public/sw.js`)
 
 ### 3.1 キャッシュライフサイクル & 遅延チャンクのアイドル時先読み
-- **キャッシュ名**: `cgm-manager-v1`
-- **Pre-cache (インストール時)**:
-  - `/` (HTML)
+- **キャッシュ名**: `cgm-manager-v2`（`public/sw.js`）
+- **Pre-cache (インストール時 `APP_SHELL_ASSETS`)**:
+  - `/` および `/index.html`
   - `/manifest.webmanifest`
-  - 各種SVGアイコン
+  - `/icons/icon-192.svg`, `/icons/icon-512.svg`
 - **遅延読み込みチャンク（Code Splitting）のアイドル時バックグラウンド先読み**:
   - 初期表示（カレンダー画面）の高速描画を最優先するため、日次詳細ドロワー（`DailyDetailDrawer`）・24時間グラフ（`DailyGlucoseChart`）・各サブ画面（`FoodMasterView`, `AnalysisView`, `SettingsView`）・記録モーダル（`MealRecordModal`, `ActivityRecordModal`, `CsvImportModal`）は `React.lazy()` によりチャンク分割されている。
   - 同時に、アプリ起動直後にオフライン（機内モード・地下移動等）になった場合でも未訪問画面のチャンク取得エラー（`Failed to fetch dynamically imported module`）を起こさないよう、`src/App.tsx` の初期マウントから 200ms 後にバックグラウンドで全遅延チャンクを非同期プリロード（ウォームアップ）する。

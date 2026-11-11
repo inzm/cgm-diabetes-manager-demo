@@ -81,9 +81,9 @@ export interface CsvImportErrorMessage {
 
 ---
 
-## 4. 異常値抽出ステートマシン & 食事血糖値紐づけ (`src/lib/anomalyExtractor.ts` — Single Source of Truth)
+## 4. 異常値抽出ステートマシン & 決定論的UUID採番・食事血糖値紐づけ (`src/lib/anomalyExtractor.ts`, `src/lib/uuidUtils.ts` — Single Source of Truth)
 
-CSV取込Worker（`src/workers/csvParser.worker.ts`）および設定画面での目標値変更時再判定は、すべて `extractAnomalyEventsFromReadings` 関数を共通利用します。
+CSV取込Worker（`src/workers/csvParser.worker.ts`）では、各測定値レコードに `src/lib/uuidUtils.ts` の `deterministicUuid(`${patientId}_${isoTime}`)` で冪等な正規UUIDを採番します。また、CSV取込時および設定画面での目標値変更時再判定は、すべて `extractAnomalyEventsFromReadings` 関数を共通利用し、異常値イベントIDも `deterministicUuid(`${patientId}_anomaly_${event_type}_${start}`)` により正規UUID形式で採番します。
 
 ### 4.1 低血糖エピソード (`< hypoThreshold` mg/dL)
 - **開始**: 血糖値が `< hypoThreshold` に達した最初の測定時刻を開始日時（`lowStart`）、初期最低値（`minVal`）とする。
@@ -92,6 +92,7 @@ CSV取込Worker（`src/workers/csvParser.worker.ts`）および設定画面で�
   1. 正常値（$\ge \text{hypoThreshold}$）に回復し、その正常状態が **28分以上（約2回の測定周期）** 持続した時点で1つのエピソードとしてクローズ。
   2. 前回測定から **45分を超えるセンサー欠損ギャップ** が発生した場合も、進行中のエピソードを一旦クローズ。
 - **生成イベント**:
+  - `id`: `deterministicUuid(`${patientId}_anomaly_低血糖_${lowStart}`)`
   - `event_type`: `'低血糖'`
   - `event_datetime`: `lowStart`
   - `memo`: `最低 ${minVal} mg/dL (継続 ${durationMinutes}分間)`
@@ -101,6 +102,7 @@ CSV取込Worker（`src/workers/csvParser.worker.ts`）および設定画面で�
 - **追跡**: 閾値超が続く間、終了候補時刻（`highEnd`）を更新し、`maxVal = max(maxVal, currVal)` を追跡。
 - **確定条件**: 正常値（$\le \text{hyperThreshold}$）への回復が **28分以上** 持続した時点、または **45分超のセンサー欠損ギャップ** 発生時点でクローズ。
 - **生成イベント**:
+  - `id`: `deterministicUuid(`${patientId}_anomaly_高血糖_${highStart}`)`
   - `event_type`: `'高血糖'`
   - `event_datetime`: `highStart`
   - `memo`: `最高 ${maxVal} mg/dL (継続 ${durationMinutes}分間)`

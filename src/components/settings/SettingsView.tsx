@@ -6,13 +6,17 @@ import { isGeminiBffEnabled } from '@/lib/gemini';
 import { reevaluatePatientAnomalyEvents } from '@/lib/anomalyExtractor';
 import {
   cancelBackgroundHydration,
+  invalidateAnalysisDatasetCache,
+  invalidateInMemoryRecentCache,
   isDemoCsvImportDisabled,
   isPortfolioMode,
+  markPatientManuallyCleared,
   notifyThresholdsUpdated,
   resetDemoDataToInitialState,
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
-import { seedFoodMasterIfEmpty } from '@/lib/foodSeed';
+import { resetFoodSeedSession, seedFoodMasterIfEmpty } from '@/lib/foodSeed';
+import { ensureUuid } from '@/lib/uuidUtils';
 import { invalidateFoodMasterMemoryCache } from '@/components/foods/FoodMasterView';
 import { clearCalendarMonthlyCache } from '@/components/calendar/CalendarView';
 import { getTodayLocalDateStr } from '@/lib/dateUtils';
@@ -38,6 +42,255 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
+
+/**
+ * 全4種のオンメモリキャッシュ（食品・活動一覧、カレンダー月次集計、分析データセット、直近メモリスライス）を一括破棄する
+ */
+export function invalidateAllPatientMemoryCaches(patientId: string): void {
+  invalidateFoodMasterMemoryCache(patientId);
+  clearCalendarMonthlyCache();
+  invalidateAnalysisDatasetCache();
+  invalidateInMemoryRecentCache(patientId);
+}
+
+/**
+ * バックアップJSONペイロードから既存テーブルをクリアして復元し、
+ * 旧形式の非UUID文字列があれば正規UUIDへ自動マイグレーションした上で全4種キャッシュを破棄する
+ */
+export async function restorePatientBackupPayload(
+  patientId: string,
+  parsed: Record<string, any>
+): Promise<void> {
+  markPatientManuallyCleared(patientId);
+  cancelBackgroundHydration(patientId);
+  resetFoodSeedSession(patientId);
+
+  const rawSettings = parsed.userSettings ?? parsed.user_settings;
+  const rawReadings = Array.isArray(parsed.libreReadings)
+    ? parsed.libreReadings
+    : Array.isArray(parsed.libre_readings)
+      ? parsed.libre_readings
+      : [];
+  const rawEvents = Array.isArray(parsed.events) ? parsed.events : [];
+  const rawDetails = Array.isArray(parsed.mealDetails)
+    ? parsed.mealDetails
+    : Array.isArray(parsed.meal_details)
+      ? parsed.meal_details
+      : [];
+  const rawCategories = Array.isArray(parsed.categories) ? parsed.categories : [];
+  const rawFoods = Array.isArray(parsed.foodMaster)
+    ? parsed.foodMaster
+    : Array.isArray(parsed.food_master)
+      ? parsed.food_master
+      : [];
+  const rawEventMasters = Array.isArray(parsed.eventMaster)
+    ? parsed.eventMaster
+    : Array.isArray(parsed.event_master)
+      ? parsed.event_master
+      : [];
+
+  const hasCategories = rawCategories.length > 0;
+  const hasFoods = rawFoods.length > 0;
+  const hasEventMasters = rawEventMasters.length > 0;
+
+  await db.transaction(
+    'rw',
+    [
+      db.user_settings,
+      db.libre_readings,
+      db.events,
+      db.meal_details,
+      db.food_master,
+      db.event_master,
+      db.categories,
+    ],
+    async () => {
+      await db.user_settings.delete(patientId);
+      await db.libre_readings.where('user_id').equals(patientId).delete();
+      await db.events.where('user_id').equals(patientId).delete();
+      await db.meal_details.where('user_id').equals(patientId).delete();
+      await db.food_master.where('user_id').equals(patientId).delete();
+      await db.event_master.where('user_id').equals(patientId).delete();
+      await db.categories.where('user_id').equals(patientId).delete();
+
+      if (rawSettings) {
+        await db.user_settings.put({
+          ...rawSettings,
+          user_id: patientId,
+        });
+      }
+      if (rawReadings.length > 0) {
+        await db.libre_readings.bulkPut(
+          rawReadings.map((r: any) => ({
+            ...r,
+            id: ensureUuid(r.id, `${patientId}_${r.timestamp}`),
+            user_id: patientId,
+          }))
+        );
+      }
+
+      const eventIdMap = new Map<string, string>();
+      if (rawEvents.length > 0) {
+        await db.events.bulkPut(
+          rawEvents.map((ev: any) => {
+            const normalizedEventId = ensureUuid(
+              ev.id,
+              `${patientId}_${ev.event_type}_${ev.event_datetime}`
+            );
+            if (ev.id != null && String(ev.id).trim() !== '') {
+              eventIdMap.set(String(ev.id).trim(), normalizedEventId);
+            }
+            return {
+              ...ev,
+              id: normalizedEventId,
+              user_id: patientId,
+            };
+          })
+        );
+      }
+
+      if (rawDetails.length > 0) {
+        const validDetails = rawDetails.filter(
+          (d: any) => d && d.event_id != null && String(d.event_id).trim() !== ''
+        );
+        if (validDetails.length > 0) {
+          await db.meal_details.bulkPut(
+            validDetails.map((d: any) => {
+              const rawEventIdStr = String(d.event_id).trim();
+              const normalizedEventId =
+                eventIdMap.get(rawEventIdStr) ?? ensureUuid(rawEventIdStr);
+              return {
+                ...d,
+                id: ensureUuid(d.id, `${normalizedEventId}_${d.food_name}`),
+                event_id: normalizedEventId,
+                user_id: patientId,
+              };
+            })
+          );
+        }
+      }
+
+      const categoryIdMap = new Map<string, string>();
+      if (hasCategories) {
+        const dedupedByKey = new Map<string, { raw: any; allOriginalIds: string[] }>();
+        for (const c of rawCategories) {
+          if (!c || !c.category_name) continue;
+          const targetType = c.target_type === 'event' ? 'event' : 'food';
+          const trimmedName = String(c.category_name).trim();
+          const key = `${targetType}::${trimmedName}`;
+          const origId = c.id != null ? String(c.id).trim() : '';
+          const existing = dedupedByKey.get(key);
+          if (!existing) {
+            dedupedByKey.set(key, {
+              raw: { ...c, target_type: targetType, category_name: trimmedName },
+              allOriginalIds: origId ? [origId] : [],
+            });
+          } else {
+            if (origId) {
+              existing.allOriginalIds.push(origId);
+            }
+            if (existing.raw.is_deleted && !c.is_deleted) {
+              existing.raw = { ...c, target_type: targetType, category_name: trimmedName };
+            }
+          }
+        }
+
+        const normalizedCategories = Array.from(dedupedByKey.values()).map(
+          ({ raw, allOriginalIds }) => {
+            const canonicalId = ensureUuid(
+              raw.id,
+              `${patientId}_cat_${raw.target_type}_${raw.category_name}`
+            );
+            for (const origId of allOriginalIds) {
+              categoryIdMap.set(origId, canonicalId);
+            }
+            return {
+              ...raw,
+              id: canonicalId,
+              user_id: patientId,
+            };
+          }
+        );
+
+        if (normalizedCategories.length > 0) {
+          await db.categories.bulkPut(normalizedCategories);
+        }
+      }
+
+      if (hasFoods) {
+        await db.food_master.bulkPut(
+          rawFoods.map((f: any) => {
+            const rawCatId = f.category_id != null ? String(f.category_id).trim() : '';
+            return {
+              ...f,
+              id: ensureUuid(f.id, `${patientId}_food_${f.food_name}`),
+              category_id: rawCatId
+                ? (categoryIdMap.get(rawCatId) ?? ensureUuid(rawCatId))
+                : f.category_id,
+              user_id: patientId,
+            };
+          })
+        );
+      }
+
+      if (hasEventMasters) {
+        await db.event_master.bulkPut(
+          rawEventMasters.map((em: any) => {
+            const rawCatId = em.category_id != null ? String(em.category_id).trim() : '';
+            return {
+              ...em,
+              id: ensureUuid(em.id, `${patientId}_event_${em.event_name}`),
+              category_id: rawCatId
+                ? (categoryIdMap.get(rawCatId) ?? ensureUuid(rawCatId))
+                : em.category_id,
+              user_id: patientId,
+            };
+          })
+        );
+      }
+    }
+  );
+
+  if (!hasCategories && !hasFoods && !hasEventMasters) {
+    await seedFoodMasterIfEmpty(patientId);
+  }
+
+  invalidateAllPatientMemoryCaches(patientId);
+}
+
+/**
+ * 記録データをすべて消去し、よく使う食品・活動を初期状態へ再シードした上で全4種キャッシュを破棄する
+ */
+export async function resetPatientDataAndInvalidateCaches(patientId: string): Promise<void> {
+  markPatientManuallyCleared(patientId);
+  cancelBackgroundHydration(patientId);
+  resetFoodSeedSession(patientId);
+
+  await db.transaction(
+    'rw',
+    [
+      db.user_settings,
+      db.libre_readings,
+      db.events,
+      db.meal_details,
+      db.food_master,
+      db.event_master,
+      db.categories,
+    ],
+    async () => {
+      await db.user_settings.clear();
+      await db.libre_readings.clear();
+      await db.events.clear();
+      await db.meal_details.clear();
+      await db.food_master.clear();
+      await db.event_master.clear();
+      await db.categories.clear();
+    }
+  );
+
+  await seedFoodMasterIfEmpty(patientId);
+  invalidateAllPatientMemoryCaches(patientId);
+}
 
 interface SettingsViewProps {
   onSettingsChanged?: () => void;
@@ -394,68 +647,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
     setIsRestoring(true);
     setDataErrorMsg(null);
     setDataActionMsg(null);
+    markPatientManuallyCleared(currentPatientId);
     cancelBackgroundHydration(currentPatientId);
+    resetFoodSeedSession(currentPatientId);
 
     try {
-      await db.transaction(
-        'rw',
-        [
-          db.user_settings,
-          db.libre_readings,
-          db.events,
-          db.meal_details,
-          db.food_master,
-          db.event_master,
-          db.categories,
-        ],
-        async () => {
-          if (parsed.userSettings) {
-            await db.user_settings.put({
-              ...parsed.userSettings,
-              user_id: currentPatientId,
-            });
-          }
-          if (Array.isArray(parsed.libreReadings) && parsed.libreReadings.length > 0) {
-            await db.libre_readings.bulkPut(
-              parsed.libreReadings.map((r: any) => ({ ...r, user_id: currentPatientId }))
-            );
-          }
-          if (Array.isArray(parsed.events) && parsed.events.length > 0) {
-            await db.events.bulkPut(
-              parsed.events.map((ev: any) => ({ ...ev, user_id: currentPatientId }))
-            );
-          }
-          if (Array.isArray(parsed.mealDetails) && parsed.mealDetails.length > 0) {
-            await db.meal_details.bulkPut(
-              parsed.mealDetails.map((d: any) => ({ ...d, user_id: currentPatientId }))
-            );
-          }
-          if (Array.isArray(parsed.foodMaster) && parsed.foodMaster.length > 0) {
-            await db.food_master.bulkPut(
-              parsed.foodMaster.map((f: any) => ({ ...f, user_id: currentPatientId }))
-            );
-          }
-          if (Array.isArray(parsed.eventMaster) && parsed.eventMaster.length > 0) {
-            await db.event_master.bulkPut(
-              parsed.eventMaster.map((em: any) => ({ ...em, user_id: currentPatientId }))
-            );
-          }
-          if (Array.isArray(parsed.categories) && parsed.categories.length > 0) {
-            await db.categories.bulkPut(
-              parsed.categories.map((c: any) => ({ ...c, user_id: currentPatientId }))
-            );
-          }
-        }
+      await restorePatientBackupPayload(currentPatientId, parsed);
+
+      const rawSettings = parsed.userSettings ?? parsed.user_settings;
+      const restoredHypo = rawSettings?.hypo_threshold ?? 70;
+      const restoredHyper = rawSettings?.hyper_threshold ?? 180;
+      setHypoThreshold(restoredHypo);
+      setHyperThreshold(restoredHyper);
+      setEnableDefaultInsulin(Boolean(rawSettings?.enable_default_insulin));
+      setDefaultInsulinBreakfast(
+        rawSettings?.default_insulin_breakfast != null
+          ? String(rawSettings.default_insulin_breakfast)
+          : ''
       );
+      setDefaultInsulinLunch(
+        rawSettings?.default_insulin_lunch != null
+          ? String(rawSettings.default_insulin_lunch)
+          : ''
+      );
+      setDefaultInsulinDinner(
+        rawSettings?.default_insulin_dinner != null
+          ? String(rawSettings.default_insulin_dinner)
+          : ''
+      );
+      setDefaultInsulinSnack(
+        rawSettings?.default_insulin_snack != null
+          ? String(rawSettings.default_insulin_snack)
+          : ''
+      );
+      notifyThresholdsUpdated(currentPatientId, restoredHypo, restoredHyper);
+      updateClinicalThresholds(restoredHypo, restoredHyper);
 
-      if (parsed.userSettings?.hypo_threshold && parsed.userSettings?.hyper_threshold) {
-        updateClinicalThresholds(
-          parsed.userSettings.hypo_threshold,
-          parsed.userSettings.hyper_threshold
-        );
-      }
-
-      invalidateFoodMasterMemoryCache(currentPatientId);
       await loadSettingsAndStats();
       onSettingsChanged?.();
       setDataActionMsg('バックアップからデータを復元しました。');
@@ -482,30 +709,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
     setIsResettingDb(true);
     setDataErrorMsg(null);
     setDataActionMsg(null);
-    cancelBackgroundHydration(currentPatientId);
 
     try {
-      await db.transaction(
-        'rw',
-        [
-          db.user_settings,
-          db.libre_readings,
-          db.events,
-          db.meal_details,
-          db.food_master,
-          db.event_master,
-          db.categories,
-        ],
-        async () => {
-          await db.user_settings.clear();
-          await db.libre_readings.clear();
-          await db.events.clear();
-          await db.meal_details.clear();
-          await db.food_master.clear();
-          await db.event_master.clear();
-          await db.categories.clear();
-        }
-      );
+      await resetPatientDataAndInvalidateCaches(currentPatientId);
 
       setHypoThreshold(70);
       setHyperThreshold(180);
@@ -514,10 +720,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
       setDefaultInsulinLunch('');
       setDefaultInsulinDinner('');
       setDefaultInsulinSnack('');
+      notifyThresholdsUpdated(currentPatientId, 70, 180);
       updateClinicalThresholds(70, 180);
 
-      invalidateFoodMasterMemoryCache(currentPatientId);
-      await seedFoodMasterIfEmpty(currentPatientId);
       await loadSettingsAndStats();
       onSettingsChanged?.();
 
@@ -554,8 +759,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
       setDefaultInsulinSnack('');
       updateClinicalThresholds(70, 180);
 
-      invalidateFoodMasterMemoryCache(currentPatientId);
-      clearCalendarMonthlyCache();
+      invalidateAllPatientMemoryCaches(currentPatientId);
       await loadSettingsAndStats();
       onSettingsChanged?.();
 
@@ -570,9 +774,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
   };
 
   const bffEnabled = isGeminiBffEnabled();
-  const restoreReadingCount = Array.isArray(pendingRestorePayload?.libreReadings)
-    ? pendingRestorePayload.libreReadings.length
-    : 0;
+  const restoreReadingsList = Array.isArray(pendingRestorePayload?.libreReadings)
+    ? pendingRestorePayload.libreReadings
+    : Array.isArray(pendingRestorePayload?.libre_readings)
+      ? pendingRestorePayload.libre_readings
+      : [];
+  const restoreReadingCount = restoreReadingsList.length;
   const restoreEventCount = Array.isArray(pendingRestorePayload?.events)
     ? pendingRestorePayload.events.length
     : 0;

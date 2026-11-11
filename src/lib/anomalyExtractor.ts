@@ -2,6 +2,7 @@ import { LibreReading, HealthEvent } from '@/types/database';
 import { db } from './db';
 import { parseWallClockMs, shiftLocalDateStr } from './dateUtils';
 import { invalidateAnalysisDatasetCache } from './analysisCalculators';
+import { deterministicUuid } from './uuidUtils';
 
 /**
  * 異常値（低血糖・高血糖）エピソード抽出ステートマシン (Single Source of Truth)
@@ -54,7 +55,7 @@ export function extractAnomalyEventsFromReadings(
       Math.round((parseWallClockMs(lowEnd) - parseWallClockMs(lowStart)) / 60000) + 15
     );
     events.push({
-      id: crypto.randomUUID(),
+      id: deterministicUuid(`${patientId}_anomaly_低血糖_${lowStart}`),
       user_id: patientId,
       event_datetime: lowStart,
       event_type: '低血糖',
@@ -75,7 +76,7 @@ export function extractAnomalyEventsFromReadings(
       Math.round((parseWallClockMs(highEnd) - parseWallClockMs(highStart)) / 60000) + 15
     );
     events.push({
-      id: crypto.randomUUID(),
+      id: deterministicUuid(`${patientId}_anomaly_高血糖_${highStart}`),
       user_id: patientId,
       event_datetime: highStart,
       event_type: '高血糖',
@@ -163,7 +164,7 @@ export async function reevaluatePatientAnomalyEvents(
   );
   const newAnomalyEvents = rawAnomalyEvents.map((ev) => ({
     ...ev,
-    id: `${patientId}_anomaly_${ev.event_type}_${ev.event_datetime}`,
+    id: deterministicUuid(`${patientId}_anomaly_${ev.event_type}_${ev.event_datetime}`),
   }));
 
   const [oldHypoKeys, oldHyperKeys] = await Promise.all([
@@ -280,6 +281,7 @@ export async function bindMealGlucoseFromReadings(
   ]);
 
   if (readings.length === 0 || mealEvents.length === 0) {
+    invalidateAnalysisDatasetCache();
     return 0;
   }
 

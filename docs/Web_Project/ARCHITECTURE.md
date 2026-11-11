@@ -54,12 +54,14 @@ flowchart TD
 本システムの中核は、**「Supabase（クラウド）をマスター保管庫 ＋ IndexedDB（ブラウザ）をローカル高速キャッシュ」** とする **Local-First（オフラインファースト）アーキテクチャ** です。
 
 ### 2.1 データ同期の基本原則
+> **【実装フェーズ注記】**: 現在（Phase 1）のクライアント実装は、ブラウザ内 `IndexedDB (Dexie.js)`（`src/lib/db.ts`）および JSON バックアップ出力・正規UUIDマイグレーション復元（`src/components/settings/SettingsView.tsx`）による完全オフライン Local-First 基盤で動作しており、全7テーブルの主キー・外部キーは決定論的UUID（`src/lib/uuidUtils.ts`）で正規化済みです。Supabase Auth 認証・PostgreSQL RLS・Delta Sync（差分同期）・Realtime 購読は、Supabase クラウドプロジェクト接続フェーズ（Phase 2〜4）で順次有効化されるターゲットアーキテクチャ仕様です。
+
 1. **Single Source of Truth (SSOT)**:
-   - 真のデータ原本は常に **Supabase (PostgreSQL)** です。
-   - IndexedDBは「端末側で瞬時に描画・集計するためのローカルキャッシュ」と位置付け、端末初期化やブラウザキャッシュ削除時でもSupabaseから完全に復元可能とします。
+   - クラウド接続後の真のデータ原本は **Supabase (PostgreSQL)** であり、ローカル単体運用時は **IndexedDB (Dexie.js) ＋ JSON バックアップ** が原本となります。
+   - IndexedDBは「端末側で瞬時に描画・集計するためのローカル高速データベース」と位置付け、端末初期化やブラウザキャッシュ削除時でもJSONバックアップまたはSupabaseから完全に復元可能とします。
 2. **ゼロレイテンシ描画**:
    - 画面遷移（カレンダー ⇄ 日次詳細 ⇄ 分析）時は、ネットワーク通信を一切待たず、ローカルのIndexedDBから **0.01秒未満でデータを即時取得・描画** します。
-   - バックグラウンドでSupabaseと差分同期を行い、変更があればUIへ静かに反映します。
+   - クラウド接続時はバックグラウンドでSupabaseと差分同期を行い、変更があればUIへ静かに反映します。
 
 ### 2.2 データ種別ごとの同期戦略
 
@@ -70,19 +72,23 @@ flowchart TD
 | **食品・活動マスタ (`food_master`, `event_master`)** | 追加・編集・削除 | 差分同期 (Delta Sync) | 論理削除 ＋ LWW。システム保護カテゴリ「未分類」はクライアント・DB双方で削除禁止。 |
 | **臨床設定 (`user_settings`)** | 低血糖/高血糖閾値等 | 即時同期 | 1ユーザー1レコード。LWW。 |
 
-### 2.3 初回ロード・リロード高速化：Memory-First 3段階段階的同期 (`src/lib/realGlucoseLoader.ts`)
-初回アクセスやポートフォリオモードでのリロード時に、2年分（79,479件・2.14MB）の全データを一括ダウンロードして IndexedDB の B-Tree インデックスへ書き込むのを待ってから画面を描画すると、初期表示に10〜18秒を要してしまうため、以下の **「Memory-First 3段階段階的同期」** により初期表示を **0.3〜0.8秒以内** に完結させます。
+### 2.3 環境別起動データ戦略 & ポートフォリオ用 Memory-First 3段階段階的同期 (`src/lib/realGlucoseLoader.ts`)
+- **本番モード (`VITE_APP_MODE=personal`) におけるクリーン起動・データ保護**:
+  - 本番モードでは `public/data/real_glucose_recent.json` および `public/data/real_glucose_readings.json` のプリフェッチ・ハイドレーションや既存ユーザーデータの削除を一切行いません（ビルド時にも `vite.config.ts` のプラグインにより `dist/data/real_glucose_*.json` を出力から完全除外）。
+  - 初回起動時は `seedFoodMasterIfEmpty(patientId)`（`src/lib/foodSeed.ts`）のみを実行してよく使う食品・活動・カテゴリの初期プリセット（決定論的UUID：`src/lib/uuidUtils.ts`）を投入し、血糖・食事・活動記録は0件のクリーンな状態からユーザー本人の手動記録およびFreeStyleリブレCSV取込を開始します。
+- **ポートフォリオモード (`VITE_APP_MODE=portfolio`) における Memory-First 3段階段階的同期**:
+  - デモ公開環境での初回アクセスやリロード時に、2年分（79,479件・2.14MB）の全データを一括ダウンロードして IndexedDB の B-Tree インデックスへ書き込むのを待ってから画面を描画すると初期表示に10〜18秒を要してしまうため、以下の **「Memory-First 3段階段階的同期」** により初期表示を **0.3〜0.8秒以内** に完結させます。
 
-1. **Stage 1：Memory-First 即時初期描画（0.3〜0.8秒・IndexedDB I/O 待ちゼロ）**:
-   - `index.html` の `<link rel="preload" href="/data/real_glucose_recent.json" as="fetch" crossorigin="anonymous">` および `src/lib/realGlucoseLoader.ts` モジュール評価時の即時プリフェッチにより、JSバンドルのダウンロードと並行して直近42日分データ（`public/data/real_glucose_recent.json`：3,482件・約91KB / gzip 18KB）を取得。
-   - 取得した直近タプルからメモリ上で測定データ・異常値エピソード・食事/活動記録・食事明細を生成（約15ms）し、オンメモリキャッシュ（`inMemoryRecentCache`）に格納して即座に `ensureRealGlucoseDataLoaded` を完了させる。
-   - `src/components/calendar/CalendarView.tsx`（`getInMemoryRecentSlice`）および `src/components/daily/DailyDetailDrawer.tsx`（`getInMemoryRecentMealDetails`）は、IndexedDB の書き込みトランザクション完了を一切待たずにメモリから 0ms でデータを読み取って初期カレンダー（2026年8月）を描画する。
-2. **Stage 2：直近データ＆初期食品データの非同期 IndexedDB 永続化（First Paint 完了後）**:
-   - 初期カレンダーの DOM 描画が完了した直後（60ms 待機後）、裏側で `seedFoodMasterIfEmpty`（`src/lib/foodSeed.ts`）および直近データの IndexedDB 保存を実行する。
-   - ポートフォリオモード（`VITE_APP_MODE=portfolio`）での2回目以降のリロード時は、すでに79,479件の `db.libre_readings` が IndexedDB に存在する場合、重い `libre_readings` の削除・再投入を完全にスキップし、`db.events`・`db.meal_details`・`db.user_settings` のみを高速リセットする。
-   - 永続化完了と同時に `inMemoryRecentCache.persisted = true` へ切り替え、以降のユーザー操作（記録追加・編集・削除）はすべて IndexedDB（Dexie.js）の複合インデックス（`[user_id+timestamp]`, `[user_id+event_datetime]`, `[user_id+event_id]`）を参照する。
+1. **Stage 1：Memory-First 即時初期描画（0.3〜0.8秒・IndexedDB I/O 待ちゼロ・`portfolio` モード専用）**:
+   - `vite.config.ts` が `portfolio` ビルド時のみ注入する `<link rel="preload" href="/data/real_glucose_recent.json" as="fetch" crossorigin="anonymous">` および `src/lib/realGlucoseLoader.ts` モジュール評価時のプリフェッチ（`isPortfolioMode()` 時のみ実行）により、JSバンドルのダウンロードと並行して直近42日分データ（`public/data/real_glucose_recent.json`：3,482件・約91KB / gzip 18KB）を取得。
+   - 取得した直近タプルからメモリ上で測定データ・異常値エピソード・食事/活動記録・食事明細を正規UUID（`deterministicUuid`：`src/lib/uuidUtils.ts`）で生成（約15ms）し、オンメモリキャッシュ（`inMemoryRecentCache`）に格納して即座に `ensureRealGlucoseDataLoaded` を完了させる。
+   - `src/components/calendar/CalendarView.tsx`（`getInMemoryRecentSlice`）および `src/components/daily/DailyDetailDrawer.tsx`（`getInMemoryRecentMealDetails`）は、書き込み完了を待たずにメモリから 0ms でデータを読み取って初期カレンダー（2026年8月）を描画する。
+2. **Stage 2：直近データ＆初期食品データの非同期永続化（First Paint 完了後）**:
+   - 初期カレンダーの DOM 描画が完了した直後（60ms 待機後）、裏側で `seedFoodMasterIfEmpty`（`src/lib/foodSeed.ts`）および直近データの保存を実行する。
+   - 永続化完了と同時に `inMemoryRecentCache.persisted = true` へ切り替え、以降のユーザー操作（記録追加・編集・削除）はすべて `src/lib/db.ts` の複合インデックス（`[user_id+timestamp]`, `[user_id+event_datetime]`, `[user_id+event_id]`）を参照する。
 3. **Stage 3：過去7.6万件データのチャンク分割バックグラウンド同期**:
-   - さらに 350ms 待機した後、全期間データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）をバックグラウンド取得し、2026年7月15日以前の過去イベントと過去測定値（75,997件）をメインスレッドをブロックしないよう **6,000件ずつの小チャンク（チャンク間に40msの休止）** で新しい月順に段階投入する。なお、オフライン切断時はバックグラウンド取得をスキップし、ユーザーが設定画面で「記録データを初期化」または「バックアップから復元」を実行した場合は `cancelBackgroundHydration` により実行中のバックグラウンド投入を即時停止する。
+   - さらに待機した後、全期間データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）をバックグラウンド取得し、2026年7月15日以前の過去イベントと過去測定値（75,997件）をメインスレッドをブロックしないよう **6,000件ずつの小チャンク（チャンク間に40msの休止）** で新しい月順に段階投入する。
+   - ユーザーが設定画面で「記録データを初期化」または「バックアップから復元」を実行した場合は、`cancelBackgroundHydration` および `markPatientManuallyCleared` により実行中のバックグラウンド投入を即時停止し、同一セッション内でカレンダーや分析画面へ遷移してもデモデータが勝手に再ハイドレーションされないよう保護する（`resetDemoDataToInitialState` 実行時のみ解除）。
    - 全件投入完了時に `cgm-background-hydration-complete` カスタムイベントを発火し、カレンダーの過去月キャッシュや分析画面（`src/components/analysis/AnalysisView.tsx`）の最古記録日・月別選択肢を自動更新する。
 
 ### 2.4 ブラウザによる勝手なデータ消去への対策 (Eviction防止)
@@ -124,39 +130,49 @@ Excel固有の仕様や大量データ処理など、Web化において技術的
     2. **最高/最低レンジバー**: 当日の血糖レンジ（Min〜Max）を棒グラフで表示。
 
 ### 3.3 大容量CSV（8.4万行）パース ＆ 異常値自動抽出（ステートマシン）
-- **課題**: 8.4万行のCSVパースと、CGM臨床標準ルール（正常復帰30分継続ルール、45分ギャップ判定、15分丸め）に基づくエピソード抽出処理をサーバー（Cloudflare Workers 10ms CPU制限）で同期実行するとタイムアウトする。
-- **解決方針（ブラウザ側 Web Worker 分散実行）**:
-  - CSVファイルをブラウザで選択後、メインスレッドから **Web Worker** にファイルバッファを渡す。
-  - Web Worker 内で PapaParse（高速CSVパーサー）を用いてパースし、メモリ上で状態遷移マシン（ステートマシン）を実行して異常値エピソードを抽出。
-  - 抽出結果（低血糖/高血糖イベント）と生データを IndexedDB へバルク保存した後、Supabaseへ非同期バックグラウンド送信（バッチチャンク: 2,000件ずつ）。
+- **課題**: 8.4万行のCSVパースと、CGM臨床標準ルール（正常復帰28分継続ルール、45分ギャップ判定）に基づくエピソード抽出処理をサーバー（Cloudflare Workers 10ms CPU制限）で同期実行するとタイムアウトする。
+- **解決方針（ブラウザ側 Web Worker 分散実行 & 決定論的UUID採番）**:
+  - CSVファイルをブラウザで選択後、メインスレッド（`src/components/import/CsvImportModal.tsx`）から **Web Worker**（`src/workers/csvParser.worker.ts`）にファイルテキストを渡す。
+  - Web Worker 内の **独自高速ストリーム行分割CSVパーサー**（外部ライブラリ非依存・FreeStyleリブレLink日英ヘッダー自動検出）を用いてパースし、`src/lib/uuidUtils.ts` の `deterministicUuid(`${patientId}_${isoTime}`)` により冪等な正規UUIDを採番。
+  - 続けて共通ステートマシン（`src/lib/anomalyExtractor.ts`）を実行して異常値エピソード（`deterministicUuid(`${patientId}_anomaly_${event_type}_${start}`)`）を抽出。
+  - 抽出結果（低血糖/高血糖イベント）と生データを IndexedDB へバルク保存し、登録済みの食事記録に対して食前・食後ピーク血糖値を自動バインド（`bindMealGlucoseFromReadings`）した後、Supabase接続時は非同期バックグラウンド送信（バッチチャンク: 2,000件ずつ）を行う。
   - **結果**: サーバーコスト・CPU制限ゼロ、ユーザーを待たせずにプログレスバーを表示しながら数秒でインポート完了。
 
 ### 3.4 臨床閾値変更時の「全過去データ再判定（リバリュエーション）」
-- **課題**: 設定画面で低血糖閾値（70→75）等を変更した際、3年分のデータから異常値イベントを全件再計算・再同期する必要がある。
+- **課題**: 設定画面で低血糖閾値（70→75）等を変更した際、全期間のデータから異常値イベントを全件再計算・再同期する必要がある。
 - **解決方針**:
-  - ローカルのIndexedDBに全期間の生データが存在するため、**Web Worker 内で全期間のステートマシンを再実行**（所要時間: 約1〜2秒）。
-  - 手動登録イベント（食事・活動）を残し、自動抽出イベント（低血糖・高血糖）のみをIndexedDB上で差し替え。
-  - Supabaseへは「旧異常値イベントの論理削除」と「新異常値イベントのバルク登録」を1トランザクションで送信。
+  - ローカルのIndexedDBに全期間の生データが存在するため、`src/lib/anomalyExtractor.ts` の `reevaluatePatientAnomalyEvents` により全期間のステートマシンを再実行。
+  - 手動登録イベント（食事・活動）を残し、自動抽出イベント（低血糖・高血糖）のみを正規UUID（`deterministicUuid`）で差し替え。
+  - Supabaseへは「旧異常値イベントの削除」と「新異常値イベントのバルク登録」を1トランザクションで送信。
 
-### 3.5 食前・食後血糖値の近傍探索ロジック
-- **課題**: 食事開始時刻の前後15分（食前）、および食事2時間後の前後15分（食後）の最寄りグルコース値を高速に探索・補完する。
+### 3.5 食前・食後ピーク血糖値の近傍探索ロジック (`src/lib/anomalyExtractor.ts`)
+- **課題**: 食事開始時刻 $T$ に対する食前血糖値、および食後ピーク血糖値を実測CGMデータから高速かつ正確に探索・補完する。
 - **解決方針**:
-  - **ローカル側 (Dexie.js)**:
-    IndexedDBの `timestamp` 複合インデックスを活用し、`db.libre_readings.where('timestamp').between(target - 15min, target + 15min)` で最大数件のみを取り出し、時間差の絶対値が最小のレコードをO(1)でバインド。
+  - **ローカル側 (`bindMealGlucoseFromReadings` in `src/lib/anomalyExtractor.ts` & `src/components/records/MealRecordModal.tsx`)**:
+    - **食前血糖値 (`pre_meal_glucose`)**: $[T - 15\text{分},\ T + 5\text{分}]$ の範囲内で、食事時刻 $T$ との時間差の絶対値が最小となる測定値を採用。
+    - **食後ピーク血糖値 (`post_meal_glucose`)**: $[T + 60\text{分},\ T + 180\text{分}]$（食後1〜3時間）の範囲内における **最高血糖値（Max）** を採用。
   - **クラウド側 (Supabase / PostgreSQL)**:
-    CSV一括インポート時などのサーバーサイド補完には、PostgreSQLの `LATERAL JOIN` を用いて高速バッチ更新を実行：
+    CSV一括インポート時などのサーバーサイド補完には、PostgreSQLの `LATERAL JOIN` を用いて食前（$-15\text{min} \sim +5\text{min}$ 最寄り値）および食後ピーク（$+60\text{min} \sim +180\text{min}$ 最高値）の高速バッチ更新を実行：
     ```sql
     UPDATE events e
-    SET pre_meal_glucose = closest.glucose
+    SET pre_meal_glucose = pre_q.glucose_value,
+        post_meal_glucose = post_q.max_glucose
     FROM (
-      SELECT DISTINCT ON (e2.id) e2.id, lr.glucose
+      SELECT DISTINCT ON (e2.id) e2.id, lr.glucose_value
       FROM events e2
       JOIN libre_readings lr ON lr.user_id = e2.user_id
-        AND lr.timestamp BETWEEN (e2.event_datetime - INTERVAL '15 minutes') 
-                             AND (e2.event_datetime + INTERVAL '15 minutes')
+        AND lr.timestamp BETWEEN (e2.event_datetime - INTERVAL '15 minutes')
+                             AND (e2.event_datetime + INTERVAL '5 minutes')
       ORDER BY e2.id, ABS(EXTRACT(EPOCH FROM (lr.timestamp - e2.event_datetime)))
-    ) AS closest
-    WHERE e.id = closest.id AND e.event_type = '食事';
+    ) AS pre_q
+    LEFT JOIN LATERAL (
+      SELECT MAX(lr2.glucose_value) AS max_glucose
+      FROM libre_readings lr2
+      WHERE lr2.user_id = e.user_id
+        AND lr2.timestamp BETWEEN (e.event_datetime + INTERVAL '60 minutes')
+                              AND (e.event_datetime + INTERVAL '180 minutes')
+    ) AS post_q ON TRUE
+    WHERE e.id = pre_q.id AND e.event_type = '食事';
     ```
 
 ---
@@ -245,28 +261,30 @@ ON libre_readings FOR DELETE
 USING (can_edit_patient_data(user_id));
 ```
 
-### 4.4 フロントエンドにおける「患者コンテキスト（PatientContext）」設計
+### 4.4 フロントエンドにおける「患者コンテキスト（PatientContext）」設計 (`src/contexts/PatientContext.tsx`)
 フロントエンド（React）側で、コンポーネントが直接 `auth.user.id` を参照してデータを取得する設計を禁止します。
-**「現在選択中の患者ID（`currentPatientId`）」と「その患者に対するロール（`currentRole`）」を配信する Context** を導入します。
+**「現在選択中の患者ID（`currentPatientId`）」「その患者に対するロール（`currentRole`）」「臨床目標閾値（`hypoThreshold` / `hyperThreshold`）」を配信する Context**（`src/contexts/PatientContext.tsx`）を導入します。
 
 ```typescript
-// PatientContext の型定義イメージ
+// PatientContext の実装インターフェース (src/contexts/PatientContext.tsx)
 interface PatientContextType {
-  currentPatientId: string; // 閲覧・操作対象の患者ID
-  currentRole: 'patient' | 'editor' | 'viewer'; // 操作権限
-  isReadOnly: boolean;      // currentRole === 'viewer' の場合 true
-  accessiblePatients: Array<{ patientId: string; patientName: string; role: string }>; // 家族が閲覧可能な患者リスト
-  switchPatient: (patientId: string) => void;
+  currentPatientId: string;                     // 閲覧・操作対象の患者UUID
+  currentRole: UserRole;                        // 'patient' | 'family_viewer' | 'family_editor'
+  isReadOnly: boolean;                          // currentRole === 'family_viewer' の場合 true
+  hypoThreshold: number;                        // 低血糖判定閾値 (デフォルト 70 mg/dL)
+  hyperThreshold: number;                       // 高血糖判定閾値 (デフォルト 180 mg/dL)
+  setRole: (role: UserRole) => void;            // ロール切替
+  updateClinicalThresholds: (hypo: number, hyper: number) => void; // 目標閾値の即時配信
 }
 ```
 - **メリット**:
   - 本人利用時（`currentPatientId = auth.uid`, `isReadOnly = false`）と、家族利用時（`currentPatientId = 対象患者ID`, `isReadOnly = true`）で、カレンダー・詳細・分析コンポーネントのロジックやIndexedDBキャッシュ空間を100%共通化できます。
   - `isReadOnly === true` の場合、共通のUIラッパーが「食事記録ボタン」「編集・削除ボタン」「CSV取込ボタン」を自動的に非表示または非活性（disabled）化します。
 
-### 4.5 Cloudflare Workers による Gemini API キーの完全秘匿
-- Google Gemini API キーはクライアント（React）には一切配布せず、**Cloudflare Workers の Secrets（環境変数）** に保存。
-- Reactからは `POST /api/ai/estimate-carb` や `POST /api/ai/clinical-advice` へリクエストを送信。
-- Workers側でリクエスト元のSupabase JWTトークンを検証した上でGemini APIを呼び出す（不正利用・なりすまし防止）。
+### 4.5 Cloudflare Workers BFF (`POST /api/gemini`) による Gemini API キーの完全秘匿 (`src/lib/gemini.ts`)
+- Google Gemini API キーはクライアント（React）や `localStorage` には一切保持せず、**Cloudflare Pages Functions / Workers の Secrets（環境変数）** に保存。
+- React（`src/lib/gemini.ts`）からは同一オリジンの `POST /api/gemini` プロキシエンドポイントへリクエストを送信し、BFF未接続時やオフライン時は内蔵の「日本食品標準成分辞書（約80品目＋部分一致推論）」へ自動フォールバックする。
+- Workers側でリクエスト元の認証コンテキストを検証した上でGemini APIを呼び出す（APIキー漏洩・不正利用防止）。
 
 ### 4.6 ローカル端末（IndexedDB）の保護とログアウト制御
 - 共有端末での利用を考慮し、ユーザーが「ログアウト」をクリックした際は、IndexedDB内の該当ユーザーの全データを確実に消去（`Dexie.delete()`）する。
@@ -334,7 +352,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ------------------------------------------------------------------------------
--- 3. カテゴリマスタ
+-- 3. カテゴリマスタ (論理削除対応の部分ユニークインデックス + 決定論的UUID: src/lib/uuidUtils.ts)
 -- ------------------------------------------------------------------------------
 CREATE TABLE categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -345,9 +363,9 @@ CREATE TABLE categories (
     is_protected BOOLEAN DEFAULT FALSE,
     is_deleted BOOLEAN DEFAULT FALSE,
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT uq_user_type_cat UNIQUE (user_id, target_type, category_name)
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE UNIQUE INDEX uq_user_type_cat_active ON categories (user_id, target_type, category_name) WHERE is_deleted = false;
 CREATE INDEX idx_categories_user ON categories (user_id, target_type);
 
 -- ------------------------------------------------------------------------------
@@ -505,23 +523,26 @@ END $$;
 
 ---
 
-## 6. 本番・ポートフォリオ共通のリアル血糖値データ基盤 & 環境分離戦略
+## 6. 本番環境 (`personal`) とポートフォリオ環境 (`portfolio`) のデータ完全分離戦略
 
-本システムでは、合成された架空のデモデータ（サイン波血糖値など）を一切使用せず、**個人本番環境（`VITE_APP_MODE=personal`）とポートフォリオ公開環境（`VITE_APP_MODE=portfolio`）の双方において、FreeStyleリブレの実測血糖値データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）およびそこからステートマシン抽出した実測の低血糖・高血糖エピソードを使用します。**
+本システムでは、**個人本番環境（`VITE_APP_MODE=personal`）とポートフォリオ公開環境（`VITE_APP_MODE=portfolio`）でUIコンポーネント・臨床計算アルゴリズム・正規UUID採番（`src/lib/uuidUtils.ts`）を100%共通化しつつ、初期データ投入の振る舞いを厳格に分離しています。**
 
-- **実測血糖値曲線に連動したリアルな食事・インスリン・活動データの生成 (`src/lib/realGlucoseLoader.ts`)**:
-  - 実測CGMデータの直近期間（2026年6月〜2026年8月）に対し、各日の実測血糖波形の谷（食前血糖値 `pre_meal_glucose`）と食後60〜180分のピーク（食後血糖値 `post_meal_glucose`）を解析して以下を自動紐づけします：
+- **個人本番環境 (`VITE_APP_MODE=personal` / デフォルト) の完全クリーン起動 & 永続保存**:
+  - 本番環境ではデモ用データファイル（`public/data/real_glucose_recent.json` / `public/data/real_glucose_readings.json`）のプリフェッチやハイドレーション、および既存ユーザーデータの削除を一切行いません。
+  - `vite.config.ts` のビルドプラグインにより、`mode === 'personal'` ビルド時には `dist/data/real_glucose_*.json` を出力ディレクトリから完全除外します。
+  - 初回起動時は `seedFoodMasterIfEmpty(patientId)`（`src/lib/foodSeed.ts`）のみを実行し、カレンダーは常に「今日（当月・当日）」を表示して患者本人および家族による実データ登録・FreeStyleリブレCSV取込を永続保存します。
+- **ポートフォリオ環境 (`VITE_APP_MODE=portfolio`) における実測CGMデモデータの自動生成 (`src/lib/realGlucoseLoader.ts`)**:
+  - ポートフォリオ公開環境では、FreeStyleリブレの実測血糖値データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）および実測の低血糖・高血糖エピソードを使用します。
+  - 実測CGMデータの2026年1月〜2026年8月に対し、各日の実測血糖波形の谷（食前血糖値 `pre_meal_glucose`）と食後ピーク（食後血糖値 `post_meal_glucose`）を解析して以下を自動紐づけします：
     1. **1日3食＋週末の間食（夜食）**: 毎日「朝食」「昼食」「夕食」の3食を記録し、週末（土曜・日曜）には午後の血糖変動や夜間の小ピークに合わせてランダムで「間食」（おやつ・夜食）を記録します。
-    2. **糖質制限（基本100g以内）と高血糖スパイク時の規定超過（最大1.5倍程度）**: 1回の食事は糖質100g以内（40g〜92g）を基本としつつ、実測CGMデータで食後高血糖スパイク（ピーク ≥ 195 mg/dL または上昇幅 Δ ≥ 85 mg/dL）が観測された食事では、ランダムに規定量の1.1〜1.5倍程度（105g〜145g）のメニューを割り当て、血糖値の変動と食事内容が臨床的・視覚的に100%整合するようにします。
-    3. **食べ合わせ（献立の自然さ）の徹底**: ごはん・パン・麺類などの主食重複を禁止し、「パンとみそ汁」「パスタと納豆」などの不自然な食べ合わせを排除した自然な定食・洋食・麺セットを構成します。
-    4. **糖質量に基づく理論的なインスリン単位数**: 超速効型インスリン量は食事の合計糖質量（`total_carbs`）と食前血糖値に基づき、糖質インスリン比（ICR: 約10g/U）＋補正インスリンから理論的に算出します。あわせて毎晩の持効型インスリン（10U）および運動イベントを記録します。
+    2. **糖質制限（基本100g以内）と高血糖スパイク時の規定超過（最大1.5倍程度）**: 1回の食事は糖質100g以内（40g〜92g）を基本としつつ、実測CGMデータで食後高血糖スパイクが観測された食事では105g〜145gのメニューを割り当て、血糖値の変動と食事内容が臨床的・視覚的に100%整合するようにします。
+    3. **食べ合わせ（献立の自然さ）の徹底**: ごはん・パン・麺類などの主食重複を禁止し、自然な定食・洋食・麺セットを構成します。
+    4. **糖質量に基づく理論的なインスリン単位数**: 超速効型インスリン量は食事の合計糖質量（`total_carbs`）と食前血糖値に基づき、糖質インスリン比（ICR: 約10g/U）＋補正インスリンから理論的に算出します。あわせて毎晩の持効型インスリン（10U）および運動イベントを決定論的UUID（`src/lib/uuidUtils.ts`）で記録します。
 - **ポートフォリオモード (`VITE_APP_MODE=portfolio`) の完全オンメモリDB化・物理IndexedDB自動パージ・セキュリティ＆UIハードニング**:
   - ポートフォリオ公開環境では、複数の採用担当者・閲覧者が「食事記録」「よく使う食品の登録・編集・削除」「よく使う活動の登録・編集・削除」「カテゴリ管理」「目標閾値・デフォルトインスリンの設定変更」をすべてインタラクティブに試すことができます。
   - 同時に、閲覧者のスマートフォンやPCの端末ストレージを一切圧迫しないよう、デモモード（`isDemoMemoryOnlyMode()`）では `src/lib/db.ts` が全7テーブルの読み書きをオンメモリマップ（`InMemoryTable`）で処理し、物理 IndexedDB（`cgm_diabetes_manager_db`）には一切データを書き込みません。また、過去アクセス時に残存していた物理 IndexedDB も起動時・`pagehide` 時・手動リセット時に `indexedDB.deleteDatabase('cgm_diabetes_manager_db')` で自動消去し、Service Worker（`public/sw.js`）でも `/data/*.json` の Cache Storage 保存を行いません。
   - 閲覧者による追加・編集・削除はそのページの閲覧セッション中のみオンメモリ上で有効であり、ブラウザを再読み込み（リロード）するか、設定画面の「デモ環境のデータ管理」カードにある「デモデータを初期状態に戻す」ボタンを押すと、食品・活動・カテゴリ・記録・設定のすべてが初期シード状態へ100%クリーンにリセットされます。
   - さらに、デモアプリとしての完成度とセキュリティを担保するため、設定画面の未実装・通常バックアップ・クライアント側ロール切替セクションおよび食事記録・食品登録モーダル内の糖質自動推定ボタンを非表示とし、ECharts カスタムツールチップの動的文字列は `escapeHtml`（`src/lib/utils.ts`）でサニタイズし、Cloudflare Pages 配信ヘッダー（`public/_headers`）で標準セキュリティヘッダーを強制します。
-- **個人本番環境 (`VITE_APP_MODE=personal` / デフォルト) の永続保存**:
-  - 同一のUIコンポーネント・臨床計算アルゴリズム・実測血糖値データを100%共有しつつ、個人本番環境ではクライアント端末の IndexedDB（および将来接続時の Supabase）へ永続保存されます。
 - **Git デュアルリモート管理 & 2系統 CI/CD パイプライン (`scripts/orchestrate-pipeline.mjs`)**:
   - **本番開発リポジトリ (`origin`: Private)**:
     - `main` ブランチを拠点とし、`npm run pipeline:ship:personal`（`--target=personal`）により `VITE_APP_MODE=personal` でビルド・検証し、Private リポジトリ（`origin`）への Push および本番用 Cloudflare Pages（`cgm-diabetes-manager-personal`）へのデプロイを実行します。

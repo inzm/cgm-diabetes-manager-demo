@@ -97,19 +97,23 @@
   - `estimateCarbsLocally` では初期登録食品（`INITIAL_FOODS`）の完全一致・複合食品一致を最優先で参照し、さらに複合語・派生語の優先順位（「焼きそば」＞「そば」、「カレーパン」＞「カレー」、「肉まん・豚まん・水ようかん・いちご大福」＞「肉・水・果物」、「水飴」＞「水」等）を厳密に制御する。
   - **デモアプリ（`isPortfolioMode()`）における非表示制御**: デモアプリでは設定画面の「糖質の自動推定」セクションおよび食事記録・食品登録モーダル内の糖質推定ボタンを非表示とする。
 
-### 3.3 データのバックアップ・初期化 (`src/lib/db.ts`) & デモ環境のデータ管理 (`src/lib/realGlucoseLoader.ts`, `src/components/common/DemoWelcomeModal.tsx`)
+### 3.3 データのバックアップ・初期化 (`src/lib/db.ts`, `src/lib/uuidUtils.ts`) & デモ環境のデータ管理 (`src/lib/realGlucoseLoader.ts`, `src/components/common/DemoWelcomeModal.tsx`)
 - **デモアプリ（`isDemoCsvImportDisabled()`）における案内モーダル表示と「デモ環境のデータ管理」カード表示・通常バックアップセクションの非表示制御**:
   - デモアプリ（オンメモリ動作かつリロード時に初期状態へ自動リセットされるエフェメラル環境）を開いたとき、およびページを再読み込みしたときに**毎回**、コンパクトな案内モーダル（`src/components/common/DemoWelcomeModal.tsx`：`デモ環境について`、フォーカストラップ＆スワイプ抑止付き）を表示し、データが初期状態にリセットされたことの目印として機能させる。
   - 設定画面では、通常モード用の「データのバックアップ・初期化」セクションを非表示とし、代わりにコンパクトな **「デモ環境のデータ管理」** カードを表示する。
-  - カード内にはモーダルと同じく（）書きを含めず「このデモアプリで登録・変更した内容は、お使いのスマートフォンやPCには保存されません。ページを再読み込みするかタブを閉じると、登録・変更した内容は破棄され、初期状態に戻ります。」と明記し、確認ダイアログ付きの **「デモデータを初期状態に戻す」** ボタンを配置する。実行時には `resetDemoDataToInitialState` により食品・活動・カテゴリ・食事記録・目標範囲設定・デフォルトインスリン設定をすべて初期シード状態へ戻し、物理 IndexedDB もパージした上で「デモデータを初期状態に戻しました。」とフィードバックを表示する。
+  - カード内にはモーダルと同じく（）書きを含めず「このデモアプリで登録・変更した内容は、お使いのスマートフォンやPCには保存されません。ページを再読み込みするかタブを閉じると、登録・変更した内容は破棄され、初期状態に戻ります。」と明記し、確認ダイアログ付きの **「デモデータを初期状態に戻す」** ボタンを配置する。実行時には `resetDemoDataToInitialState` により食品・活動・カテゴリ・食事記録・目標範囲設定・デフォルトインスリン設定をすべて初期シード状態へ戻し、全4種メモリキャッシュも破棄した上で「デモデータを初期状態に戻しました。」とフィードバックを表示する。
 - **保存データ件数の表示（通常モード・物理テーブル名の非表示化）**:
   - 血糖データ、食事・活動記録、食事明細、登録食品、登録活動、カテゴリの各件数をユーザー目線の名称で表示し、`(libre_readings)` 等の物理テーブル名は表示しない。
 - **バックアップの保存（JSONエクスポート）**:
   - 全7テーブルをまとめたバックアップJSONを `Blob` + `URL.createObjectURL` 方式（大容量データでもブラウザのURI長制限を超過しない方式）でダウンロード保存。
-- **バックアップからの復元（JSONインポート）**:
-  - ファイル選択時に件数を確認するカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）を表示し、承認後に全レコードの `user_id` を現在の患者ID（`currentPatientId`）へ正規化した上でトランザクション内で全テーブルへ安全に復元（`bulkPut`）し、`invalidateFoodMasterMemoryCache(currentPatientId)` で食品・活動画面のオンメモリキャッシュも即時無効化する。
-- **記録データを初期化（全削除）**:
-  - 共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認した上で、実行中のバックグラウンドデータ同期（`cancelBackgroundHydration`）を停止し、血糖・食事・活動記録をすべて消去してよく使う食品・活動・カテゴリの初期プリセット（`src/lib/foodSeed.ts`）のみを再シードしたクリーンな初期状態に戻す（`invalidateFoodMasterMemoryCache` によるキャッシュクリアを含む。架空のデモデータは生成しない）。
+- **バックアップからの復元（JSONインポート: `restorePatientBackupPayload`）**:
+  - ファイル選択時に件数を確認するカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）を表示する。
+  - 承認後、`markPatientManuallyCleared(currentPatientId)` および `cancelBackgroundHydration(currentPatientId)` を実行した上で、トランザクション内で **既存7テーブルの該当患者レコードをクリア（削除）してから** バックアップデータを復元（`bulkPut`）する。
+  - 復元時には `src/lib/uuidUtils.ts` の `ensureUuid` を用いて、旧形式の非UUID文字列ID（`id`, `category_id`, `event_id`）が存在しても100%正規UUIDへ自動マイグレーション変換し、食品・活動・カテゴリが空のバックアップの場合は `seedFoodMasterIfEmpty(currentPatientId)` で初期プリセットを補完する。
+  - 続けて目標範囲およびデフォルトインスリン等のフォーム state を即時更新し、**全4種メモリキャッシュ（`invalidateFoodMasterMemoryCache`, `clearCalendarMonthlyCache`, `invalidateAnalysisDatasetCache`, `invalidateInMemoryRecentCache`）を一括破棄（`invalidateAllPatientMemoryCaches`）** する。
+- **記録データを初期化（全削除: `resetPatientDataAndInvalidateCaches`）**:
+  - 共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認した上で、`markPatientManuallyCleared(currentPatientId)` および `cancelBackgroundHydration(currentPatientId)` によりバックグラウンド同期および同一セッション内でのデモ再ハイドレーションを完全抑止する。
+  - 血糖・食事・活動記録および設定をすべて消去してよく使う食品・活動・カテゴリの初期プリセット（`src/lib/foodSeed.ts`：決定論的UUID）のみを再シードし、**全4種メモリキャッシュ（`invalidateFoodMasterMemoryCache`, `clearCalendarMonthlyCache`, `invalidateAnalysisDatasetCache`, `invalidateInMemoryRecentCache`）を確実に破棄**したクリーンな初期状態に戻す（架空のデモデータは生成しない）。
 
 ### 3.4 家族見守り共有・クラウド同期（実装予定表示 & デモアプリでの非表示化）
 - 永続化やバックエンド連携を伴わない架空の家族メンバー一覧（ハリボテUI）は一切表示しない。
@@ -137,5 +141,5 @@
   - 画面内から物理テーブル名や開発者用語が排除され、重複ヘッダーカードのないスッキリした構成になっていること。
 - [x] **DoD-4: デモアプリにおけるページアクセス時＆再読み込み時の案内モーダル毎回表示・不要セクション非表示化・「デモ環境のデータ管理」手動リセット提供**
   - デモアプリ（`isDemoCsvImportDisabled()`）ではページアクセス時および再読み込み（リロード）時に毎回案内モーダル（`DemoWelcomeModal.tsx`：`デモ環境について`）が表示されて初期化の目印となり、設定画面では未実装ボタン・通常バックアップ初期化・クライアント側ロール切替セクションが非表示となり、「デモ環境のデータ管理」カードから端末への非保存明示とワンクリック初期状態リセットが行えること。
-- [x] **DoD-5: バックアップ保存・確認付き復元・クリーン初期化 & 家族閲覧ロール（`isReadOnly`）での不可侵保護**
-  - バックアップの保存・確認ダイアログ付き復元・架空データなしのクリーン初期化が正常に動作し、閲覧専用時に設定変更や復元・初期化がロックされること。
+- [x] **DoD-5: バックアップ保存・確認付きクリーン復元（UUIDマイグレーション付き）・クリーン初期化・全4種キャッシュ破棄 & 家族閲覧ロール（`isReadOnly`）での不可侵保護**
+  - バックアップの保存、既存テーブル消去＆UUID正規化を伴う確認ダイアログ付き復元、架空データなしのクリーン初期化、および全4種メモリキャッシュ破棄が正常に動作し、閲覧専用時に設定変更や復元・初期化がロックされること。

@@ -19,7 +19,9 @@
 
 ## 2. 主な機能と画面構成（解説動画・デモウォークスルー対応）
 
-本番環境（`VITE_APP_MODE=personal`）とポートフォリオ公開環境（`VITE_APP_MODE=portfolio`）で **100%同一のUIコンポーネント・臨床計算ロジック・実測血糖値データ** が動作します。ポートフォリオ環境では、閲覧者が食事記録・食品登録・活動登録・編集・削除をすべてインタラクティブに試せる一方、ページ再読み込み時には永続保存されず初期状態へ自動リセットされます。
+本番環境（`VITE_APP_MODE=personal`）とポートフォリオ公開環境（`VITE_APP_MODE=portfolio`）で **100%同一のUIコンポーネント・臨床計算ロジック** が動作します。
+- **本番モード（`VITE_APP_MODE=personal`）**: デモデータ（`real_glucose_*.json`）の自動投入およびバンドル同梱を一切行わず、初期食品・活動プリセットのみを投入したクリーンな IndexedDB 環境で起動します。ユーザー自身がリブレCSV取込や日々の食事・インスリン記録を永続管理します。
+- **ポートフォリオ公開モード（`VITE_APP_MODE=portfolio`）**: 閲覧者が実測CGMデータ（79,479件）をもとに食事記録・食品登録・活動登録・編集・削除をすべてインタラクティブに試せる一方、ページ再読み込み時には永続保存されず初期状態へ自動リセットされます。
 
 | 画面・機能 | 概要・注目ポイント | 詳細仕様書 (SSOT) |
 | :--- | :--- | :--- |
@@ -65,8 +67,8 @@ flowchart LR
    - 合成されたサイン波デモデータは一切使用せず、FreeStyleリブレの実測データ（[`public/data/real_glucose_readings.json`](public/data/real_glucose_readings.json)）を使用。「28分以上の正常域継続でエピソード確定」「45分以上のセンサー欠損ギャップで区切り」という臨床ステートマシンにより、カレンダー・日次ドロワー・分析画面の全箇所で異常値件数が100%一致します。
 2. **タイムゾーンズレ（-9時間問題）を根絶する Wall-Clock 日時エンジン（[`src/lib/dateUtils.ts`](src/lib/dateUtils.ts)）**:
    - `toISOString()` の UTC 変換によって「22時の夕食や就寝前インスリンが前日・翌日にズレる」問題を防ぐため、日時文字列の生成・比較・曜日判定をすべてローカル時刻基準のヘルパーに統一しています。
-3. **5重の自動品質ゲートウェイ（[`docs/Web_Project/TEST_PLAN.md`](docs/Web_Project/TEST_PLAN.md)）**:
-   - 仕様書とコードの同期・秘密情報検査・開発者用語排除（`npm run test:docs`）、厳格な型検査（`npm run typecheck`）、画面間データ整合性テスト（`npm test`）、チャンク最適化ビルド（`npm run build`）、および開発サーバー全28モジュールの実通信スモークテスト（`npm run test:smoke`）を Git フックと CI で自動化しています。
+3. **7重の自動品質ゲートウェイ（[`docs/Web_Project/TEST_PLAN.md`](docs/Web_Project/TEST_PLAN.md)）**:
+   - 仕様書とコードの同期・秘密情報検査・開発者用語排除（`npm run test:docs`）、厳格な型検査（`npm run typecheck`）、画面間データ整合性テスト（`npm test`）、チャンク最適化ビルド（`npm run build`）、開発サーバー全31エンドポイントの実通信スモークテスト（`npm run test:smoke`）、および Playwright 全12スイート（`E2E-1`〜`E2E-12`）のブラウザE2Eリグレッションゲート（`npm run test:e2e:regression`）を Git フックと CI で自動化しています。
 
 ---
 

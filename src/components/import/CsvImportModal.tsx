@@ -2,7 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import { usePatient } from '@/contexts/PatientContext';
 import { db } from '@/lib/db';
 import { bindMealGlucoseFromReadings } from '@/lib/anomalyExtractor';
-import { isDemoCsvImportDisabled } from '@/lib/realGlucoseLoader';
+import {
+  invalidateAnalysisDatasetCache,
+  invalidateInMemoryRecentCache,
+  isDemoCsvImportDisabled,
+} from '@/lib/realGlucoseLoader';
+import { clearCalendarMonthlyCache } from '@/components/calendar/CalendarView';
 import {
   X,
   UploadCloud,
@@ -156,6 +161,9 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
 
           // 先行して登録されていた食事記録に対し、取り込まれた履歴から食前・食後血糖値を自動紐づけ
           await bindMealGlucoseFromReadings(currentPatientId);
+          clearCalendarMonthlyCache();
+          invalidateAnalysisDatasetCache();
+          invalidateInMemoryRecentCache(currentPatientId);
 
           setCompleteStats(data.stats);
           setIsProcessing(false);

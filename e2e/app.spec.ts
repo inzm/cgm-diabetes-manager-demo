@@ -37,7 +37,7 @@ function parseSummaryInsulin(summaryText: string): number {
   return m ? parseFloat(m[1]) : 0;
 }
 
-test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-9)', () => {
+test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-12)', () => {
   let runtimeErrors: string[] = [];
 
   test.beforeEach(async ({ page }, testInfo) => {
@@ -1218,6 +1218,87 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await page.reload();
     await expect(page.getByText('2026年 8月')).toBeVisible();
     await expect(welcomeModal).toHaveCount(0);
+  });
+
+  test('E2E-12: 論理削除済み同名カテゴリの復活（UNIQUE衝突防止）・手動初期化後のデモデータ再ハイドレーション抑止 & 全ID正規UUID検証 @regression', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, boolean>).__CGM_E2E_ALLOW_CSV_IMPORT__ = true;
+    });
+    await page.goto('/');
+    await expect(page.getByText('2026年 8月')).toBeVisible();
+
+    // 1. カテゴリ削除後に同じ名前のカテゴリを再追加すると、エラーにならず既存レコードが復活（is_deleted: false）すること
+    await page.getByRole('button', { name: '食品・活動' }).first().click();
+    await expect(page.getByRole('button', { name: /よく使う食品/ })).toBeVisible();
+    await page.getByRole('button', { name: 'カテゴリを編集' }).click();
+    await expect(page.getByRole('heading', { name: '食品カテゴリ管理' })).toBeVisible();
+
+    const seasoningRow = page.locator('div.justify-between', {
+      has: page.getByText('調味料・その他', { exact: true }),
+    });
+    await seasoningRow.locator('button[title="削除"]').click();
+    await page.getByRole('button', { name: '削除する' }).click();
+    await expect(seasoningRow).toHaveCount(0);
+
+    // 同じ「調味料・その他」を再追加して復活することを確認
+    await page.getByPlaceholder('新しいカテゴリ名を入力...').fill('調味料・その他');
+    await page.getByRole('button', { name: '追加', exact: true }).click();
+    await expect(
+      page.locator('div.justify-between', {
+        has: page.getByText('調味料・その他', { exact: true }),
+      })
+    ).toBeVisible();
+    await page.getByRole('button', { name: '閉じる' }).click();
+
+    // 2. 設定画面で「記録データを初期化」を実行した後、カレンダー・分析画面に遷移してもデモデータが勝手に再ハイドレーションされないこと
+    await page.getByRole('button', { name: '設定' }).first().click();
+    await expect(page.getByText('データのバックアップ・初期化')).toBeVisible();
+    await page.getByRole('button', { name: '記録データを初期化' }).click();
+    await page.getByRole('button', { name: '初期化する' }).click();
+    await expect(
+      page.getByText('血糖・食事・活動の記録データをすべて消去し、よく使う食品・活動を初期状態に戻しました。')
+    ).toBeVisible();
+
+    await page.getByRole('button', { name: 'カレンダー' }).first().click();
+    const desktopSummary = page.locator('.sticky.top-12 .hidden.sm\\:flex');
+    await expect(desktopSummary).toBeVisible();
+    expect(parseSummaryCarbs(await desktopSummary.innerText())).toBe(0);
+    expect(parseSummaryInsulin(await desktopSummary.innerText())).toBe(0);
+
+    await page.getByRole('button', { name: '分析' }).first().click();
+    await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
+
+    // 3. バックアップJSONをエクスポートし、シードされた全テーブルIDおよび外部キーが正規UUID形式であることを検証
+    await page.getByRole('button', { name: '設定' }).first().click();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'バックアップを保存' }).click();
+    const download = await downloadPromise;
+    const backupFilePath = path.join(os.tmpdir(), `cgm_uuid_e2e_${Date.now()}.json`);
+    await download.saveAs(backupFilePath);
+
+    const backupContent = JSON.parse(fs.readFileSync(backupFilePath, 'utf8'));
+    fs.unlinkSync(backupFilePath);
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    expect(backupContent.libreReadings).toHaveLength(0);
+    expect(backupContent.events).toHaveLength(0);
+    expect(backupContent.categories.length).toBeGreaterThan(0);
+    expect(backupContent.foodMaster.length).toBeGreaterThan(0);
+    expect(backupContent.eventMaster.length).toBeGreaterThan(0);
+
+    for (const c of backupContent.categories) {
+      expect(c.id).toMatch(uuidRegex);
+    }
+    for (const f of backupContent.foodMaster) {
+      expect(f.id).toMatch(uuidRegex);
+      expect(f.category_id).toMatch(uuidRegex);
+    }
+    for (const em of backupContent.eventMaster) {
+      expect(em.id).toMatch(uuidRegex);
+      expect(em.category_id).toMatch(uuidRegex);
+    }
   });
 });
 

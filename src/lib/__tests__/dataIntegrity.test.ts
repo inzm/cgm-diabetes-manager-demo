@@ -476,6 +476,405 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       }
     });
   });
+
+  describe('9. 全テーブルIDの正規UUID統一 (uuidUtils.ts / foodSeed.ts / anomalyExtractor.ts / realGlucoseLoader.ts)', () => {
+    it('deterministicUuid が常に RFC 4122 準拠の標準UUID形式 (xxxxxxxx-xxxx-5xxx-[89ab]xxx-xxxxxxxxxxxx) を返し、シードに対して決定論的であること', async () => {
+      const {
+        UUID_REGEX,
+        UUID_V5_DETERMINISTIC_REGEX,
+        isValidUuid,
+        deterministicUuid,
+        ensureUuid,
+      } = await import('../uuidUtils');
+
+      const id1 = deterministicUuid(`${patientId}_cat_food_staple`);
+      const id2 = deterministicUuid(`${patientId}_cat_food_staple`);
+      const id3 = deterministicUuid(`${patientId}_cat_food_main`);
+
+      expect(id1).toBe(id2);
+      expect(id1).not.toBe(id3);
+      expect(UUID_REGEX.test(id1)).toBe(true);
+      expect(UUID_V5_DETERMINISTIC_REGEX.test(id1)).toBe(true);
+      expect(isValidUuid(id1)).toBe(true);
+      expect(isValidUuid('00000000-0000-0000-0000-000000000001_cat_food_staple')).toBe(false);
+
+      // ensureUuid は既に有効なUUIDならそのまま返し、非UUID文字列なら決定論的UUIDへ変換すること
+      expect(ensureUuid(id1, 'fallback')).toBe(id1);
+      const migrated = ensureUuid('legacy_non_uuid_id', 'fallback');
+      expect(isValidUuid(migrated)).toBe(true);
+      expect(migrated).toBe(deterministicUuid('legacy_non_uuid_id'));
+    });
+
+    it('初期シード・異常値抽出・デモイベント生成で作成される全レコードのIDおよび外部キーが100%正規UUID形式であること', async () => {
+      const { isValidUuid, deterministicUuid } = await import('../uuidUtils');
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { seedFoodMasterIfEmpty } = await import('../foodSeed');
+      const { reevaluatePatientAnomalyEvents } = await import('../anomalyExtractor');
+
+      clearInMemoryDemoDatabase();
+      await seedFoodMasterIfEmpty(patientId);
+
+      const cats = await db.categories.where('user_id').equals(patientId).toArray();
+      const foods = await db.food_master.where('user_id').equals(patientId).toArray();
+      const eventMasters = await db.event_master.where('user_id').equals(patientId).toArray();
+
+      expect(cats.length).toBeGreaterThan(0);
+      for (const c of cats) {
+        expect(isValidUuid(c.id)).toBe(true);
+      }
+      for (const f of foods) {
+        expect(isValidUuid(f.id)).toBe(true);
+        if (f.category_id) {
+          expect(isValidUuid(f.category_id)).toBe(true);
+        }
+      }
+      for (const em of eventMasters) {
+        expect(isValidUuid(em.id)).toBe(true);
+        if (em.category_id) {
+          expect(isValidUuid(em.category_id)).toBe(true);
+        }
+      }
+
+      // 血糖測定値と生成イベント・明細・異常値再判定のIDがすべて正規UUIDであること
+      const mockReadings: LibreReading[] = [
+        {
+          id: deterministicUuid(`${patientId}_2026-08-10T08:00:00.000Z`),
+          user_id: patientId,
+          timestamp: '2026-08-10T08:00:00.000Z',
+          glucose_value: 62,
+          scan_type: 'Historic',
+          created_at: '2026-08-10T08:00:00.000Z',
+        },
+        {
+          id: deterministicUuid(`${patientId}_2026-08-10T08:35:00.000Z`),
+          user_id: patientId,
+          timestamp: '2026-08-10T08:35:00.000Z',
+          glucose_value: 95,
+          scan_type: 'Historic',
+          created_at: '2026-08-10T08:35:00.000Z',
+        },
+      ];
+      await db.libre_readings.bulkPut(mockReadings);
+
+      const { mealAndActivityEvents, mealDetails } = generateRealisticEventsFromReadings(
+        mockReadings,
+        patientId,
+        '2026-08-10T00:00:00.000Z'
+      );
+      for (const ev of mealAndActivityEvents) {
+        expect(isValidUuid(ev.id)).toBe(true);
+      }
+      for (const md of mealDetails) {
+        expect(isValidUuid(md.id)).toBe(true);
+        expect(isValidUuid(md.event_id)).toBe(true);
+      }
+
+      await reevaluatePatientAnomalyEvents(patientId, 70, 180);
+      const anomalyEvents = await db.events
+        .where('user_id')
+        .equals(patientId)
+        .filter((e) => !e.is_deleted && (e.event_type === '低血糖' || e.event_type === '高血糖'))
+        .toArray();
+      expect(anomalyEvents.length).toBe(1);
+      expect(isValidUuid(anomalyEvents[0].id)).toBe(true);
+
+      clearInMemoryDemoDatabase();
+    });
+  });
+
+  describe('10. 論理削除済みカテゴリの再登録復活とUNIQUE制約衝突防止 (CategoryManageModal.tsx)', () => {
+    it('論理削除済み (is_deleted: true) の同名カテゴリを再追加した際、新規UUIDを作らず既存レコードを is_deleted: false に復活させること', async () => {
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { addOrReviveCategory } = await import('@/components/foods/CategoryManageModal');
+      const { isValidUuid } = await import('../uuidUtils');
+
+      clearInMemoryDemoDatabase();
+
+      // 1. 新規カテゴリ追加
+      const created = await addOrReviveCategory({
+        userId: patientId,
+        targetType: 'food',
+        categoryName: 'テスト特別カテゴリ',
+        displayOrder: 10,
+      });
+      expect(isValidUuid(created.id)).toBe(true);
+      expect(created.is_deleted).toBe(false);
+
+      // 2. アクティブな同名カテゴリの重複追加はエラーになること
+      await expect(
+        addOrReviveCategory({
+          userId: patientId,
+          targetType: 'food',
+          categoryName: 'テスト特別カテゴリ',
+          displayOrder: 11,
+        })
+      ).rejects.toThrow('同じ名前のカテゴリがすでに存在します');
+
+      // 3. 論理削除 (is_deleted: true)
+      await db.categories.update(created.id, { is_deleted: true });
+
+      // 4. 同じ名前で再追加すると、別UUIDを増やさず元のUUIDのまま is_deleted: false に復活すること
+      const revived = await addOrReviveCategory({
+        userId: patientId,
+        targetType: 'food',
+        categoryName: 'テスト特別カテゴリ',
+        displayOrder: 12,
+      });
+      expect(revived.id).toBe(created.id);
+      expect(revived.is_deleted).toBe(false);
+
+      const allSameName = await db.categories
+        .where('user_id')
+        .equals(patientId)
+        .filter((c) => c.target_type === 'food' && c.category_name === 'テスト特別カテゴリ')
+        .toArray();
+      expect(allSameName).toHaveLength(1);
+
+      clearInMemoryDemoDatabase();
+    });
+  });
+
+  describe('11. 本番モード(personal)でのデモデータ自動投入ゼロ保証 & バックアップ復元・キャッシュ全破棄検証', () => {
+    it('personal モード (isPortfolioMode() === false) では ensureRealGlucoseDataLoaded がデモデータを一切投入せず、既存ユーザーデータを保持すること', async () => {
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { ensureRealGlucoseDataLoaded, clearPatientManuallyCleared } = await import(
+        '../realGlucoseLoader'
+      );
+      const { isValidUuid, deterministicUuid } = await import('../uuidUtils');
+
+      clearInMemoryDemoDatabase();
+      clearPatientManuallyCleared(patientId);
+
+      // ユーザーが手動登録した食事イベント1件を事前に保存
+      const userMealId = deterministicUuid(`${patientId}_user_manual_meal_1`);
+      await db.events.add({
+        id: userMealId,
+        user_id: patientId,
+        event_datetime: '2026-11-11T12:00:00.000Z',
+        event_type: '食事',
+        timing_category: '昼食',
+        total_carbs: 62.5,
+        insulin_units: 6,
+        is_deleted: false,
+        created_at: '2026-11-11T12:00:00.000Z',
+        updated_at: '2026-11-11T12:00:00.000Z',
+      });
+
+      // personal モード (デフォルト) で実行
+      const hydrated = await ensureRealGlucoseDataLoaded(patientId);
+      expect(hydrated).toBe(false);
+
+      // デモの血糖測定値は0件のままであり、ユーザーの食事記録は消されずに残っていること
+      expect(await db.libre_readings.where('user_id').equals(patientId).count()).toBe(0);
+      const events = await db.events.where('user_id').equals(patientId).toArray();
+      expect(events).toHaveLength(1);
+      expect(events[0].id).toBe(userMealId);
+
+      // 初期食品プリセットのみ正規UUIDで投入されていること
+      const foods = await db.food_master.where('user_id').equals(patientId).toArray();
+      expect(foods.length).toBe(INITIAL_FOODS.length);
+      expect(foods.every((f) => isValidUuid(f.id))).toBe(true);
+
+      clearInMemoryDemoDatabase();
+    });
+
+    it('restorePatientBackupPayload が旧非UUIDデータを正規UUIDへマイグレーション変換して復元し、resetPatientDataAndInvalidateCaches が全データをクリアして手動削除抑止フラグを立てること', async () => {
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const {
+        restorePatientBackupPayload,
+        resetPatientDataAndInvalidateCaches,
+      } = await import('@/components/settings/SettingsView');
+      const { isPatientManuallyCleared, clearPatientManuallyCleared } = await import(
+        '../realGlucoseLoader'
+      );
+      const { isValidUuid } = await import('../uuidUtils');
+      const {
+        hasInMemoryRecentCache,
+        primeInMemoryRecentCache,
+      } = await import('../realGlucoseLoader');
+      const {
+        getAnalysisBoundaryCache,
+        setAnalysisBoundaryCache,
+      } = await import('../analysisCalculators');
+      const {
+        hasFoodMasterMemoryCache,
+        primeFoodMasterMemoryCache,
+      } = await import('../../components/foods/FoodMasterView');
+      const {
+        hasCalendarMonthlyCache,
+        primeCalendarMonthlyCache,
+      } = await import('../../components/calendar/CalendarView');
+
+      clearInMemoryDemoDatabase();
+      clearPatientManuallyCleared(patientId);
+
+      // 復元前に全4種のオンメモリキャッシュを意図的にセット
+      primeFoodMasterMemoryCache(patientId, {
+        foods: [],
+        foodCategories: [],
+        eventItems: [],
+        eventCategories: [],
+      });
+      primeCalendarMonthlyCache(patientId, '2026-08-25');
+      setAnalysisBoundaryCache(patientId, 'sig-before-restore', '2026-08-01', '2026-08-25', [], []);
+      primeInMemoryRecentCache(patientId, [], [], []);
+
+      expect(hasFoodMasterMemoryCache(patientId)).toBe(true);
+      expect(hasCalendarMonthlyCache()).toBe(true);
+      expect(getAnalysisBoundaryCache(patientId)).not.toBeNull();
+      expect(hasInMemoryRecentCache(patientId)).toBe(true);
+
+      // 旧形式（非UUID）および重複同名カテゴリ（削除済み＋有効）・孤児明細を含むバックアップペイロードを復元
+      const legacyPayload = {
+        libre_readings: [
+          {
+            id: `${patientId}_2026-11-01T08:00:00.000Z`,
+            user_id: patientId,
+            timestamp: '2026-11-01T08:00:00.000Z',
+            glucose_value: 118,
+            scan_type: 'Historic' as const,
+            created_at: '2026-11-01T08:00:00.000Z',
+          },
+        ],
+        events: [
+          {
+            id: `${patientId}_meal_2026-11-01_breakfast`,
+            user_id: patientId,
+            event_datetime: '2026-11-01T08:00:00.000Z',
+            event_type: '食事' as const,
+            timing_category: '朝食' as const,
+            total_carbs: 55.2,
+            insulin_units: 7,
+            is_deleted: false,
+            created_at: '2026-11-01T08:00:00.000Z',
+            updated_at: '2026-11-01T08:00:00.000Z',
+          },
+        ],
+        meal_details: [
+          {
+            id: `${patientId}_meal_2026-11-01_breakfast_item_0`,
+            user_id: patientId,
+            event_id: `${patientId}_meal_2026-11-01_breakfast`,
+            food_name: 'ごはん',
+            amount: 1,
+            unit: '杯(150g)',
+            carbs: 55.2,
+            is_deleted: false,
+            created_at: '2026-11-01T08:00:00.000Z',
+            updated_at: '2026-11-01T08:00:00.000Z',
+          },
+          {
+            id: '',
+            user_id: patientId,
+            event_id: '',
+            food_name: '孤児レコード（event_id欠損）',
+            amount: 1,
+            unit: '個',
+            carbs: 10,
+            is_deleted: false,
+            created_at: '2026-11-01T08:00:00.000Z',
+            updated_at: '2026-11-01T08:00:00.000Z',
+          },
+        ],
+        categories: [
+          {
+            id: `${patientId}_cat_food_custom_old_deleted`,
+            user_id: patientId,
+            target_type: 'food' as const,
+            category_name: 'カスタム主食',
+            display_order: 1,
+            is_protected: false,
+            is_deleted: true,
+            created_at: '2026-10-01T08:00:00.000Z',
+            updated_at: '2026-10-01T08:00:00.000Z',
+          },
+          {
+            id: `${patientId}_cat_food_custom`,
+            user_id: patientId,
+            target_type: 'food' as const,
+            category_name: 'カスタム主食',
+            display_order: 2,
+            is_protected: false,
+            is_deleted: false,
+            created_at: '2026-11-01T08:00:00.000Z',
+            updated_at: '2026-11-01T08:00:00.000Z',
+          },
+        ],
+        food_master: [
+          {
+            id: `${patientId}_food_custom_1`,
+            user_id: patientId,
+            category_id: `${patientId}_cat_food_custom_old_deleted`,
+            food_name: '玄米ごはん',
+            base_amount: 1,
+            unit: '杯',
+            carbs_per_unit: 51.3,
+            is_deleted: false,
+            created_at: '2026-11-01T08:00:00.000Z',
+            updated_at: '2026-11-01T08:00:00.000Z',
+          },
+        ],
+      };
+
+      await restorePatientBackupPayload(patientId, legacyPayload);
+
+      // バックアップ復元時に全4種のオンメモリキャッシュが確実に破棄されていること
+      expect(hasFoodMasterMemoryCache(patientId)).toBe(false);
+      expect(hasCalendarMonthlyCache()).toBe(false);
+      expect(getAnalysisBoundaryCache(patientId)).toBeNull();
+      expect(hasInMemoryRecentCache(patientId)).toBe(false);
+
+      const readings = await db.libre_readings.where('user_id').equals(patientId).toArray();
+      const events = await db.events.where('user_id').equals(patientId).toArray();
+      const details = await db.meal_details.where('user_id').equals(patientId).toArray();
+      const cats = await db.categories.where('user_id').equals(patientId).toArray();
+      const foods = await db.food_master.where('user_id').equals(patientId).toArray();
+
+      expect(readings).toHaveLength(1);
+      expect(isValidUuid(readings[0].id)).toBe(true);
+
+      expect(events).toHaveLength(1);
+      expect(isValidUuid(events[0].id)).toBe(true);
+
+      // 孤児明細は除外され、有効な食事明細の event_id が親イベントの新UUIDと一致していること
+      expect(details).toHaveLength(1);
+      expect(isValidUuid(details[0].id)).toBe(true);
+      expect(details[0].event_id).toBe(events[0].id);
+
+      // 同名カテゴリは有効な1件に統合され、旧削除済みIDを参照していた食品の category_id も生存カテゴリUUIDへリマップされていること
+      expect(cats).toHaveLength(1);
+      expect(cats[0].is_deleted).toBe(false);
+      expect(isValidUuid(cats[0].id)).toBe(true);
+      expect(foods).toHaveLength(1);
+      expect(isValidUuid(foods[0].id)).toBe(true);
+      expect(foods[0].category_id).toBe(cats[0].id);
+
+      // 再び全4種キャッシュをセットしてからデータ初期化を実行し、全4種キャッシュが破棄されることを検証
+      primeFoodMasterMemoryCache(patientId, {
+        foods: [],
+        foodCategories: [],
+        eventItems: [],
+        eventCategories: [],
+      });
+      primeCalendarMonthlyCache(patientId, '2026-11-01');
+      setAnalysisBoundaryCache(patientId, 'sig-before-reset', '2026-11-01', '2026-11-01', [], []);
+      primeInMemoryRecentCache(patientId, [], [], []);
+
+      await resetPatientDataAndInvalidateCaches(patientId);
+      expect(hasFoodMasterMemoryCache(patientId)).toBe(false);
+      expect(hasCalendarMonthlyCache()).toBe(false);
+      expect(getAnalysisBoundaryCache(patientId)).toBeNull();
+      expect(hasInMemoryRecentCache(patientId)).toBe(false);
+
+      expect(await db.libre_readings.where('user_id').equals(patientId).count()).toBe(0);
+      expect(await db.events.where('user_id').equals(patientId).count()).toBe(0);
+      expect(isPatientManuallyCleared(patientId)).toBe(true);
+
+      clearPatientManuallyCleared(patientId);
+      clearInMemoryDemoDatabase();
+    });
+  });
 });
+
 
 

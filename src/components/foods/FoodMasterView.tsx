@@ -50,6 +50,17 @@ export function invalidateFoodMasterMemoryCache(patientId?: string): void {
   }
 }
 
+export function hasFoodMasterMemoryCache(patientId: string): boolean {
+  return foodMasterMemoryCache.has(patientId);
+}
+
+export function primeFoodMasterMemoryCache(
+  patientId: string,
+  entry: FoodMasterCacheEntry
+): void {
+  foodMasterMemoryCache.set(patientId, entry);
+}
+
 export const FoodMasterView: React.FC = () => {
   const { currentPatientId, isReadOnly } = usePatient();
 

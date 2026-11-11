@@ -8,16 +8,17 @@ import { HealthEvent, LibreReading, MealDetail } from '@/types/database';
 import { extractAnomalyEventsFromReadings } from './anomalyExtractor';
 import { invalidateAnalysisDatasetCache } from './analysisCalculators';
 import { INITIAL_FOODS, resetFoodSeedSession, seedFoodMasterIfEmpty } from './foodSeed';
+import { deterministicUuid } from './uuidUtils';
 
 export { invalidateAnalysisDatasetCache };
 
-const DATASET_VERSION_KEY = 'cgm_real_dataset_version_v4';
-const RECENT_CUTOFF_ISO = '2026-07-15T00:00:00.000Z';
+export const RECENT_CUTOFF_ISO = '2026-07-15T00:00:00.000Z';
 const FULL_READINGS_EXPECTED_MIN = 75000;
 const BACKGROUND_CHUNK_SIZE = 6000;
 
 let activeInitPromise: Promise<boolean> | null = null;
 const initializedPatients = new Set<string>();
+const manuallyClearedPatients = new Set<string>();
 const activeBackgroundHydrations = new Map<string, Promise<void>>();
 const recentPersistencePromises = new Map<string, Promise<void>>();
 const hydrationGenerations = new Map<string, number>();
@@ -34,75 +35,6 @@ const inMemoryRecentCache = new Map<
     persisted: boolean;
   }
 >();
-
-// ブラウザ起動と同時に直近42日分JSON（約18KB gzip）のネットワーク取得を先行開始
-let preloadedRecentTuplesPromise: Promise<[string, number, number][] | null> | null = null;
-
-function getOrStartRecentTuplesFetch(): Promise<[string, number, number][] | null> {
-  if (!preloadedRecentTuplesPromise && typeof window !== 'undefined' && typeof fetch !== 'undefined') {
-    preloadedRecentTuplesPromise = (async () => {
-      try {
-        let res = await fetch('/data/real_glucose_recent.json');
-        let loadedFullFileDirectly = false;
-        if (!res.ok) {
-          res = await fetch('/data/real_glucose_readings.json');
-          loadedFullFileDirectly = true;
-        }
-        if (!res.ok) return null;
-        const rawTuples = (await res.json()) as [string, number, number][];
-        if (!Array.isArray(rawTuples) || rawTuples.length === 0) return null;
-        return loadedFullFileDirectly ? rawTuples.filter((t) => t[0] >= '2026-07-15') : rawTuples;
-      } catch {
-        return null;
-      }
-    })();
-  }
-  return preloadedRecentTuplesPromise ?? Promise.resolve(null);
-}
-
-// モジュール評価時点で即座にプリフェッチ開始（Vitest等のテスト環境ではスキップ）
-if (
-  typeof window !== 'undefined' &&
-  typeof fetch !== 'undefined' &&
-  !(import.meta.env && import.meta.env.MODE === 'test')
-) {
-  void getOrStartRecentTuplesFetch();
-}
-
-export function getInMemoryRecentSlice(
-  patientId: string,
-  startDate: string,
-  endDate: string,
-  hypoThreshold: number,
-  hyperThreshold: number
-): { readings: LibreReading[]; events: HealthEvent[] } | null {
-  if (startDate < RECENT_CUTOFF_ISO) return null;
-  const cached = inMemoryRecentCache.get(patientId);
-  if (
-    !cached ||
-    cached.persisted ||
-    cached.hypoThreshold !== hypoThreshold ||
-    cached.hyperThreshold !== hyperThreshold
-  ) {
-    return null;
-  }
-  return {
-    readings: cached.readings.filter((r) => r.timestamp >= startDate && r.timestamp <= endDate),
-    events: cached.events.filter(
-      (e) => !e.is_deleted && e.event_datetime >= startDate && e.event_datetime <= endDate
-    ),
-  };
-}
-
-export function getInMemoryRecentMealDetails(
-  patientId: string,
-  mealEventIds: string[]
-): MealDetail[] | null {
-  const cached = inMemoryRecentCache.get(patientId);
-  if (!cached || cached.persisted) return null;
-  const idSet = new Set(mealEventIds);
-  return cached.mealDetails.filter((d) => !d.is_deleted && idSet.has(d.event_id));
-}
 
 /**
  * ポートフォリオモード時、ブラウザのページ読み込み（F5リロード含む）ごとに1回だけ
@@ -129,6 +61,104 @@ export function isDemoCsvImportDisabled(): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * 設定画面で「記録データを初期化」または「バックアップから復元」を実行した際、
+ * 同一セッション内でカレンダーや分析画面へ戻ってもデモデータが勝手に再ハイドレーションされないよう抑止する。
+ * `resetDemoDataToInitialState` 実行時のみ解除される。
+ */
+export function markPatientManuallyCleared(patientId: string): void {
+  manuallyClearedPatients.add(patientId);
+  cancelBackgroundHydration(patientId);
+  initializedPatients.add(patientId);
+}
+
+export function clearPatientManuallyCleared(patientId?: string): void {
+  if (patientId) {
+    manuallyClearedPatients.delete(patientId);
+  } else {
+    manuallyClearedPatients.clear();
+  }
+}
+
+export function isPatientManuallyCleared(patientId: string): boolean {
+  return manuallyClearedPatients.has(patientId);
+}
+
+// ポートフォリオモード時のみ、ブラウザ起動と同時に直近42日分JSON（約18KB gzip）のネットワーク取得を先行開始
+let preloadedRecentTuplesPromise: Promise<[string, number, number][] | null> | null = null;
+
+function getOrStartRecentTuplesFetch(): Promise<[string, number, number][] | null> {
+  if (!isPortfolioMode()) {
+    return Promise.resolve(null);
+  }
+  if (!preloadedRecentTuplesPromise && typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+    preloadedRecentTuplesPromise = (async () => {
+      try {
+        let res = await fetch('/data/real_glucose_recent.json');
+        let loadedFullFileDirectly = false;
+        if (!res.ok) {
+          res = await fetch('/data/real_glucose_readings.json');
+          loadedFullFileDirectly = true;
+        }
+        if (!res.ok) return null;
+        const rawTuples = (await res.json()) as [string, number, number][];
+        if (!Array.isArray(rawTuples) || rawTuples.length === 0) return null;
+        return loadedFullFileDirectly ? rawTuples.filter((t) => t[0] >= '2026-07-15') : rawTuples;
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return preloadedRecentTuplesPromise ?? Promise.resolve(null);
+}
+
+// モジュール評価時点で即座にプリフェッチ開始（ポートフォリオモードのみ。personalモードおよびVitest環境ではスキップ）
+if (
+  typeof window !== 'undefined' &&
+  typeof fetch !== 'undefined' &&
+  !(import.meta.env && import.meta.env.MODE === 'test') &&
+  isPortfolioMode()
+) {
+  void getOrStartRecentTuplesFetch();
+}
+
+export function getInMemoryRecentSlice(
+  patientId: string,
+  startDate: string,
+  endDate: string,
+  hypoThreshold: number,
+  hyperThreshold: number
+): { readings: LibreReading[]; events: HealthEvent[] } | null {
+  if (!isPortfolioMode() || manuallyClearedPatients.has(patientId)) return null;
+  if (startDate < RECENT_CUTOFF_ISO) return null;
+  const cached = inMemoryRecentCache.get(patientId);
+  if (
+    !cached ||
+    cached.persisted ||
+    cached.hypoThreshold !== hypoThreshold ||
+    cached.hyperThreshold !== hyperThreshold
+  ) {
+    return null;
+  }
+  return {
+    readings: cached.readings.filter((r) => r.timestamp >= startDate && r.timestamp <= endDate),
+    events: cached.events.filter(
+      (e) => !e.is_deleted && e.event_datetime >= startDate && e.event_datetime <= endDate
+    ),
+  };
+}
+
+export function getInMemoryRecentMealDetails(
+  patientId: string,
+  mealEventIds: string[]
+): MealDetail[] | null {
+  if (!isPortfolioMode() || manuallyClearedPatients.has(patientId)) return null;
+  const cached = inMemoryRecentCache.get(patientId);
+  if (!cached || cached.persisted) return null;
+  const idSet = new Set(mealEventIds);
+  return cached.mealDetails.filter((d) => !d.is_deleted && idSet.has(d.event_id));
 }
 
 export interface MealItemSpec {
@@ -757,7 +787,8 @@ export function generateRealisticEventsFromReadings(
 
       let totalCarbs = 0;
       const summaryParts: string[] = [];
-      const eventId = `${patientId}_meal_${dateStr}_${win.mealTime}`;
+      const eventIdSeed = `${patientId}_meal_${dateStr}_${win.mealTime}`;
+      const eventId = deterministicUuid(eventIdSeed);
 
       chosenTemplate.items.forEach((itemSpec, idx) => {
         const foodDef = FOOD_BY_KEY.get(itemSpec.foodKey);
@@ -772,7 +803,7 @@ export function generateRealisticEventsFromReadings(
         );
 
         mealDetails.push({
-          id: `${eventId}_item_${idx}`,
+          id: deterministicUuid(`${eventIdSeed}_item_${idx}`),
           event_id: eventId,
           user_id: patientId,
           food_name: foodDef.food_name,
@@ -839,7 +870,8 @@ export function generateRealisticEventsFromReadings(
               t.id === 'sn_nuts_choco'
           );
       const chosenSnack = snackPool[weekendHash % snackPool.length];
-      const snackEventId = `${patientId}_meal_${dateStr}_間食`;
+      const snackEventIdSeed = `${patientId}_meal_${dateStr}_間食`;
+      const snackEventId = deterministicUuid(snackEventIdSeed);
 
       let snackCarbs = 0;
       const snackSummaryParts: string[] = [];
@@ -853,7 +885,7 @@ export function generateRealisticEventsFromReadings(
         snackSummaryParts.push(foodDef.food_name);
 
         mealDetails.push({
-          id: `${snackEventId}_item_${idx}`,
+          id: deterministicUuid(`${snackEventIdSeed}_item_${idx}`),
           event_id: snackEventId,
           user_id: patientId,
           food_name: foodDef.food_name,
@@ -893,7 +925,7 @@ export function generateRealisticEventsFromReadings(
 
     // 3. 毎晩の持効型インスリン投与（22:00 定時 10U）
     mealAndActivityEvents.push({
-      id: `${patientId}_basal_${dateStr}`,
+      id: deterministicUuid(`${patientId}_basal_${dateStr}`),
       user_id: patientId,
       event_datetime: `${dateStr}T22:00:00.000Z`,
       event_type: '活動',
@@ -918,7 +950,7 @@ export function generateRealisticEventsFromReadings(
       const exDuration = exType === 'ウォーキング' ? 30 : 20;
       const exHour = isWeekend ? '10:30' : '20:15';
       mealAndActivityEvents.push({
-        id: `${patientId}_exercise_${dateStr}`,
+        id: deterministicUuid(`${patientId}_exercise_${dateStr}`),
         user_id: patientId,
         event_datetime: `${dateStr}T${exHour}:00.000Z`,
         event_type: '活動',
@@ -945,7 +977,7 @@ function convertTuplesToReadings(
     const [prefix, val, isScan] = rawTuples[i];
     const ts = `${prefix}:00.000Z`;
     readings[i] = {
-      id: `${patientId}_${ts}`,
+      id: deterministicUuid(`${patientId}_${ts}`),
       user_id: patientId,
       timestamp: ts,
       glucose_value: val,
@@ -959,7 +991,7 @@ function convertTuplesToReadings(
 function assignDeterministicAnomalyIds(events: HealthEvent[], patientId: string): HealthEvent[] {
   return events.map((ev) => ({
     ...ev,
-    id: `${patientId}_anomaly_${ev.event_type}_${ev.event_datetime}`,
+    id: deterministicUuid(`${patientId}_anomaly_${ev.event_type}_${ev.event_datetime}`),
   }));
 }
 
@@ -987,6 +1019,28 @@ export function invalidateInMemoryRecentCache(patientId?: string): void {
   } else {
     inMemoryRecentCache.clear();
   }
+}
+
+export function hasInMemoryRecentCache(patientId: string): boolean {
+  return inMemoryRecentCache.has(patientId);
+}
+
+export function primeInMemoryRecentCache(
+  patientId: string,
+  readings: LibreReading[] = [],
+  events: HealthEvent[] = [],
+  mealDetails: MealDetail[] = [],
+  hypoThreshold: number = 70,
+  hyperThreshold: number = 180
+): void {
+  inMemoryRecentCache.set(patientId, {
+    readings,
+    events,
+    mealDetails,
+    hypoThreshold,
+    hyperThreshold,
+    persisted: false,
+  });
 }
 
 export function pauseBackgroundHydration(patientId: string, durationMs: number = 2500): void {
@@ -1218,14 +1272,6 @@ function scheduleBackgroundPersistenceAndHydration(
         }
       }
 
-      if (!portfolioMode) {
-        try {
-          window.localStorage.setItem(DATASET_VERSION_KEY, '1');
-        } catch {
-          // Ignore
-        }
-      }
-
       invalidateAnalysisDatasetCache();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('cgm-background-hydration-complete'));
@@ -1248,10 +1294,14 @@ function scheduleBackgroundPersistenceAndHydration(
 
 /**
  * Memory-First 2段階段階的ロード (Lazy Sync - ARCHITECTURE.md 2.3 準拠):
- * - Phase 1 (インメモリ即時表示): 直近42日分 (`real_glucose_recent.json`: 3,482件・gzip 18KB) を
- *   メモリ上で展開して `inMemoryRecentCache` に格納し、IndexedDB の重い書き込み完了を待たずに即座に完了を返す。
- *   これにより初回アクセスでも F5 リロードでも 0.3〜0.5秒でカレンダー画面が即座に描画される。
- * - Phase 1.5 & Phase 2 (完全非同期永続化): カレンダー描画後に直近データおよび過去7.6万件をバックグラウンドで IndexedDB へ格納する。
+ * - 本番モード (`isPortfolioMode() === false` / `VITE_APP_MODE=personal`):
+ *   デモ用JSON (`real_glucose_recent.json` / `real_glucose_readings.json`) の取得・ハイドレーションや
+ *   既存ユーザーデータの削除を一切行わず、`seedFoodMasterIfEmpty(patientId)` のみを実行して `false` を返す。
+ * - ポートフォリオ（デモ）モード (`isPortfolioMode() === true` / `VITE_APP_MODE=portfolio`):
+ *   Phase 1 で直近42日分を `inMemoryRecentCache` に展開して即座に描画し、
+ *   Phase 1.5 & Phase 2 で直近データおよび過去7.6万件をバックグラウンドで格納する。
+ *   ただし、同一セッション内で「記録データを初期化」が実行された場合 (`manuallyClearedPatients.has(patientId)`) は、
+ *   `resetDemoDataToInitialState` が呼ばれるまでデモデータの再ハイドレーションを行わない。
  */
 export async function ensureRealGlucoseDataLoaded(
   patientId: string,
@@ -1259,6 +1309,22 @@ export async function ensureRealGlucoseDataLoaded(
   hyperThreshold: number = 180
 ): Promise<boolean> {
   if (typeof window === 'undefined' || typeof fetch === 'undefined') {
+    return false;
+  }
+
+  const portfolioMode = isPortfolioMode();
+
+  // 1. 本番モード (personal) ではデモデータのプリフェッチ・自動投入・既存データ削除を一切行わない
+  if (!portfolioMode) {
+    await seedFoodMasterIfEmpty(patientId);
+    initializedPatients.add(patientId);
+    return false;
+  }
+
+  // 2. 同一セッション内で「記録データを初期化」等が実行された場合はデモデータの自動再投入を抑止する
+  if (manuallyClearedPatients.has(patientId)) {
+    await seedFoodMasterIfEmpty(patientId);
+    initializedPatients.add(patientId);
     return false;
   }
 
@@ -1282,37 +1348,26 @@ export async function ensureRealGlucoseDataLoaded(
 
   activeInitPromise = (async () => {
     try {
-      const portfolioMode = isPortfolioMode();
       let needsResetAndSeed = false;
 
-      if (portfolioMode) {
-        if (!hasResetPortfolioSession) {
-          needsResetAndSeed = true;
-          hasResetPortfolioSession = true;
-          resetFoodSeedSession(patientId);
-          if (isDemoMemoryOnlyMode()) {
-            clearInMemoryDemoDatabase();
-            void purgeDemoPhysicalIndexedDB();
-          } else {
-            await db.transaction(
-              'rw',
-              [db.categories, db.food_master, db.event_master, db.user_settings],
-              async () => {
-                await db.categories.where('user_id').equals(patientId).delete();
-                await db.food_master.where('user_id').equals(patientId).delete();
-                await db.event_master.where('user_id').equals(patientId).delete();
-                await db.user_settings.delete(patientId);
-              }
-            );
-          }
-        }
-      } else {
-        try {
-          if (window.localStorage.getItem(DATASET_VERSION_KEY) !== '1') {
-            needsResetAndSeed = true;
-          }
-        } catch {
-          // Ignore storage access errors
+      if (!hasResetPortfolioSession) {
+        needsResetAndSeed = true;
+        hasResetPortfolioSession = true;
+        resetFoodSeedSession(patientId);
+        if (isDemoMemoryOnlyMode()) {
+          clearInMemoryDemoDatabase();
+          void purgeDemoPhysicalIndexedDB();
+        } else {
+          await db.transaction(
+            'rw',
+            [db.categories, db.food_master, db.event_master, db.user_settings],
+            async () => {
+              await db.categories.where('user_id').equals(patientId).delete();
+              await db.food_master.where('user_id').equals(patientId).delete();
+              await db.event_master.where('user_id').equals(patientId).delete();
+              await db.user_settings.delete(patientId);
+            }
+          );
         }
       }
 
@@ -1403,6 +1458,7 @@ export async function ensureRealGlucoseDataLoaded(
  * 即座に初期状態へクリーンリセットする。
  */
 export async function resetDemoDataToInitialState(patientId: string): Promise<void> {
+  manuallyClearedPatients.delete(patientId);
   cancelBackgroundHydration(patientId);
   pauseHydrationUntilByPatient.delete(patientId);
   currentThresholdsByPatient.set(patientId, { hypo: 70, hyper: 180 });

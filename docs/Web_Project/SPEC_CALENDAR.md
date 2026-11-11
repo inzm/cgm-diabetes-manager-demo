@@ -182,22 +182,27 @@
 
 ---
 
-## 4. データ取得・旧デモデータ完全削除・リアル血糖値データ基盤 (`src/lib/aggregates.ts`, `src/lib/anomalyExtractor.ts`, `src/lib/dateUtils.ts`, `src/lib/realGlucoseLoader.ts`, `src/components/calendar/CalendarView.tsx`)
+## 4. 環境別データ取得・本番データ保護・デモ用リアル血糖値データ基盤 (`src/lib/aggregates.ts`, `src/lib/anomalyExtractor.ts`, `src/lib/dateUtils.ts`, `src/lib/realGlucoseLoader.ts`, `src/lib/uuidUtils.ts`, `src/components/calendar/CalendarView.tsx`)
 
-- **旧デモデータの完全削除とリアル血糖値・実測連動食事データ基盤・2フェーズ高速段階的同期 (`src/lib/realGlucoseLoader.ts`, `public/data/real_glucose_recent.json`, `public/data/real_glucose_readings.json`)**:
-  - 合成されたデモデータ（サイン波血糖値や不自然なランダム食事記録）は一切生成しない。過去バージョンでブラウザの IndexedDB に保存されていた旧デモデータは、`ensureRealGlucoseDataLoaded`（`src/lib/realGlucoseLoader.ts`）が起動時に自動検知して完全に削除する。
+- **本番モード (`VITE_APP_MODE=personal`) におけるデモデータ完全遮断 & 当月・当日初期表示**:
+  - `isPortfolioMode() === false` の本番モードでは、`ensureRealGlucoseDataLoaded`（`src/lib/realGlucoseLoader.ts`）は `public/data/real_glucose_recent.json` / `public/data/real_glucose_readings.json` のプリフェッチやハイドレーション、および既存ユーザーデータの削除を一切行わず、`seedFoodMasterIfEmpty(patientId)` のみを実行する。
+  - `index.html` にはデモ用JSONの無条件 `<link rel="preload">` を含めず、`vite.config.ts` で `mode === 'personal'` ビルド時には `dist/data/real_glucose_*.json` を出力から除外する。
+  - `src/components/calendar/CalendarView.tsx` の初回マウント時、本番モード（`!isPortfolioMode()`）では当月データが0件であっても過去月への自動ジャンプを行わず、**常に「今日（現在の年月・当日）」を表示**する（過去月にデータがある場合は上部の案内バナーからユーザーの任意操作で移動可能）。
+- **ポートフォリオモード (`VITE_APP_MODE=portfolio`) におけるリアル血糖値・実測連動食事データ基盤・2フェーズ高速段階的同期 (`src/lib/realGlucoseLoader.ts`, `public/data/real_glucose_recent.json`, `public/data/real_glucose_readings.json`)**:
+  - 合成されたデモデータ（サイン波血糖値や不自然なランダム食事記録）は一切生成せず、ポートフォリオモードでのみ実測CGMデータを2フェーズで段階ロードする。生成される測定値・異常値・食事・活動・明細のIDはすべて `src/lib/uuidUtils.ts` の `deterministicUuid` による正規UUIDとする。
   - **Memory-First 2フェーズ段階的同期（Memory-First Lazy Sync）による初期描画 0.3秒化**:
-    - **Phase 1（Memory-First 即時初期描画）**: `index.html` の `<link rel="preload">` およびモジュール初期化時の先行プリフェッチにより直近期間データ（`public/data/real_glucose_recent.json`：3,482件、約91KB / gzip 18KB）をJSバンドルと並列取得し、メモリ上（`inMemoryRecentCache`）で即座に展開する。IndexedDB の重いトランザクション完了を待たずに `CalendarView.tsx` および `DailyDetailDrawer.tsx` へメモリから直接データを提供（初期データ準備完了時に User Timing API マーク `cgm-calendar-data-ready` を記録）するため、初回アクセス・リロードともに **0.3〜0.5秒以内** でカレンダーが即座に描画される。
-    - **Phase 1.5 & Phase 2（バックグラウンド非ブロッキング永続化＆過去データ同期）**: カレンダー初期描画完了後に、裏側で直近データの IndexedDB 永続化・初期食品シード（`seedFoodMasterIfEmpty`）を実行し、続いて全期間データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）を取得して小チャンク（6,000件単位＋40ms休止）で順次格納する。完了時に `cgm-background-hydration-complete` イベントで過去月キャッシュ・分析期間境界を自動更新する。
+    - **Phase 1（Memory-First 即時初期描画）**: `portfolio` ビルド時に注入される `<link rel="preload">` およびモジュール初期化時の先行プリフェッチにより直近期間データ（`public/data/real_glucose_recent.json`：3,482件、約91KB / gzip 18KB）をJSバンドルと並列取得し、メモリ上（`inMemoryRecentCache`）で即座に展開する。IndexedDB の重いトランザクション完了を待たずに `CalendarView.tsx` および `DailyDetailDrawer.tsx` へメモリから直接データを提供（初期データ準備完了時に User Timing API マーク `cgm-calendar-data-ready` を記録）するため、初回アクセス・リロードともに **0.3〜0.5秒以内** でカレンダーが即座に描画される。
+    - **Phase 1.5 & Phase 2（バックグラウンド非ブロッキング永続化＆過去データ同期）**: カレンダー初期描画完了後に、裏側で直近データの永続化・初期食品シード（`seedFoodMasterIfEmpty`）を実行し、続いて全期間データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）を取得して小チャンク（6,000件単位＋40ms休止）で順次格納する。完了時に `cgm-background-hydration-complete` イベントで最新データ月（`latestDataDate` から動的導出）以外の過去月キャッシュ・分析期間境界を自動更新する。
+    - なお、設定画面で「記録データを初期化」が実行された場合（`markPatientManuallyCleared`）は、同一セッション内でカレンダーや分析画面へ遷移してもデモデータが勝手に再ハイドレーションされないよう抑止し、`resetDemoDataToInitialState` 実行時のみ抑止フラグを解除する。
   - ポートフォリオ環境（`VITE_APP_MODE=portfolio` かつ `window.__CGM_E2E_ALLOW_CSV_IMPORT__ !== true`）では、採用担当者や閲覧者のスマートフォン端末の物理ストレージを一切圧迫しないよう、`src/lib/db.ts` の全テーブルをオンメモリストア（`InMemoryTable`）として動作させ、物理 IndexedDB（`cgm_diabetes_manager_db`）への永続書き込みを行わないとともに、起動時・`pagehide` 時・手動リセット時に既存の物理 IndexedDB を自動削除（パージ）する。これにより、閲覧者が食事記録・食品登録・活動登録・カテゴリ編集・削除をすべて試せる一方、ページ再読み込み時または設定画面の「デモデータを初期状態に戻す」実行時には初期シード状態へ100%クリーンにリセットされる。
-  - 初回表示時に最新の実測データ月（2026年8月）を最初から表示することで、余分な月ジャンプ再レンダリングなしで開いた瞬間にリアルな血糖波形と食事・異常値エピソードを確認できるようにする。
+  - ポートフォリオモードでは初回表示時に最新の実測データ月（2026年8月）を最初から表示することで、余分な月ジャンプ再レンダリングなしで開いた瞬間にリアルな血糖波形と食事・異常値エピソードを確認できるようにする。
   - 表示中の年月に記録が1件もなく、他の年月に実データが存在する場合は、カレンダー上部に「最新の記録がある YYYY年M月 を表示」ボタンを表示し、ワンクリックで移動できるようにする。
 - **異常値エピソード抽出の単一真実源化 (`src/lib/anomalyExtractor.ts`)**:
-  - CSV取込（`src/workers/csvParser.worker.ts`）および設定閾値変更時の再判定はすべて `extractAnomalyEventsFromReadings` を使用して `db.events` に `低血糖`・`高血糖` イベントを生成する。
+  - CSV取込（`src/workers/csvParser.worker.ts`）および設定閾値変更時の再判定はすべて `extractAnomalyEventsFromReadings` を使用して `db.events` に正規UUID（`deterministicUuid`）の `低血糖`・`高血糖` イベントを生成する。
   - `aggregateMonthlyData`（`src/lib/aggregates.ts`）における各日の `hypoCount` / `hyperCount` は、その日の `低血糖`・`高血糖` イベント件数を集計するため、カレンダーセル・選択日サマリー・日次詳細ドロワー・分析画面で件数が100%一致する。
 - **オンメモリ月別集計キャッシュ (`monthlyCacheMap`) & 複合インデックス局所取得 (`src/lib/db.ts`, `src/lib/echartsCore.ts`)**:
   - カレンダー表示時は全件取得（`toArray()`）を行わず、`db.libre_readings.where('[user_id+timestamp]').between(...)` および `db.events.where('[user_id+event_datetime]').between(...)` で42日グリッド範囲のみをピンポイント取得する。
-  - `${patientId}:${year}-${month}:${hypoThreshold}-${hyperThreshold}` をキーとして保持し、設定画面で目標閾値が変更された場合も自動的にキャッシュを無効化して再集計する。
+  - `${patientId}:${year}-${month}:${hypoThreshold}-${hyperThreshold}` をキーとして保持し、設定画面で目標閾値が変更された場合やバックアップ復元・データ初期化が実行された場合も `clearCalendarMonthlyCache()` によりキャッシュを確実に破棄して再集計する。
   - 日次詳細ドロワー（`DailyDetailDrawer.tsx`）および24時間血糖チャート（`DailyGlucoseChart.tsx`, `src/lib/echartsCore.ts`）は `React.lazy()` で初回オープン時に遅延ロードする。
 - **デスクトップ1画面（`1280x800`）完結レイアウト・空セルノイズ排除・24Hチャート即時描画**:
   - デスクトップ表示時（`1280x800`）において、6週分のカレンダーセル（`sm:min-h-[88px] lg:min-h-[92px]`）と下部の凡例バー（`【凡例】`）が縦スクロールによる見切れなしに1画面内へ収まるよう余白を最適化する。
@@ -214,8 +219,8 @@
   - 日曜が赤、土曜が青で表示され、異常値が `▼`(青)・`▲`(赤) でコンパクトに表示され、平均血糖値色分け・スパークライン目標帯・凡例テキストがすべて設定閾値（`hypoThreshold` / `hyperThreshold`）と連動すること。
 - [x] **DoD-3: カレンダー・サマリー・日次ドロワー・分析画面間の数値100%一致 & 食前・食後血糖表示**
   - 異常値回数、インスリン合計（食事＋持効型等の単体投与）、糖質合計、および設定閾値が全画面で完全一致し、日次ドロワーの食事カードに食前→食後ピーク血糖値（上昇幅 Δ）が表示されること。
-- [x] **DoD-4: 旧デモデータの完全削除 & リアル血糖値データ（79,479件）と24H垂直ドロップ破線グラフの描画・XSS防御**
-  - 架空デモデータがIndexedDBから完全消去され、本番・ポートフォリオ共通で実測血糖値データ（`public/data/real_glucose_readings.json` およびCSV取込データ）が使用されること。また、24Hグラフに食事・活動（実施時間）・高血糖・低血糖の垂直ドロップ破線が描画され、ツールチップ内の動的文字列がHTMLエスケープされていること。
+- [x] **DoD-4: 本番モードでのデモデータ完全遮断・ポートフォリオモードでのリアル血糖値データ（79,479件）描画 & 24H垂直ドロップ破線・XSS防御**
+  - 本番モード（`VITE_APP_MODE=personal`）ではデモデータが一切自動投入されず今日・当月が表示され、ポートフォリオモード（`VITE_APP_MODE=portfolio`）では実測血糖値データ（`public/data/real_glucose_readings.json`）が使用されること。また、24Hグラフに食事・活動（実施時間）・高血糖・低血糖の垂直ドロップ破線が描画され、ツールチップ内の動的文字列がHTMLエスケープされていること。
 - [x] **DoD-5: 家族閲覧ロールの認可制御・デモアプリCSV取込非活性化 & 品質ゲート通過**
   - `isReadOnly === true` 時に追加・編集・削除がロックされ、デモアプリ（`isPortfolioMode()`）ではPCサブナビ・モバイルスピードダイヤルのCSV取込ボタンが `disabled` かつ「デモアプリでは利用できません」と表示され、`npm run verify:all` および `npm run test:smoke` がエラーゼロでパスすること。
 - [x] **DoD-6: 現在の日付の月までの表示・未来月への遷移制限・ドロワー下スワイプ時のリロード抑止 & 片手操作向け全タブ左右スワイプ遷移**

@@ -1,6 +1,7 @@
 # Web版 シーケンス図 & データベースER図 (SEQUENCE_AND_ERD.md)
 
 本ドキュメントは、システム内の重要処理フロー（家族共有認可、Local-First同期、CSVインポート）およびデータベースのエンティティ関係（ER図）をMermaid記法で可視化した仕様書です。
+（※Phase 1 時点では IndexedDB (Dexie.js) ＋ 決定論的UUID (`src/lib/uuidUtils.ts`) ＋ Web Worker CSV取込 ＋ JSONバックアップ/復元が稼働中であり、Supabase Auth・PostgreSQL RLS・Delta Sync はクラウド接続フェーズで有効化されるターゲットシーケンスです。）
 
 ---
 
@@ -78,7 +79,7 @@ erDiagram
         uuid id PK "UUID"
         uuid user_id FK "患者ID"
         string target_type "food / event"
-        string category_name "カテゴリ名"
+        string category_name "カテゴリ名 (WHERE is_deleted = false 部分ユニーク)"
         int display_order "並び順"
         boolean is_protected "システム保護('未分類')"
         boolean is_deleted "論理削除フラグ"
@@ -172,7 +173,7 @@ sequenceDiagram
     autonumber
     actor Patient as 患者本人 (PC)
     participant UI_PC as React UI (PC)
-    participant Worker as Web Worker
+    participant Worker as Web Worker (csvParser.worker.ts)
     participant LocalDB_PC as IndexedDB (PC)
     participant Supabase as Supabase (PostgreSQL / Storage / Realtime)
     participant UI_Mobile as React UI (スマホ)
@@ -182,7 +183,7 @@ sequenceDiagram
     UI_PC->>Worker: 2. ファイルバッファ転送 (メインスレッド分離)
     Note over UI_PC: プログレスバー表示 (UIは軽快に操作可能)
 
-    Note over Worker: 3. PapaParse 高速パース<br/>4. ステートマシン実行 (異常値エピソード抽出)<br/>5. 食前・食後血糖の探索バインド
+    Note over Worker: 3. 独自ストリームCSVパーサー + deterministicUuid (uuidUtils.ts)<br/>4. ステートマシン実行 (異常値エピソード抽出)<br/>5. 食前(-15〜+5分)・食後(60〜180分ピーク)血糖の探索バインド
 
     Worker->>LocalDB_PC: 6. 生データ & 異常値イベントを一括保存 (bulkPut)
     LocalDB_PC-->>UI_PC: 完了通知 (カレンダー・日次グラフ即時更新)
@@ -201,32 +202,33 @@ sequenceDiagram
 
 ---
 
-## 4. 初回起動・リロード時の Memory-First 3段階段階的同期シーケンス (`src/lib/realGlucoseLoader.ts`)
+## 4. ポートフォリオモード初回起動・リロード時の Memory-First 3段階段階的同期シーケンス (`src/lib/realGlucoseLoader.ts`)
 
-初回アクセスおよびポートフォリオモードでのリロード時に、IndexedDB のディスクI/O待ちをバイパスして **0.5秒以内** にカレンダーを初期描画し、裏側で段階的に全79,479件を永続化するデータフローです。
+ポートフォリオ公開モード（`VITE_APP_MODE=portfolio`）での初回アクセスおよびリロード時に、IndexedDB のディスクI/O待ちをバイパスして **0.5秒以内** にカレンダーを初期描画し、裏側で段階的に全79,479件をハイドレーションするデータフローです。
+（※本番モード `VITE_APP_MODE=personal` では本シーケンスのデモJSON取得・ハイドレーションは一切実行されず、`seedFoodMasterIfEmpty(patientId)` のみが実行されます。）
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as ユーザー / 閲覧者
+    actor User as 閲覧者 (Portfolio Mode)
     participant Browser as ブラウザ (index.html)
     participant Loader as realGlucoseLoader.ts (inMemoryRecentCache)
     participant Calendar as CalendarView / DailyDetailDrawer
-    participant LocalDB as IndexedDB (Dexie.js)
+    participant LocalDB as InMemoryDemoDB / IndexedDB
     participant CDN as Cloudflare Pages CDN
 
-    User->>Browser: 1. ページアクセス / リロード
+    User->>Browser: 1. ページアクセス / リロード (VITE_APP_MODE=portfolio)
     par JSバンドルと直近データの並列プリロード
         Browser->>CDN: index.js / vendor-*.js 取得
         Browser->>CDN: <link rel="preload"> /data/real_glucose_recent.json (gzip 18KB)
     end
     CDN-->>Loader: 2. 直近42日タプル (3,482件) 到着
 
-    Note over Loader: 【Stage 1: Memory-First 即時展開 (約15ms)】<br/>直近測定値・異常値・食事/活動・明細をメモリ生成し<br/>inMemoryRecentCache に保持 (IndexedDB書込は待たない)
+    Note over Loader: 【Stage 1: Memory-First 即時展開 (約15ms)】<br/>直近測定値・異常値・食事/活動・明細を決定論的UUID (uuidUtils.ts) でメモリ生成し<br/>inMemoryRecentCache に保持 (DB書込は待たない)
 
     Calendar->>Loader: 3. getInMemoryRecentSlice() で42日グリッド分を0ms取得
     Loader-->>Calendar: メモリ上の readings & events を即時返却
-    Calendar-->>User: 4. 初期カレンダー (2026年8月) を即座に描画完了！ (< 0.5秒)
+    Calendar-->>User: 4. 初期カレンダー (最新実データ月) を即座に描画完了！ (< 0.5秒)
 
     Note over Loader,LocalDB: 【Stage 2: 直近データ & 初期食品の非同期永続化 (描画60ms後)】
     Loader->>LocalDB: 5. seedFoodMasterIfEmpty() + 直近イベント・明細を bulkPut<br/>(※既存7.9万件がある場合は libre_readings の再書込をスキップ)

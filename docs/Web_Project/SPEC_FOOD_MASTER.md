@@ -62,7 +62,8 @@
 3. **カテゴリ管理モーダル (`src/components/foods/CategoryManageModal.tsx`)**:
    - 見出しは「食品カテゴリ管理」／「活動カテゴリ管理」とし、不要な説明文は省く。
    - 一覧表示、新規カテゴリ追加、カテゴリ名称変更、および**カテゴリ削除（受け皿である「未分類」`is_protected === true` を除くすべてのカテゴリが削除可能）**を実行。
-   - **カテゴリ削除時の「未分類」自動移動（孤児データ防止）**: いずれかのカテゴリを削除した際、そのカテゴリに所属していた食品（`db.food_master`）または活動（`db.event_master`）は削除せず、同一トランザクション内で自動的に「未分類」カテゴリへ付け替える。
+   - **カテゴリ削除時の「未分類」自動移動（孤児データ防止）**: いずれかのカテゴリを削除した際、そのカテゴリに所属していた食品（`db.food_master`）または活動（`db.event_master`）は削除せず、同一トランザクション内で自動的に「未分類」カテゴリ（`deterministicUuid(`${currentPatientId}_cat_${targetType}_uncategorized`)`）へ付け替える。
+   - **論理削除済み同名カテゴリの自動復活（UNIQUE制約衝突防止: `addOrReviveCategory`）**: `src/components/foods/CategoryManageModal.tsx` でカテゴリを新規追加する際、同じ `user_id`・`target_type`・`category_name` を持つ論理削除済み（`is_deleted: true`）のレコードが既に存在する場合は、新規UUIDで追加するのではなく既存レコードを `is_deleted: false` に復活・更新する（PostgreSQL の UNIQUE 制約との衝突を防止）。
 4. **削除操作時のカスタム確認ダイアログ (`src/components/common/ConfirmDialog.tsx`) & モーダル開閉アニメーション**:
    - 単体削除・一括削除・カテゴリ削除時は、ブラウザ標準の `window.confirm()` を使わず、共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認を行う（カテゴリ削除時は所属項目が「未分類」へ移動する旨を明記）。
    - `FoodEditModal`、`EventEditModal`、`CategoryManageModal`、および `ConfirmDialog` は2段階マウント制御により、開閉時に背景フェードとモーダル本体の滑らかなズーム＆フェードイン/アウトアニメーションを実行する。
@@ -82,9 +83,9 @@
 
 ---
 
-## 5. 初期デフォルトデータと重複排除・栄養素理論値 (`src/lib/foodSeed.ts`)
+## 5. 初期デフォルトデータと重複排除・栄養素理論値 (`src/lib/foodSeed.ts`, `src/lib/uuidUtils.ts`)
 
-初回起動時、以下の初期データを決定論的ID（`${patientId}_cat_...`, `${patientId}_food_...`, `${patientId}_event_...`）、シングルトン排他制御（`activeSeedPromise`）、およびセッション内メモリキャッシュ（`seededPatientsInSession`）により重複ゼロ・2回目以降 1ms 未満でシードし、既存DBに重複レコードが存在する場合も自動統合・クレンジングします：
+初回起動時、以下の初期データを決定論的UUID（`src/lib/uuidUtils.ts` の `deterministicUuid(`${patientId}_${def.key}`)`、フォーマット `xxxxxxxx-xxxx-5xxx-8xxx-xxxxxxxxxxxx`）、シングルトン排他制御（`activeSeedPromises`）、およびセッション内メモリキャッシュ（`seededPatientsInSession`）により重複ゼロ・2回目以降 1ms 未満でシードし、既存DBに旧形式の文字列IDや重複レコードが存在する場合も自動統合・正規UUIDマイグレーションします：
 - **食品カテゴリ**: 主食、主菜、副菜、間食・デザート、飲料、調味料・その他（すべて `is_protected: false` で削除・再編可能）、および受け皿用の **未分類（`is_protected: true` で削除不可）**
 - **代表的食品（日本食品標準成分表および `src/lib/gemini.ts` 内蔵辞書に完全準拠した理論値）**:
   - 主食: ごはん(茶碗1杯150g=55.2g)、食パン6枚切り(1枚60g=26.6g)、ロールパン(2個60g=28.0g)、ゆでうどん(1玉250g=52.0g)、かけそば(1杯260g=48.0g)、中華麺・ラーメン(1玉230g=65.0g)、スパゲッティ・パスタ(1人前250g=70.0g)、ビーフカレーライス(1皿350g=85.0g)、天丼(1杯380g=115.0g)、握り寿司10貫(1人前320g=78.0g)、おにぎり(1個110g=38.0g)
@@ -96,7 +97,7 @@
 - **活動カテゴリ**: 運動、生活・入浴、体調・補食、インスリン（すべて `is_protected: false` で削除・再編可能）、および受け皿用の **未分類（`is_protected: true` で削除不可）**
 - **代表的活動**: ウォーキング(30分)、軽い運動・ストレッチ(20分)、ジョギング(20分)、筋力トレーニング(30分)、入浴(20分)、持効型インスリン投与(就寝前)、ブドウ糖補食(10g)
 - **オンメモリ即時キャッシュ・外部更新時キャッシュ無効化 & モバイル基準量全表示**:
-  - `FoodMasterView.tsx` に患者単位のオンメモリキャッシュ（`foodMasterMemoryCache`）を保持し、タブ切り替え時に `よく使う食品 (0)` や `該当する食品がありません` が一瞬ちらつく現象（Empty-State Flash）を防止する。さらに `invalidateFoodMasterMemoryCache` 関数をエクスポートし、設定画面（`SettingsView.tsx`）でのバックアップ復元やデータ初期化時にキャッシュを即時クリアして古いデータの瞬間表示を防止する。
+  - `FoodMasterView.tsx` に患者単位のオンメモリキャッシュ（`foodMasterMemoryCache`）を保持し、タブ切り替え時に `よく使う食品 (0)` や `該当する食品がありません` が一瞬ちらつく現象（Empty-State Flash）を防止する。さらに `invalidateFoodMasterMemoryCache` 関数をエクスポートし、設定画面（`SettingsView.tsx`）でのバックアップ復元やデータ初期化時、およびカテゴリ追加・編集・削除時（`CategoryManageModal.tsx`）にキャッシュを即時クリアして古いデータの瞬間表示を防止する。
   - スマートフォン表示（`sm` 未満、`375x812`）でも食品リストの12カラムグリッド配分を従来の `7 / 2 / 3` から `col-span-7（食品名）/ col-span-3（基準量）/ col-span-2（糖質量）`（モバイル・PC共通）に最適化し、`1 玉(250g)` や `1 小鉢(60g)` などのグラム表記が `...` で省略されず100%視認できるようにする。
   - `CategoryManageModal.tsx` のカテゴリ一覧コンテナ高さを `max-h-80`（`320px`）とし、初期7カテゴリすべてが文字見切れなく一覧表示されるようにする。また、`isOpen` または `targetType` が変化した際に `newCategoryName`, `editingId`, `editingName`, `errorMsg`, `deleteTargetCategory` をクリーンにリセットする。
   - **モーダル背景（グレー領域）タップ時の入力保持＆キーボード収納と `isDirty` 破棄確認ダイアログ (`FoodEditModal.tsx`, `EventEditModal.tsx`, `CategoryManageModal.tsx`)**:
@@ -114,5 +115,5 @@
   - PC表示時に右サイドメニューにカテゴリ一覧（件数バッジ付き）が表示され、列ヘッダークリックで昇順・降順ソートが切り替わること。
 - [x] **DoD-3: 開発者用語（「マスタ」等）の完全排除と引き算のデザイン**
   - ナビゲーション・画面見出し・モーダル・リスト行から「マスタ」等の開発者用語や重複ラベルが排除されていること。
-- [x] **DoD-4: 家族閲覧ロールの認可制御・デモアプリでの糖質自動推定ボタン非表示・背景タップ入力保護 & 品質ゲート通過**
-  - `isReadOnly === true` 時に追加・編集・削除・複数選択が非活性化され、全編集モーダルで背景グレー領域タップ時にモーダルが閉じず入力が保護（キーボードのみ収納）され、未保存変更時の破棄確認ダイアログが動作し、デモアプリ（`isPortfolioMode()`）ではリロード・手動リセットで初期シード状態に戻り、`npm run verify:all` がエラーゼロでパスすること。
+- [x] **DoD-4: 正規UUID採番・論理削除済みカテゴリ復活・家族閲覧ロールの認可制御・デモアプリでの糖質自動推定ボタン非表示・背景タップ入力保護 & 品質ゲート通過**
+  - 全カテゴリ・食品・活動のIDが正規UUID（`src/lib/uuidUtils.ts`）で統一され、削除済みと同名のカテゴリ再追加時に既存レコードが `is_deleted: false` で復活し、`isReadOnly === true` 時に追加・編集・削除・複数選択が非活性化され、全編集モーダルで背景グレー領域タップ時にモーダルが閉じず入力が保護（キーボードのみ収納）され、未保存変更時の破棄確認ダイアログが動作し、デモアプリ（`isPortfolioMode()`）ではリロード・手動リセットで初期シード状態に戻り、`npm run verify:all` がエラーゼロでパスすること。
