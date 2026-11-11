@@ -126,40 +126,46 @@ erDiagram
 
 ---
 
-## 2. 家族閲覧ロール ＆ Supabase RLS 認可シーケンス
+## 2. 専用ログイン画面（Auth Gate）・招待専用ガード ＆ Supabase RLS 認可シーケンス
 
-家族がログインして患者の血糖値・食事データを閲覧する際の認可と表示制御のフローです。
+本番環境（`VITE_APP_MODE=personal` かつ Supabase 有効時）において、未ログイン時は `AuthGateScreen.tsx` のみを表示して第三者の閲覧を遮断し、ログイン時にオーナー本人または招待済み家族であることを検証した上でデータ同期を行い、ログアウト時にローカルキャッシュを全消去するフローです。
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Family as 家族ユーザー (Viewer)
-    participant UI as React UI (PatientContext)
-    participant LocalDB as IndexedDB (Dexie.js)
-    participant SupaAuth as Supabase Auth
-    participant SupaDB as Supabase PostgreSQL (RLS)
+    actor User as アクセス者 (患者本人 / 招待家族 / 第三者)
+    participant Gate as AuthGateScreen.tsx (App.tsx)
+    participant Context as PatientContext / syncEngine.ts
+    participant LocalDB as IndexedDB (7テーブル) & メモリキャッシュ
+    participant SupaAuth as Supabase Auth (trg_enforce_invited_or_owner_signup)
+    participant SupaDB as Supabase PostgreSQL (RLS & verify_user_authorization)
 
-    Family->>UI: 1. ログイン (email / password)
-    UI->>SupaAuth: 認証リクエスト
-    SupaAuth-->>UI: JWT トークン返却 (UID: family_user_id)
+    User->>Gate: 1. アプリURLへアクセス (未ログイン時)
+    Note over Gate: isAuthRequired === true && !authUser<br/>カレンダー・メニュー等を一切描画せずログイン画面のみ表示
 
-    UI->>SupaDB: 家族連携テーブル確認 (family_permissions)
-    SupaDB-->>UI: 患者リスト返却 (例: 患者A, role: 'viewer')
+    User->>Gate: 2. ログイン / 招待家族サインアップ送信
+    Gate->>SupaAuth: signInWithPassword / signUp
+    Note over SupaAuth: サインアップ時は BEFORE INSERT トリガーで<br/>オーナーまたは family_permissions 招待済みを検証
+    SupaAuth-->>Context: JWT セッション返却 (auth.uid, email)
 
-    UI->>UI: PatientContext 更新 (currentPatientId = 患者A, isReadOnly = true)
-    Note over UI: UIラッパーが全画面で「登録・編集・削除・CSV取込」ボタンを非表示化
-
-    alt ローカルキャッシュに患者Aのデータが存在する場合
-        UI->>LocalDB: 患者Aのデータを即時取得
-        LocalDB-->>UI: キャッシュ返却 (所要時間: 5ms)
-        UI-->>Family: カレンダー画面をゼロ遅延で描画
+    Context->>SupaDB: 3. 家族連携照会 (family_permissions) & verify_user_authorization()
+    alt 未招待の第三者アカウントの場合
+        SupaDB-->>Context: authorized = false
+        Context->>SupaAuth: 即座に強制 signOut()
+        Context->>LocalDB: purgeAllLocalPatientCaches() (全テーブル・メモリ消去)
+        Context-->>Gate: アクセス権限エラー表示 (Auth Gate 維持)
+    else オーナー本人 または 招待済み家族の場合
+        SupaDB-->>Context: authorized = true (owner または invited family)
+        Context->>Context: isAccessAuthorized = true, currentPatientId / userRole 設定
+        Context->>SupaDB: 4. 双方向差分同期 (syncPatientDataWithCloud)
+        SupaDB-->>LocalDB: 最新データ反映 (bulkPut)
+        Context-->>User: 5. カレンダー画面・各機能をアンロックして描画
     end
 
-    UI->>SupaDB: 最新差分リクエスト (user_id = 患者A, updated_at > lastSync)
-    Note over SupaDB: RLSポリシー実行: can_view_patient_data()<br/>family_permissions に存在するため【許可】
-    SupaDB-->>UI: 差分データ返却
-    UI->>LocalDB: IndexedDB へ反映 (bulkPut)
-    UI-->>Family: 最新データに静かに同期描画
+    User->>Context: 6. ログアウト実行 (signOut)
+    Context->>SupaAuth: セッション破棄
+    Context->>LocalDB: 7. purgeAllLocalPatientCaches() (IndexedDB全7テーブル & 全4種メモリキャッシュ完全消去)
+    Context-->>Gate: 8. 専用ログイン画面 (Auth Gate) へ戻る
 ```
 
 ---

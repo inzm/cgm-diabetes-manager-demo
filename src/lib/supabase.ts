@@ -11,8 +11,17 @@ function isLocalOnlyForced(): boolean {
   const win = window as Window & {
     __CGM_E2E_FORCE_LOCAL_ONLY__?: boolean;
     __CGM_E2E_ALLOW_CSV_IMPORT__?: boolean;
+    __CGM_E2E_SUPPRESS_WELCOME__?: boolean;
+    __CGM_E2E_ENABLE_CLOUD_AUTH__?: boolean;
   };
-  return Boolean(win.__CGM_E2E_FORCE_LOCAL_ONLY__ || win.__CGM_E2E_ALLOW_CSV_IMPORT__);
+  if (win.__CGM_E2E_ENABLE_CLOUD_AUTH__) {
+    return false;
+  }
+  return Boolean(
+    win.__CGM_E2E_FORCE_LOCAL_ONLY__ ||
+      win.__CGM_E2E_ALLOW_CSV_IMPORT__ ||
+      win.__CGM_E2E_SUPPRESS_WELCOME__
+  );
 }
 
 let cachedClient: SupabaseClient | null | undefined = undefined;

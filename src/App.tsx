@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Header } from '@/components/common/Header';
 import { OfflineBanner } from '@/components/common/OfflineBanner';
+import { AuthGateScreen } from '@/components/common/AuthGateScreen';
 import {
   DemoWelcomeModal,
   shouldShowDemoWelcomeModal,
@@ -93,7 +94,15 @@ function shouldIgnoreContentSwipe(
 }
 
 export const App: React.FC = () => {
-  const { currentPatientId, isReadOnly, updateClinicalThresholds } = usePatient();
+  const {
+    currentPatientId,
+    isReadOnly,
+    updateClinicalThresholds,
+    isAuthRequired,
+    isAuthLoading,
+    authUser,
+    isAccessAuthorized,
+  } = usePatient();
   const [activeTab, setActiveTab] = useState<NavTabType>('calendar');
   const prevTabRef = useRef<NavTabType>('calendar');
   const tabDirectionRef = useRef<'forward' | 'backward' | null>(null);
@@ -304,6 +313,15 @@ export const App: React.FC = () => {
     }, 200);
     return () => window.clearTimeout(timer);
   }, []);
+
+  if (isAuthRequired && (isAuthLoading || !authUser || !isAccessAuthorized)) {
+    return (
+      <div className="min-h-screen overflow-x-clip bg-slate-100/75 flex flex-col font-sans">
+        <OfflineBanner />
+        <AuthGateScreen />
+      </div>
+    );
+  }
 
   return (
     <div

@@ -114,13 +114,18 @@
 - **記録データを初期化（全削除: `resetPatientDataAndInvalidateCaches`）**:
   - 共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認した上で、血糖・食事・活動記録および設定をすべて消去してよく使う食品・活動・カテゴリの初期プリセット（`src/lib/foodSeed.ts`：決定論的UUID）のみを再シードし、クラウド接続時は `clearRemotePatientData` と `syncPatientDataWithCloud` を実行して全4種メモリキャッシュを確実に破棄したクリーンな初期状態に戻す。
 
-### 3.4 クラウドアカウント認証・手動同期・家族見守り共有管理 (`src/lib/supabase.ts`, `src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`)
-- **本番クラウド構成時（`isCloudConfigured === true`）の認証 & 双方向同期**:
-  - メールアドレスとパスワードによるログイン・新規アカウント作成・ログアウトを提供する。
-  - 未ログイン時でも端末へのローカル記録が可能であり、初回ログイン時に `migrateAnonymousLocalDataToUser`（`src/lib/syncEngine.ts`）によって自身の `auth.uid()` へローカルデータを自動引き継ぎし、そのままクラウド（Supabase PostgreSQL 全7テーブル）と双方向同期を実行する。
+### 3.4 家族見守り共有・クラウド同期・招待専用ガード (`src/lib/supabase.ts`, `src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`, `src/components/common/AuthGateScreen.tsx`, `src/components/settings/SettingsView.tsx`)
+- **未ログイン時の「専用ログイン画面（Auth Gate）」強制ロック（本番環境）**:
+  - 本番環境（`VITE_APP_MODE=personal` かつ Supabase 環境変数が有効な場合、`isAuthRequired === true`）では、未ログイン時または権限未検証時にアプリ本体の全画面をロックし、フルスクリーンの `src/components/common/AuthGateScreen.tsx` のみを表示する。URLを知っている第三者がアクセスしても、カレンダーや設定画面は一切表示されない。
+- **未招待の第三者による勝手な利用・アクセス遮断ガード（オーナー本人 ＋ 招待済み家族のみ許可）**:
+  - アプリを利用できるのは **①オーナー（最初に登録された患者本人、または既存の患者本人アカウント）** と、**②その患者本人が `family_permissions` テーブルに招待登録した家族（`family_user_id` または `LOWER(family_email)` が一致するユーザー）** のみに限定する。
+  - DB層（`supabase/migrations/0001_initial_schema.sql` の `public.is_authorized_system_user`、`public.verify_user_authorization` RPC、`trg_enforce_invited_or_owner_signup` トリガー、および `can_view_patient_data` / `can_edit_patient_data`）とクライアント層（`src/lib/syncEngine.ts` の `verifyUserAccessWithCloud`）の二重ガードにより、招待されていない無関係な第三者が万が一サインアップ・ログインしようとしてもアクセス権限エラー（`このアカウントにはアクセス権限がありません。患者本人から招待されたメールアドレスでログインしてください。`）として即座に遮断・強制サインアウトさせる。
+- **Supabase Auth ログイン & 自動同期・ログアウト時のローカルキャッシュ完全消去**:
+  - 初回オーナーログイン時には `verifyUserAccessWithCloud` でオーナー権限を確認した上で、`migrateAnonymousLocalDataToUser`（`src/lib/syncEngine.ts`）によって自身の `auth.uid()` へローカルデータを自動引き継ぎし、そのままクラウド（Supabase PostgreSQL 全7テーブル）と双方向同期を実行する。
   - ログイン中は現在のアカウントメールアドレス、権限バッジ（「患者本人」「家族（記録・編集可）」「家族（閲覧のみ）」）、最終同期時刻、および **「今すぐ同期」** ボタン（`syncNow`）を表示する。
-- **家族共有・権限管理（`family_permissions` テーブル連携）**:
-  - 患者本人（`userRole === 'patient'`）でログインしている場合、家族のメールアドレスと権限（`viewer`: 閲覧のみ / `editor`: 記録・編集も可能）を登録・一覧表示・削除（確認ダイアログ付き）できる。
+  - **ログアウト時のローカルキャッシュ完全消去**: ログアウト（`signOut`）を実行した際は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）によりブラウザ内の全ローカルテーブル（7テーブル）および全メモリキャッシュ（4種）を自動消去し、専用ログイン画面（Auth Gate）へ戻す。
+- **家族共有・権限管理（`family_permissions` テーブル連携）と招待手順ガイド**:
+  - 患者本人（`userRole === 'patient'`）でログインしている場合、家族のメールアドレスと権限（`viewer`: 閲覧のみ / `editor`: 記録・編集も可能）を登録・一覧表示・削除（確認ダイアログ付き）でき、画面内に「新しいご家族を招待する手順（3ステップ）」ガイドを表示する（詳細マニュアルは [`USER_GUIDE.md`](USER_GUIDE.md) に記載）。
   - 招待された家族がログインした際は、`resolveUserAccessFromPermissions`（`src/lib/syncEngine.ts`）により `family_user_id = auth.uid()` または `LOWER(family_email) = LOWER(user.email)` で招待レコードを照会し、初回ログイン時は `family_user_id` と `accepted_at` を自動更新（承認済みに遷移）する。
   - 同時に監視対象患者（`currentPatientId`）を招待元の `patient_id` へ切り替え、`role === 'viewer'` の場合は `isReadOnly = true`（全画面で登録・編集・削除・CSV取込・設定変更をロック）、`role === 'editor'` の場合は代理記録・編集を可能とする。また自身の記録と招待された家族の記録の双方を持つ場合は、「表示対象の切り替え」セレクターで切り替え可能とする。
 - **ローカル単体構成時 & デモアプリでの制御**:
@@ -147,6 +152,6 @@
   - 画面内から物理テーブル名や開発者用語が排除され、重複ヘッダーカードのないスッキリした構成になっていること。
 - [x] **DoD-4: デモアプリにおけるページアクセス時＆再読み込み時の案内モーダル毎回表示・不要セクション非表示化・「デモ環境のデータ管理」手動リセット提供**
   - デモアプリ（`isDemoCsvImportDisabled()`）ではページアクセス時および再読み込み（リロード）時に毎回案内モーダル（`DemoWelcomeModal.tsx`：`デモ環境について`）が表示されて初期化の目印となり、設定画面では未実装ボタン・通常バックアップ初期化・クライアント側ロール切替セクションが非表示となり、「デモ環境のデータ管理」カードから端末への非保存明示とワンクリック初期状態リセットが行えること。
-- [x] **DoD-5: バックアップ保存・確認付きクリーン復元（UUIDマイグレーション付き）・クリーン初期化・全4種キャッシュ破棄 & クラウド認証・家族共有・双方向同期**
-  - バックアップの保存、既存テーブル消去＆UUID正規化を伴う確認ダイアログ付き復元、架空データなしのクリーン初期化、全4種メモリキャッシュ破棄、および本番クラウド環境でのログイン・手動同期・家族招待＆閲覧専用ロック（`isReadOnly`）が正常に動作すること。
+- [x] **DoD-5: バックアップ保存・確認付きクリーン復元（UUIDマイグレーション付き）・クリーン初期化・全4種キャッシュ破棄 & クラウド認証ゲート・招待専用ガード・ログアウト時キャッシュ全消去**
+  - バックアップの保存、既存テーブル消去＆UUID正規化を伴う確認ダイアログ付き復元、架空データなしのクリーン初期化、全4種メモリキャッシュ破棄、および本番クラウド環境での専用ログイン画面（`AuthGateScreen.tsx`）強制ロック、未招待第三者の遮断（`verifyUserAccessWithCloud` / RLS）、ログアウト時のローカルキャッシュ全消去（`purgeAllLocalPatientCaches`）、家族招待＆閲覧専用ロック（`isReadOnly`）が正常に動作すること。
 

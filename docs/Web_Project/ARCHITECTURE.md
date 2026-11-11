@@ -208,20 +208,35 @@ CREATE TABLE family_permissions (
 CREATE INDEX idx_family_lookup ON family_permissions (family_user_id, patient_id);
 ```
 
-### 4.3 Supabase RLS (Row Level Security) ポリシー設計
-データベース層で不正アクセスを完全に遮断するため、PostgreSQLの関数とRLSを活用します。
+### 4.3 Supabase RLS (Row Level Security) & 招待専用アクセスガード設計 (`supabase/migrations/0001_initial_schema.sql`)
+データベース層で不正アクセスや未招待第三者のサインアップ・利用を完全に遮断するため、PostgreSQLの `SECURITY DEFINER` 関数、`auth.users` トリガー、およびRLSを活用します。
+
+- **招待専用アクセス判定関数 (`public.is_authorized_system_user` & `public.verify_user_authorization`)**:
+  - システムを操作・閲覧できるのは **①オーナー（最初に登録された患者本人、または既に `user_settings` 等を有する患者本人）** と、**②そのオーナーが `family_permissions` テーブルに招待登録した家族（`family_user_id` または `LOWER(family_email)` が一致するユーザー）** のみに厳格制限する。
+  - `auth.users` に対する `BEFORE INSERT` トリガー（`trg_enforce_invited_or_owner_signup`）により、既にオーナーが存在する状態で `family_permissions` に招待されていないメールアドレスがサインアップを試みた場合は PostgreSQL レベルで即座に拒否する。
+  - クライアント側でもログイン・セッション復元時に `verifyUserAccessWithCloud`（`src/lib/syncEngine.ts`）を実行し、未招待の第三者アカウントであった場合は同期やローカルデータ移行を一切行わず即座に `signOut()` してローカルキャッシュを全消去する。
 
 ```sql
--- 1. 閲覧権限チェック用セキュリティ関数
+-- 1. 閲覧権限チェック用セキュリティ関数 (未招待第三者は FALSE)
 CREATE OR REPLACE FUNCTION can_view_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
 BEGIN
+    IF NOT public.is_authorized_system_user(auth.uid(), COALESCE(auth.jwt() ->> 'email', '')) THEN
+        RETURN FALSE;
+    END IF;
+
     RETURN (
         auth.uid() = target_patient_id -- 本人
         OR EXISTS (
             SELECT 1 FROM family_permissions
             WHERE patient_id = target_patient_id
-              AND family_user_id = auth.uid()
+              AND (
+                  family_user_id = auth.uid()
+                  OR (
+                      family_email IS NOT NULL
+                      AND LOWER(family_email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+                  )
+              )
         )
     );
 END;
@@ -231,12 +246,22 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION can_edit_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
 BEGIN
+    IF NOT public.is_authorized_system_user(auth.uid(), COALESCE(auth.jwt() ->> 'email', '')) THEN
+        RETURN FALSE;
+    END IF;
+
     RETURN (
         auth.uid() = target_patient_id -- 本人
         OR EXISTS (
             SELECT 1 FROM family_permissions
             WHERE patient_id = target_patient_id
-              AND family_user_id = auth.uid()
+              AND (
+                  family_user_id = auth.uid()
+                  OR (
+                      family_email IS NOT NULL
+                      AND LOWER(family_email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+                  )
+              )
               AND role = 'editor'
         )
     );
@@ -261,34 +286,20 @@ ON libre_readings FOR DELETE
 USING (can_edit_patient_data(user_id));
 ```
 
-### 4.4 フロントエンドにおける「患者コンテキスト（PatientContext）」設計 (`src/contexts/PatientContext.tsx`)
-フロントエンド（React）側で、コンポーネントが直接 `auth.user.id` を参照してデータを取得する設計を禁止します。
-**「現在選択中の患者ID（`currentPatientId`）」「その患者に対するロール（`currentRole`）」「臨床目標閾値（`hypoThreshold` / `hyperThreshold`）」を配信する Context**（`src/contexts/PatientContext.tsx`）を導入します。
-
-```typescript
-// PatientContext の実装インターフェース (src/contexts/PatientContext.tsx)
-interface PatientContextType {
-  currentPatientId: string;                     // 閲覧・操作対象の患者UUID
-  currentRole: UserRole;                        // 'patient' | 'family_viewer' | 'family_editor'
-  isReadOnly: boolean;                          // currentRole === 'family_viewer' の場合 true
-  hypoThreshold: number;                        // 低血糖判定閾値 (デフォルト 70 mg/dL)
-  hyperThreshold: number;                       // 高血糖判定閾値 (デフォルト 180 mg/dL)
-  setRole: (role: UserRole) => void;            // ロール切替
-  updateClinicalThresholds: (hypo: number, hyper: number) => void; // 目標閾値の即時配信
-}
-```
-- **メリット**:
-  - 本人利用時（`currentPatientId = auth.uid`, `isReadOnly = false`）と、家族利用時（`currentPatientId = 対象患者ID`, `isReadOnly = true`）で、カレンダー・詳細・分析コンポーネントのロジックやIndexedDBキャッシュ空間を100%共通化できます。
-  - `isReadOnly === true` の場合、共通のUIラッパーが「食事記録ボタン」「編集・削除ボタン」「CSV取込ボタン」を自動的に非表示または非活性（disabled）化します。
+### 4.4 フロントエンドにおける「専用ログイン画面（Auth Gate）」と「患者コンテキスト（PatientContext）」設計 (`src/components/common/AuthGateScreen.tsx`, `src/contexts/PatientContext.tsx`, `src/App.tsx`)
+1. **本番モードでの未ログイン時「専用ログイン画面（Auth Gate）」強制ロック**:
+   - 本番環境（`VITE_APP_MODE=personal` かつ Supabase 設定有効時、すなわち `isAuthRequired === true`）では、未ログイン状態（`!authUser`）または権限検証未完了/不許可（`!isAccessAuthorized`）のとき、`src/App.tsx` がヘッダー・カレンダー・分析・設定・ボトムナビ等を一切レンダリングせず、フルスクリーンの専用ログイン画面 **`src/components/common/AuthGateScreen.tsx`** のみを表示して完全にブロックする（URLを知っている第三者がアクセスしてもアプリ画面を一切閲覧・操作できない）。
+   - ※公開デモモード（`VITE_APP_MODE=portfolio`）およびローカル専用のE2Eテスト環境では従来通りログイン不要で動作する。
+2. **患者コンテキスト（`PatientContext`）による一元管理**:
+   - コンポーネントが直接 `auth.user.id` を参照してデータを取得する設計を禁止し、**「現在選択中の患者ID（`currentPatientId`）」「その患者に対するロール（`userRole`）」「認証ゲート要件（`isAuthRequired` / `isAccessAuthorized`）」「臨床目標閾値（`hypoThreshold` / `hyperThreshold`）」を配信する Context**（`src/contexts/PatientContext.tsx`）で一元管理する。
 
 ### 4.5 Cloudflare Workers BFF (`POST /api/gemini`) による Gemini API キーの完全秘匿 (`src/lib/gemini.ts`)
 - Google Gemini API キーはクライアント（React）や `localStorage` には一切保持せず、**Cloudflare Pages Functions / Workers の Secrets（環境変数）** に保存。
 - React（`src/lib/gemini.ts`）からは同一オリジンの `POST /api/gemini` プロキシエンドポイントへリクエストを送信し、BFF未接続時やオフライン時は内蔵の「日本食品標準成分辞書（約80品目＋部分一致推論）」へ自動フォールバックする。
 - Workers側でリクエスト元の認証コンテキストを検証した上でGemini APIを呼び出す（APIキー漏洩・不正利用防止）。
 
-### 4.6 ローカル端末（IndexedDB）の保護とログアウト制御
-- 共有端末での利用を考慮し、ユーザーが「ログアウト」をクリックした際は、IndexedDB内の該当ユーザーの全データを確実に消去（`Dexie.delete()`）する。
-- セッションタイムアウト時の自動画面ロック（PINコード入力による再開等）の拡張に対応可能な設計とする。
+### 4.6 ローカル端末（IndexedDB & メモリキャッシュ）の保護とログアウト時完全消去 (`src/lib/syncEngine.ts`)
+- 共有端末やスマホ・PCでの情報漏洩を防止するため、ユーザーが「ログアウト」を実行した際（または未招待アカウントが遮断された際）は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）により **IndexedDB 内の全7テーブル（`user_settings`, `categories`, `food_master`, `event_master`, `events`, `meal_details`, `libre_readings`）および全4種のメモリキャッシュ（カレンダー月次集計・分析集計・期間局所スライス・直近メモリキャッシュ）を即座に完全消去** してログイン画面（`AuthGateScreen`）へ戻す。
 
 ---
 
@@ -322,21 +333,188 @@ CREATE UNIQUE INDEX uq_patient_family_email ON family_permissions (patient_id, L
 CREATE INDEX idx_family_lookup ON family_permissions (family_user_id, patient_id);
 
 -- ------------------------------------------------------------------------------
--- 2. 権限判定用ヘルパー関数 (RLS用: family_user_id & family_email 双方に対応)
+-- 2. 招待専用ガード & 権限判定用ヘルパー関数 (RLS用: オーナー本人 ＋ 招待済み家族のみ許可)
 -- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.is_system_owner(check_uid UUID, check_email TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+    norm_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(check_email, '')), ''));
+    first_auth_uid UUID;
+BEGIN
+    IF check_uid IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    -- 1. すでに家族招待元（patient_id）として登録されている場合はオーナー本人
+    IF EXISTS (
+        SELECT 1 FROM public.family_permissions fp
+        WHERE fp.patient_id = check_uid
+    ) THEN
+        RETURN TRUE;
+    END IF;
+
+    -- 2. 招待された家族メンバーであり、かつオーナーではない場合は FALSE
+    IF EXISTS (
+        SELECT 1 FROM public.family_permissions fp
+        WHERE fp.family_user_id = check_uid
+           OR (
+               norm_email IS NOT NULL
+               AND fp.family_email IS NOT NULL
+               AND LOWER(NULLIF(BTRIM(fp.family_email), '')) = norm_email
+           )
+    ) THEN
+        RETURN FALSE;
+    END IF;
+
+    -- 3. 既存オーナー判定（自身の user_id で user_settings 等が存在する場合）
+    IF EXISTS (SELECT 1 FROM public.user_settings WHERE user_id = check_uid)
+       OR EXISTS (SELECT 1 FROM public.events WHERE user_id = check_uid)
+       OR EXISTS (SELECT 1 FROM public.libre_readings WHERE user_id = check_uid)
+    THEN
+        RETURN TRUE;
+    END IF;
+
+    -- 4. 初回セットアップ判定（システム全体が空の場合、最初の1名のみオーナーとして許可）
+    IF NOT EXISTS (SELECT 1 FROM public.user_settings LIMIT 1)
+       AND NOT EXISTS (SELECT 1 FROM public.family_permissions LIMIT 1)
+       AND NOT EXISTS (SELECT 1 FROM public.events LIMIT 1)
+       AND NOT EXISTS (SELECT 1 FROM public.libre_readings LIMIT 1)
+    THEN
+        SELECT id INTO first_auth_uid
+        FROM auth.users
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1;
+
+        IF first_auth_uid IS NULL OR first_auth_uid = check_uid THEN
+            RETURN TRUE;
+        END IF;
+    END IF;
+
+    RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION public.is_authorized_system_user(check_uid UUID, check_email TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+    norm_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(check_email, '')), ''));
+BEGIN
+    IF public.is_system_owner(check_uid, check_email) THEN
+        RETURN TRUE;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM public.family_permissions fp
+        WHERE (check_uid IS NOT NULL AND fp.family_user_id = check_uid)
+           OR (
+               norm_email IS NOT NULL
+               AND fp.family_email IS NOT NULL
+               AND LOWER(NULLIF(BTRIM(fp.family_email), '')) = norm_email
+           )
+    ) THEN
+        RETURN TRUE;
+    END IF;
+
+    RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION public.verify_user_authorization()
+RETURNS JSONB AS $$
+DECLARE
+    uid UUID := auth.uid();
+    uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
+    norm_email TEXT := LOWER(NULLIF(BTRIM(uemail), ''));
+    is_owner BOOLEAN := FALSE;
+    is_invited BOOLEAN := FALSE;
+    is_allowed BOOLEAN := FALSE;
+BEGIN
+    IF uid IS NULL THEN
+        RETURN jsonb_build_object(
+            'authorized', false,
+            'is_owner', false,
+            'is_invited_family', false,
+            'reason', 'unauthenticated'
+        );
+    END IF;
+
+    is_owner := public.is_system_owner(uid, uemail);
+    is_invited := EXISTS (
+        SELECT 1 FROM public.family_permissions fp
+        WHERE fp.family_user_id = uid
+           OR (
+               norm_email IS NOT NULL
+               AND fp.family_email IS NOT NULL
+               AND LOWER(NULLIF(BTRIM(fp.family_email), '')) = norm_email
+           )
+    );
+    is_allowed := (is_owner OR is_invited);
+
+    RETURN jsonb_build_object(
+        'authorized', is_allowed,
+        'is_owner', is_owner,
+        'is_invited_family', is_invited,
+        'uid', uid,
+        'email', uemail
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION public.enforce_invited_or_owner_signup()
+RETURNS TRIGGER AS $$
+DECLARE
+    new_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(NEW.email, '')), ''));
+    has_existing_users BOOLEAN := FALSE;
+    is_invited BOOLEAN := FALSE;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM auth.users WHERE id <> NEW.id LIMIT 1
+    ) INTO has_existing_users;
+
+    IF NOT has_existing_users THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1 FROM public.family_permissions fp
+        WHERE fp.family_email IS NOT NULL
+          AND new_email IS NOT NULL
+          AND LOWER(NULLIF(BTRIM(fp.family_email), '')) = new_email
+    ) INTO is_invited;
+
+    IF NOT is_invited THEN
+        RAISE EXCEPTION 'このメールアドレスは招待されていません。患者本人から共有設定（招待）を受けてから登録してください。';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_enforce_invited_or_owner_signup ON auth.users;
+CREATE TRIGGER trg_enforce_invited_or_owner_signup
+    BEFORE INSERT ON auth.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.enforce_invited_or_owner_signup();
+
 CREATE OR REPLACE FUNCTION can_view_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
+DECLARE
+    jwt_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
 BEGIN
     RETURN (
-        auth.uid() = target_patient_id
+        (
+            auth.uid() = target_patient_id
+            AND public.is_system_owner(auth.uid(), COALESCE(auth.jwt() ->> 'email', ''))
+        )
         OR EXISTS (
             SELECT 1 FROM family_permissions
             WHERE patient_id = target_patient_id
               AND (
                   family_user_id = auth.uid()
                   OR (
-                      family_email IS NOT NULL
-                      AND LOWER(family_email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+                      jwt_email IS NOT NULL
+                      AND family_email IS NOT NULL
+                      AND LOWER(NULLIF(BTRIM(family_email), '')) = jwt_email
                   )
               )
         )
@@ -346,9 +524,14 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION can_edit_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
+DECLARE
+    jwt_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
 BEGIN
     RETURN (
-        auth.uid() = target_patient_id
+        (
+            auth.uid() = target_patient_id
+            AND public.is_system_owner(auth.uid(), COALESCE(auth.jwt() ->> 'email', ''))
+        )
         OR EXISTS (
             SELECT 1 FROM family_permissions
             WHERE patient_id = target_patient_id
@@ -356,8 +539,9 @@ BEGIN
               AND (
                   family_user_id = auth.uid()
                   OR (
-                      family_email IS NOT NULL
-                      AND LOWER(family_email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+                      jwt_email IS NOT NULL
+                      AND family_email IS NOT NULL
+                      AND LOWER(NULLIF(BTRIM(family_email), '')) = jwt_email
                   )
               )
         )
@@ -499,9 +683,40 @@ ALTER TABLE events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meal_details ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 
--- 家族権限テーブル: 本人のみ招待・管理可能
-CREATE POLICY "family_permissions_select" ON family_permissions FOR SELECT USING (auth.uid() = patient_id OR auth.uid() = family_user_id);
-CREATE POLICY "family_permissions_all" ON family_permissions FOR ALL USING (auth.uid() = patient_id);
+-- 家族権限テーブル: オーナー本人のみ招待・管理可能、招待された家族は自身のレコードのみ閲覧・初回承諾(family_user_id紐づけ)可能
+CREATE POLICY "family_permissions_select" ON family_permissions
+    FOR SELECT USING (
+        auth.uid() = patient_id
+        OR auth.uid() = family_user_id
+        OR (
+            family_email IS NOT NULL
+            AND NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), '') IS NOT NULL
+            AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''))
+        )
+    );
+
+CREATE POLICY "family_permissions_all" ON family_permissions
+    FOR ALL USING (
+        auth.uid() = patient_id
+        AND public.is_system_owner(auth.uid(), COALESCE(auth.jwt() ->> 'email', ''))
+    )
+    WITH CHECK (
+        auth.uid() = patient_id
+        AND public.is_system_owner(auth.uid(), COALESCE(auth.jwt() ->> 'email', ''))
+    );
+
+CREATE POLICY "family_permissions_accept" ON family_permissions
+    FOR UPDATE USING (
+        auth.uid() = family_user_id
+        OR (
+            family_email IS NOT NULL
+            AND NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), '') IS NOT NULL
+            AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''))
+        )
+    )
+    WITH CHECK (
+        family_user_id = auth.uid()
+    );
 
 -- 各業務テーブル: 閲覧（本人+家族）、編集（本人+代理入力）
 DO $$

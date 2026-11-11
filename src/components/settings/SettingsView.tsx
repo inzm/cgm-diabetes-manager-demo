@@ -322,6 +322,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
     hyperThreshold: contextHyper,
     updateClinicalThresholds,
     isCloudEnabled,
+    isSystemOwner,
     authUser,
     isAuthLoading,
     isSyncing,
@@ -341,6 +342,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
   const restoreFileInputRef = useRef<HTMLInputElement>(null);
   const isDemoMode = isDemoCsvImportDisabled();
   const isPortfolio = isPortfolioMode();
+  const isLockedViewerAccount = Boolean(
+    authUser &&
+      accessibleTargets.find((t) => t.patientId === currentPatientId)?.role === 'viewer'
+  );
 
   // 1. 血糖値の目標範囲状態
   const [hypoThreshold, setHypoThreshold] = useState<number>(contextHypo || 70);
@@ -1564,7 +1569,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
                   <div className="text-[11px] text-slate-500">
                     {lastSyncedAt
                       ? `最終同期: ${new Date(lastSyncedAt).toLocaleString('ja-JP')}`
-                      : 'クラウド接続済み'}
+                      : 'クラウド接続済み'}{' '}
+                    ・ログアウト時はこの端末内のキャッシュを自動消去してログイン画面へ戻ります
                   </div>
                 </div>
 
@@ -1639,16 +1645,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
                 </div>
               )}
 
-              {/* 家族見守り招待・権限管理（患者本人プロファイル選択時のみ表示） */}
-              {currentPatientId === authUser.id && (
+              {/* 家族見守り招待・権限管理（患者本人オーナーのプロファイル選択時のみ表示） */}
+              {currentPatientId === authUser.id && isSystemOwner && (
                 <div className="pt-3 border-t border-slate-100 space-y-4">
                   <div>
                     <h4 className="text-xs font-bold text-slate-800">
                       家族へのデータ共有・招待設定
                     </h4>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      共有したい家族のメールアドレスと権限を登録してください。登録された家族がそのメールアドレスでログインすると、自動的にあなたの記録を閲覧（または代理入力）できるようになります。
+                      共有したい家族のメールアドレスと権限を登録してください。事前登録されていない第三者のアカウント作成・ログインは自動的に遮断されます。
                     </p>
+                  </div>
+
+                  {/* 家族招待の3ステップ案内ボックス */}
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-600 space-y-1.5 leading-relaxed">
+                    <div className="font-bold text-slate-800">
+                      新しい家族を招待する手順（3ステップ）
+                    </div>
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>
+                        <strong>患者本人が招待登録</strong>：下の欄に家族のメールアドレスを入力し、権限を選んで「家族を追加」を押します。
+                      </li>
+                      <li>
+                        <strong>家族が初回登録</strong>：家族がアプリのURLを開き、ログイン画面の「新規アカウント登録」から<strong>招待された同じメールアドレス</strong>とパスワードを登録します。
+                      </li>
+                      <li>
+                        <strong>共有開始</strong>：家族がログインすると自動的に「連携済み」となり、選んだ権限（閲覧のみ／記録・編集も可能）でデータが共有されます。
+                      </li>
+                    </ol>
                   </div>
 
                   <form
@@ -1789,8 +1813,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
         </div>
       )}
 
-      {/* セクション 5: 動作検証・アプリ追加 (デモアプリでは非表示) */}
-      {!isDemoMode && (
+      {/* セクション 5: 動作検証・アプリ追加 (デモアプリおよびクラウドログイン時ロール切替は非表示) */}
+      {!isDemoMode && (!authUser || isInstallable) && (
         <div className="bg-slate-50/80 rounded-2xl border border-dashed border-slate-300 p-5 sm:p-6 space-y-4">
           <div className="flex items-center space-x-2 text-slate-700">
             <FlaskConical className="w-5 h-5 text-indigo-600" />
@@ -1798,41 +1822,44 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2 border-t border-slate-200">
-            {/* 表示モード切替 */}
-            <div className="space-y-1.5">
-              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-slate-500" />
-                表示モード切替:
-              </span>
-              <div className="inline-flex items-center rounded-xl bg-white p-1 border border-slate-200 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setRole('patient')}
-                  className={cn(
-                    'flex items-center space-x-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer',
-                    currentRole === 'patient'
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  )}
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span>患者本人 (編集可)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRole('viewer')}
-                  className={cn(
-                    'flex items-center space-x-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer',
-                    currentRole === 'viewer'
-                      ? 'bg-rose-700 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  )}
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                  <span>見守り家族 (閲覧専用)</span>
-                </button>
+            {/* 表示モード切替 (未ログインのローカル検証・E2E回帰テスト時のみ表示) */}
+            {!authUser && (
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-slate-500" />
+                  表示モード切替:
+                </span>
+                <div className="inline-flex items-center rounded-xl bg-white p-1 border border-slate-200 shadow-2xs">
+                  <button
+                    type="button"
+                    disabled={isLockedViewerAccount}
+                    onClick={() => setRole('patient')}
+                    className={cn(
+                      'flex items-center space-x-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed',
+                      currentRole === 'patient'
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    )}
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span>患者本人 (編集可)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRole('viewer')}
+                    className={cn(
+                      'flex items-center space-x-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer',
+                      currentRole === 'viewer'
+                        ? 'bg-rose-700 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    )}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    <span>見守り家族 (閲覧専用)</span>
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* ホーム画面へ追加 */}
             {isInstallable && (

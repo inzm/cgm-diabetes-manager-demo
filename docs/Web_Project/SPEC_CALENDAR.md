@@ -81,7 +81,11 @@
 
 ## 3. UIコンポーネント詳細仕様
 
-### 3.1 ヘッダー & ナビゲーション (`src/components/common/Header.tsx`, `src/components/common/BottomNav.tsx`, `src/App.tsx`)
+### 3.1 専用ログイン画面（Auth Gate）・ヘッダー & ナビゲーション (`src/components/common/AuthGateScreen.tsx`, `src/components/common/Header.tsx`, `src/components/common/BottomNav.tsx`, `src/App.tsx`)
+- **本番モードにおける未ログイン時の専用ログイン画面（Auth Gate）強制ロック (`src/components/common/AuthGateScreen.tsx`, `src/App.tsx`)**:
+  - 本番環境（`VITE_APP_MODE=personal` かつ Supabase 接続有効時、`isAuthRequired === true`）では、未ログイン状態（`!authUser`）またはアクセス権限未承認時（`!isAccessAuthorized`）にヘッダー・カレンダー画面・分析画面・ナビゲーション等を一切描画せず、フルスクリーンの「専用ログイン画面（`src/components/common/AuthGateScreen.tsx`）」のみを表示して第三者の閲覧・操作を100%遮断する。
+  - ログイン画面には「ログイン」と「招待されたご家族の新規登録」の切替タブ、および折りたたみ式の「はじめてご利用になる方・招待されたご家族の手順」ガイドを配置する（詳細は [`USER_GUIDE.md`](USER_GUIDE.md) および [`SPEC_SETTINGS.md`](SPEC_SETTINGS.md) を参照）。
+  - 公開デモモード（`VITE_APP_MODE=portfolio`）およびローカルE2Eテスト環境では Auth Gate を表示せず、即座にカレンダー画面を描画する。
 - **ヘッダー (`src/components/common/Header.tsx`)**:
   - 清潔感のある白基調（`bg-white/95 backdrop-blur-md border-b border-slate-200/90`）のモダンな医療アプリヘッダーとし、二重枠線を排してCGM水滴＆波形アイコン（`public/icons/icon-192.svg`）自体の鮮やかなグラデーションが映えるデザインとする。
   - **左右の視覚バランス設計 & 未来月への遷移制限**:

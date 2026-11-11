@@ -71,8 +71,28 @@ export const SOURCE_TO_SPEC_RULES = [
     description: 'デモアプリ初回アクセス案内モーダル',
   },
   {
+    prefix: 'src/components/common/AuthGateScreen.tsx',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_CALENDAR.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/USER_GUIDE.md',
+    ],
+    description: '本番モード専用ログイン画面 (Auth Gate) & 初回セットアップ案内',
+  },
+  {
+    prefix: 'src/App.tsx',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_CALENDAR.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/USER_GUIDE.md',
+    ],
+    description: 'アプリケーションルート & Auth Gate 強制ロック制御',
+  },
+  {
     prefix: 'src/components/analysis/',
-    specs: ['docs/Web_Project/SPEC_ANALYSIS.md'],
+    specs: ['docs/Web_Project/SPEC_ANALYSIS.md', 'docs/Web_Project/USER_GUIDE.md'],
     description: '臨床分析画面コンポーネント',
   },
   {
@@ -105,7 +125,7 @@ export const SOURCE_TO_SPEC_RULES = [
   },
   {
     prefix: 'src/components/foods/',
-    specs: ['docs/Web_Project/SPEC_FOOD_MASTER.md'],
+    specs: ['docs/Web_Project/SPEC_FOOD_MASTER.md', 'docs/Web_Project/USER_GUIDE.md'],
     description: 'よく使う食品・活動管理画面コンポーネント',
   },
   {
@@ -120,7 +140,7 @@ export const SOURCE_TO_SPEC_RULES = [
   },
   {
     prefix: 'src/components/import/',
-    specs: ['docs/Web_Project/SPEC_CSV_IMPORT.md'],
+    specs: ['docs/Web_Project/SPEC_CSV_IMPORT.md', 'docs/Web_Project/USER_GUIDE.md'],
     description: 'リブレCSV取込モーダル',
   },
   {
@@ -130,18 +150,26 @@ export const SOURCE_TO_SPEC_RULES = [
   },
   {
     prefix: 'src/components/records/',
-    specs: ['docs/Web_Project/SPEC_MEAL_RECORD.md'],
+    specs: ['docs/Web_Project/SPEC_MEAL_RECORD.md', 'docs/Web_Project/USER_GUIDE.md'],
     description: '食事・インスリン・活動記録モーダル',
   },
   {
     prefix: 'src/components/settings/',
-    specs: ['docs/Web_Project/SPEC_SETTINGS.md', 'docs/Web_Project/SPEC_PWA.md'],
-    description: '設定・データ管理画面',
+    specs: [
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/SPEC_PWA.md',
+      'docs/Web_Project/USER_GUIDE.md',
+    ],
+    description: '設定・データ管理画面 & 家族招待ガイド',
   },
   {
     prefix: 'src/contexts/PatientContext.tsx',
-    specs: ['docs/Web_Project/SPEC_SETTINGS.md', 'docs/Web_Project/SPEC_CALENDAR.md'],
-    description: '患者コンテキスト・ロール・臨床目標閾値状態',
+    specs: [
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/SPEC_CALENDAR.md',
+      'docs/Web_Project/USER_GUIDE.md',
+    ],
+    description: '患者コンテキスト・ロール・臨床目標閾値・認証ゲート状態',
   },
   {
     prefix: 'src/lib/pwa.ts',
@@ -194,8 +222,18 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/SPEC_SETTINGS.md',
       'docs/Web_Project/SPEC_CALENDAR.md',
       'docs/Web_Project/TEST_PLAN.md',
+      'docs/Web_Project/USER_GUIDE.md',
     ],
-    description: 'Local-First 双方向クラウド同期エンジン & 家族権限解決',
+    description: 'Local-First 双方向クラウド同期エンジン & 家族権限解決・ローカルキャッシュ消去',
+  },
+  {
+    prefix: 'supabase/migrations/',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/USER_GUIDE.md',
+    ],
+    description: 'Supabase PostgreSQL 本番DDL & RLS・招待専用ガード関数',
   },
   {
     prefix: 'functions/api/gemini.ts',
@@ -272,7 +310,11 @@ function runVerification() {
 
     const specFiles = fs
       .readdirSync(DOCS_DIR)
-      .filter((name) => name.startsWith('SPEC_') && name.endsWith('.md'));
+      .filter((name) => (name.startsWith('SPEC_') || name === 'USER_GUIDE.md') && name.endsWith('.md'));
+
+    if (!fs.existsSync(path.join(DOCS_DIR, 'USER_GUIDE.md'))) {
+      errors.push(`[Missing User Guide] docs/Web_Project/USER_GUIDE.md does not exist.`);
+    }
 
     for (const specFile of specFiles) {
       if (!readmeContent.includes(specFile)) {
@@ -281,7 +323,7 @@ function runVerification() {
         );
       }
     }
-    console.log(`✅ [PASS] Check 1: Spec index (README.md) covers all ${specFiles.length} SPEC_*.md files with no stale markers.`);
+    console.log(`✅ [PASS] Check 1: Spec index (README.md) covers all ${specFiles.length} SPEC_*.md & USER_GUIDE.md files with no stale markers.`);
   }
 
   // -------------------------------------------------------------------------

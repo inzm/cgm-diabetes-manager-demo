@@ -15,11 +15,13 @@ import {
   type AccessiblePatientTarget,
   type SyncResult,
   DEFAULT_LOCAL_PATIENT_ID,
-  invalidateAllCachesAfterSync,
+  UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
   migrateAnonymousLocalDataToUser,
+  purgeAllLocalPatientCaches,
   resolveUserAccessFromPermissions,
   subscribeToPatientRealtime,
   syncPatientDataWithCloud,
+  verifyUserAccessWithCloud,
 } from '@/lib/syncEngine';
 
 export interface AuthUserInfo {
@@ -31,12 +33,15 @@ export interface PatientContextType {
   currentPatientId: string;
   currentRole: UserRole;
   isReadOnly: boolean;
+  isSystemOwner: boolean;
   hypoThreshold: number;
   hyperThreshold: number;
   setRole: (role: UserRole) => void;
   updateClinicalThresholds: (hypo: number, hyper: number) => void;
   // Cloud Auth & Family Sharing & Sync
   isCloudEnabled: boolean;
+  isAuthRequired: boolean;
+  isAccessAuthorized: boolean;
   authUser: AuthUserInfo | null;
   isAuthLoading: boolean;
   isSyncing: boolean;
@@ -78,7 +83,16 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
   const [hypoThreshold, setHypoThreshold] = useState<number>(70);
   const [hyperThreshold, setHyperThreshold] = useState<number>(180);
 
+  const isCloudEnabled = isSupabaseConfigured();
+  const isAuthRequired = isCloudEnabled && !isPortfolioMode();
+
   const [authUser, setAuthUser] = useState<AuthUserInfo | null>(null);
+  const [isSystemOwner, setIsSystemOwner] = useState<boolean>(
+    () => !isAuthRequired
+  );
+  const [isAccessAuthorized, setIsAccessAuthorized] = useState<boolean>(
+    () => !isAuthRequired
+  );
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(() =>
     isSupabaseConfigured()
   );
@@ -93,7 +107,13 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
   >([]);
 
   const preferredPatientIdRef = useRef<string | null>(null);
-  const isCloudEnabled = isSupabaseConfigured();
+  const currentPatientIdRef = useRef<string>(DEFAULT_PATIENT_ID);
+  currentPatientIdRef.current = currentPatientId;
+  const rejectionErrorRef = useRef<string | null>(null);
+  const inFlightSessionResolveRef = useRef<{
+    key: string;
+    promise: Promise<{ authorized: boolean; error?: string }>;
+  } | null>(null);
   const isReadOnly = currentRole === 'viewer';
 
   const loadThresholdsFromLocalDb = useCallback(async (patientId: string) => {
@@ -138,119 +158,198 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
   }, [currentPatientId]);
 
   /**
-   * ログイン済みユーザーの家族権限解決・ローカルデータ引き継ぎ・初回クラウド同期を実行
+   * ログイン済みユーザーのアクセス権限検証（オーナー本人または招待済み家族のみ許可）・
+   * ローカルデータ引き継ぎ・初回クラウド同期を実行（同一条件の並行呼び出しは直列共有）
    */
   const resolveSessionAndSync = useCallback(
     async (
       user: AuthUserInfo,
       overridePreferredPatientId?: string | null
-    ): Promise<void> => {
+    ): Promise<{ authorized: boolean; error?: string }> => {
       const client = getSupabaseClient();
-      if (!client) return;
+      if (!client) {
+        return { authorized: true };
+      }
 
-      setIsSyncing(true);
-      setSyncError(null);
+      const preferredKey =
+        overridePreferredPatientId !== undefined
+          ? (overridePreferredPatientId ?? '')
+          : (preferredPatientIdRef.current ?? '');
+      const dedupeKey = `${user.id}:${preferredKey}`;
+      if (
+        inFlightSessionResolveRef.current &&
+        inFlightSessionResolveRef.current.key === dedupeKey
+      ) {
+        return inFlightSessionResolveRef.current.promise;
+      }
 
-      try {
-        // 1. 未ログイン時に記録されたローカルデータがあれば本人IDへ自動引き継ぎ
-        await migrateAnonymousLocalDataToUser(user.id, DEFAULT_PATIENT_ID);
+      const task = (async (): Promise<{ authorized: boolean; error?: string }> => {
+        setIsSyncing(true);
+        setSyncError(null);
+        rejectionErrorRef.current = null;
 
-        // 2. family_permissions テーブルを照会
-        const { data: rawPerms, error: permErr } = await client
-          .from('family_permissions')
-          .select('*')
-          .order('created_at', { ascending: true });
+        try {
+          // 1. family_permissions テーブルを照会
+          const { data: rawPerms, error: permErr } = await client
+            .from('family_permissions')
+            .select('*')
+            .order('created_at', { ascending: true });
 
-        if (permErr) {
-          console.warn('family_permissions query warning:', permErr.message);
-        }
+          if (permErr) {
+            console.warn('family_permissions query warning:', permErr.message);
+          }
 
-        const permissions: FamilyPermission[] = Array.isArray(rawPerms)
-          ? (rawPerms as FamilyPermission[])
-          : [];
+          const permissions: FamilyPermission[] = Array.isArray(rawPerms)
+            ? (rawPerms as FamilyPermission[])
+            : [];
 
-        // 初回家族ログイン時: family_user_id が未設定でメールアドレスが一致する招待レコードを更新
-        const normalizedEmail = (user.email ?? '').trim().toLowerCase();
-        const nowIso = new Date().toISOString();
-        for (const perm of permissions) {
-          if (
-            perm.patient_id !== user.id &&
-            !perm.family_user_id &&
-            normalizedEmail &&
-            perm.family_email &&
-            perm.family_email.trim().toLowerCase() === normalizedEmail
-          ) {
-            try {
-              await client
-                .from('family_permissions')
-                .update({
-                  family_user_id: user.id,
-                  accepted_at: nowIso,
-                })
-                .eq('id', perm.id);
-              perm.family_user_id = user.id;
-              perm.accepted_at = nowIso;
-            } catch {
-              // RLS等で更新不可の場合もメモリ上で紐づけを保持（RLS関数は family_email でも許可済み）
-              perm.family_user_id = user.id;
-              perm.accepted_at = nowIso;
+          // 2. アクセス認可チェック（オーナー本人 または 招待済み家族であるか検証）
+          const accessCheck = await verifyUserAccessWithCloud(
+            client,
+            user.id,
+            user.email,
+            permissions
+          );
+
+          if (!accessCheck.authorized) {
+            const rejectMsg =
+              accessCheck.errorMessage || UNAUTHORIZED_ACCESS_ERROR_MESSAGE;
+            rejectionErrorRef.current = rejectMsg;
+            await client.auth.signOut().catch(() => undefined);
+            await purgeAllLocalPatientCaches(currentPatientIdRef.current);
+            preferredPatientIdRef.current = null;
+            setAuthUser(null);
+            setIsSystemOwner(false);
+            setIsAccessAuthorized(false);
+            setAccessibleTargets([]);
+            setMyInvitedFollowers([]);
+            setCurrentPatientId(DEFAULT_PATIENT_ID);
+            setCurrentRole('patient');
+            setHypoThreshold(70);
+            setHyperThreshold(180);
+            setLastSyncedAt(null);
+            setSyncError(rejectMsg);
+            return { authorized: false, error: rejectMsg };
+          }
+
+          // 認可通過後に認証状態を確定
+          setAuthUser(user);
+          setIsSystemOwner(accessCheck.isOwner);
+          setIsAccessAuthorized(true);
+
+          // 3. オーナー本人の場合は、未ログイン時に記録されたローカルデータがあれば本人IDへ自動引き継ぎ
+          if (accessCheck.isOwner) {
+            await migrateAnonymousLocalDataToUser(user.id, DEFAULT_PATIENT_ID);
+          }
+
+          // 4. 初回家族ログイン時: family_user_id が未設定でメールアドレスが一致する招待レコードを更新
+          const normalizedEmail = (user.email ?? '').trim().toLowerCase();
+          const nowIso = new Date().toISOString();
+          for (const perm of permissions) {
+            if (
+              perm.patient_id !== user.id &&
+              !perm.family_user_id &&
+              normalizedEmail &&
+              perm.family_email &&
+              perm.family_email.trim().toLowerCase() === normalizedEmail
+            ) {
+              try {
+                await client
+                  .from('family_permissions')
+                  .update({
+                    family_user_id: user.id,
+                    accepted_at: nowIso,
+                  })
+                  .eq('id', perm.id);
+                perm.family_user_id = user.id;
+                perm.accepted_at = nowIso;
+              } catch {
+                // RLS等で更新不可の場合もメモリ上で紐づけを保持（RLS関数は family_email でも許可済み）
+                perm.family_user_id = user.id;
+                perm.accepted_at = nowIso;
+              }
             }
           }
-        }
 
-        const preferredId =
-          overridePreferredPatientId !== undefined
-            ? overridePreferredPatientId
-            : preferredPatientIdRef.current;
+          const preferredId =
+            overridePreferredPatientId !== undefined
+              ? overridePreferredPatientId
+              : preferredPatientIdRef.current;
 
-        const resolved = resolveUserAccessFromPermissions(
-          user.id,
-          user.email,
-          permissions,
-          preferredId
-        );
+          const resolved = resolveUserAccessFromPermissions(
+            user.id,
+            user.email,
+            permissions,
+            preferredId
+          );
 
-        preferredPatientIdRef.current = resolved.currentPatientId;
-        setAccessibleTargets(resolved.accessibleTargets);
-        setMyInvitedFollowers(resolved.myInvitedFollowers);
-        setCurrentPatientId(resolved.currentPatientId);
-        setCurrentRole(resolved.currentRole);
+          // 招待された家族専用アカウント（非オーナー）の場合は、共有された患者レコードのみを選択対象とする
+          const sharedOnlyTargets = resolved.accessibleTargets.filter(
+            (t) => t.patientId !== user.id
+          );
+          const effectiveTargets =
+            !accessCheck.isOwner && sharedOnlyTargets.length > 0
+              ? sharedOnlyTargets
+              : resolved.accessibleTargets;
+          const effectiveSelected =
+            effectiveTargets.find((t) => t.patientId === resolved.currentPatientId) ??
+            effectiveTargets[0];
 
-        const canEditTarget = resolved.currentRole !== 'viewer';
+          preferredPatientIdRef.current = effectiveSelected.patientId;
+          setAccessibleTargets(effectiveTargets);
+          setMyInvitedFollowers(
+            accessCheck.isOwner ? resolved.myInvitedFollowers : []
+          );
+          setCurrentPatientId(effectiveSelected.patientId);
+          setCurrentRole(effectiveSelected.role);
 
-        // 本人または編集可能ロールの場合は初期シードを確保してから双方向同期
-        if (canEditTarget) {
-          await seedFoodMasterIfEmpty(resolved.currentPatientId);
-        }
+          const canEditTarget = effectiveSelected.role !== 'viewer';
 
-        const syncRes = await syncPatientDataWithCloud(
-          resolved.currentPatientId,
-          {
-            canEdit: canEditTarget,
-            includeReadings: true,
+          // 本人または編集可能ロールの場合は初期シードを確保してから双方向同期
+          if (canEditTarget) {
+            await seedFoodMasterIfEmpty(effectiveSelected.patientId);
           }
-        );
 
-        if (!canEditTarget) {
-          await seedFoodMasterIfEmpty(resolved.currentPatientId);
+          const syncRes = await syncPatientDataWithCloud(
+            effectiveSelected.patientId,
+            {
+              canEdit: canEditTarget,
+              includeReadings: true,
+            }
+          );
+
+          if (!canEditTarget) {
+            await seedFoodMasterIfEmpty(effectiveSelected.patientId);
+          }
+
+          if (syncRes.status === 'success' && syncRes.syncedAt) {
+            setLastSyncedAt(syncRes.syncedAt);
+            setSyncError(null);
+          } else if (syncRes.status === 'error' && syncRes.errorMessage) {
+            setSyncError(syncRes.errorMessage);
+          }
+
+          await loadThresholdsFromLocalDb(effectiveSelected.patientId);
+          return { authorized: true };
+        } catch (err) {
+          const msg =
+            err instanceof Error
+              ? err.message
+              : 'クラウド同期中にエラーが発生しました。';
+          setSyncError(msg);
+          return { authorized: true, error: msg };
+        } finally {
+          setIsSyncing(false);
         }
+      })();
 
-        if (syncRes.status === 'success' && syncRes.syncedAt) {
-          setLastSyncedAt(syncRes.syncedAt);
-          setSyncError(null);
-        } else if (syncRes.status === 'error' && syncRes.errorMessage) {
-          setSyncError(syncRes.errorMessage);
-        }
-
-        await loadThresholdsFromLocalDb(resolved.currentPatientId);
-      } catch (err) {
-        const msg =
-          err instanceof Error
-            ? err.message
-            : 'クラウド同期中にエラーが発生しました。';
-        setSyncError(msg);
+      inFlightSessionResolveRef.current = { key: dedupeKey, promise: task };
+      try {
+        return await task;
       } finally {
-        setIsSyncing(false);
+        if (inFlightSessionResolveRef.current?.promise === task) {
+          inFlightSessionResolveRef.current = null;
+        }
       }
     },
     [loadThresholdsFromLocalDb]
@@ -268,7 +367,7 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
 
     client.auth
       .getSession()
-      .then(({ data }) => {
+      .then(async ({ data }) => {
         if (!mounted) return;
         const sessionUser = data.session?.user;
         if (sessionUser) {
@@ -276,13 +375,21 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
             id: sessionUser.id,
             email: sessionUser.email,
           };
-          setAuthUser(info);
-          void resolveSessionAndSync(info);
+          await resolveSessionAndSync(info);
+        } else {
+          setAuthUser(null);
+          setIsSystemOwner(false);
+          setIsAccessAuthorized(false);
         }
-        setIsAuthLoading(false);
+        if (mounted) setIsAuthLoading(false);
       })
       .catch(() => {
-        if (mounted) setIsAuthLoading(false);
+        if (mounted) {
+          setAuthUser(null);
+          setIsSystemOwner(false);
+          setIsAccessAuthorized(false);
+          setIsAuthLoading(false);
+        }
       });
 
     const { data: sub } = client.auth.onAuthStateChange((event, session) => {
@@ -293,20 +400,26 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
           id: sessionUser.id,
           email: sessionUser.email,
         };
-        setAuthUser(info);
         if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
           void resolveSessionAndSync(info);
         }
       } else if (event === 'SIGNED_OUT') {
+        const prevPatientId = currentPatientIdRef.current;
         preferredPatientIdRef.current = null;
         setAuthUser(null);
+        setIsSystemOwner(false);
+        setIsAccessAuthorized(false);
         setAccessibleTargets([]);
         setMyInvitedFollowers([]);
         setCurrentPatientId(DEFAULT_PATIENT_ID);
         setCurrentRole('patient');
+        setHypoThreshold(70);
+        setHyperThreshold(180);
         setLastSyncedAt(null);
-        setSyncError(null);
-        invalidateAllCachesAfterSync(DEFAULT_PATIENT_ID);
+        if (!rejectionErrorRef.current) {
+          setSyncError(null);
+        }
+        void purgeAllLocalPatientCaches(prevPatientId);
       }
     });
 
@@ -318,7 +431,12 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
 
   // Supabase Realtime 購読（ログイン中かつ対象患者確定時）
   useEffect(() => {
-    if (!authUser || !currentPatientId || currentPatientId === DEFAULT_PATIENT_ID) {
+    if (
+      !authUser ||
+      !isAccessAuthorized ||
+      !currentPatientId ||
+      currentPatientId === DEFAULT_PATIENT_ID
+    ) {
       return;
     }
     const canEdit = currentRole !== 'viewer';
@@ -333,7 +451,13 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
       }
     );
     return unsubscribe;
-  }, [authUser, currentPatientId, currentRole, loadThresholdsFromLocalDb]);
+  }, [
+    authUser,
+    isAccessAuthorized,
+    currentPatientId,
+    currentRole,
+    loadThresholdsFromLocalDb,
+  ]);
 
   // バックグラウンド同期イベント受信時にも最終同期時刻・設定閾値を反映
   useEffect(() => {
@@ -354,9 +478,23 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
     };
   }, [currentPatientId, loadThresholdsFromLocalDb]);
 
-  const setRole = useCallback((role: UserRole) => {
-    setCurrentRole(role);
-  }, []);
+  const setRole = useCallback(
+    (role: UserRole) => {
+      if (authUser) {
+        const grantedTarget = accessibleTargets.find(
+          (t) => t.patientId === currentPatientIdRef.current
+        );
+        if (
+          (grantedTarget && grantedTarget.role === 'viewer' && role !== 'viewer') ||
+          (!isSystemOwner && !grantedTarget && role !== 'viewer')
+        ) {
+          return;
+        }
+      }
+      setCurrentRole(role);
+    },
+    [authUser, accessibleTargets, isSystemOwner]
+  );
 
   const updateClinicalThresholds = useCallback(
     (hypo: number, hyper: number) => {
@@ -396,8 +534,12 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
           id: data.user.id,
           email: data.user.email,
         };
-        setAuthUser(info);
-        await resolveSessionAndSync(info);
+        const outcome = await resolveSessionAndSync(info);
+        if (!outcome.authorized) {
+          return {
+            error: outcome.error || UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+          };
+        }
       }
       return {};
     },
@@ -425,6 +567,12 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
         password,
       });
       if (error) {
+        if (
+          error.message.includes('招待されていません') ||
+          error.message.includes('Database error saving new user')
+        ) {
+          return { error: UNAUTHORIZED_ACCESS_ERROR_MESSAGE };
+        }
         return { error: `アカウント登録に失敗しました: ${error.message}` };
       }
       if (data.session && data.user) {
@@ -432,8 +580,12 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
           id: data.user.id,
           email: data.user.email,
         };
-        setAuthUser(info);
-        await resolveSessionAndSync(info);
+        const outcome = await resolveSessionAndSync(info);
+        if (!outcome.authorized) {
+          return {
+            error: outcome.error || UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+          };
+        }
         return { needsEmailConfirmation: false };
       }
       return { needsEmailConfirmation: true };
@@ -442,19 +594,25 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
   );
 
   const signOut = useCallback(async (): Promise<void> => {
+    const prevPatientId = currentPatientIdRef.current;
+    rejectionErrorRef.current = null;
     const client = getSupabaseClient();
     if (client) {
-      await client.auth.signOut();
+      await client.auth.signOut().catch(() => undefined);
     }
+    await purgeAllLocalPatientCaches(prevPatientId);
     preferredPatientIdRef.current = null;
     setAuthUser(null);
+    setIsAccessAuthorized(false);
+    setIsSystemOwner(false);
     setAccessibleTargets([]);
     setMyInvitedFollowers([]);
     setCurrentPatientId(DEFAULT_PATIENT_ID);
     setCurrentRole('patient');
+    setHypoThreshold(70);
+    setHyperThreshold(180);
     setLastSyncedAt(null);
     setSyncError(null);
-    invalidateAllCachesAfterSync(DEFAULT_PATIENT_ID);
   }, []);
 
   const switchTargetPatient = useCallback(
@@ -513,6 +671,11 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
           error: '家族を招待するには先にクラウドアカウントへログインしてください。',
         };
       }
+      if (!isSystemOwner || isReadOnly) {
+        return {
+          error: '家族の招待・権限変更は患者ご本人のアカウントからのみ行えます。',
+        };
+      }
       const normalizedEmail = email.trim().toLowerCase();
       if (!normalizedEmail || !normalizedEmail.includes('@')) {
         return { error: '招待する家族の有効なメールアドレスを入力してください。' };
@@ -552,7 +715,7 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
       await refreshFamilyPermissions();
       return {};
     },
-    [authUser, myInvitedFollowers, refreshFamilyPermissions]
+    [authUser, isSystemOwner, isReadOnly, myInvitedFollowers, refreshFamilyPermissions]
   );
 
   const removeFamilyMember = useCallback(
@@ -560,6 +723,11 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
       const client = getSupabaseClient();
       if (!client || !authUser) {
         return { error: 'ログイン状態を確認してください。' };
+      }
+      if (!isSystemOwner || isReadOnly) {
+        return {
+          error: '家族の共有解除は患者ご本人のアカウントからのみ行えます。',
+        };
       }
       const { error } = await client
         .from('family_permissions')
@@ -574,7 +742,7 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
       await refreshFamilyPermissions();
       return {};
     },
-    [authUser, refreshFamilyPermissions]
+    [authUser, isSystemOwner, isReadOnly, refreshFamilyPermissions]
   );
 
   return (
@@ -588,6 +756,9 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
         setRole,
         updateClinicalThresholds,
         isCloudEnabled,
+        isAuthRequired,
+        isAccessAuthorized,
+        isSystemOwner,
         authUser,
         isAuthLoading,
         isSyncing,

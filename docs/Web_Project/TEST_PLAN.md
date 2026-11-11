@@ -45,7 +45,7 @@
 | **異常値抽出ステートマシン**<br>([`src/lib/anomalyExtractor.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/anomalyExtractor.ts)) | ・28分継続回復ルールおよび45分センサー欠損ギャップによるエピソード確定<br>・カスタム閾値（例: 低血糖 `< 80`, 高血糖 `> 160`）変更時の再判定と件数変化 |
 | **日時・タイムゾーン安全処理**<br>([`src/lib/dateUtils.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/dateUtils.ts)) | ・`buildWallClockIso` / `extractTimeStr` による -9時間ズレ防止<br>・`shiftLocalDateStr` / `getDayOfWeekFromDateStr` の境界日付検証 |
 | **画面間データ整合性統合テスト**<br>([`src/lib/__tests__/dataIntegrity.test.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/__tests__/dataIntegrity.test.ts)) | ・カレンダーセル、選択日サマリー、日次詳細、曜日別分析、糖質インスリン推移、時間帯別異常値分析のすべての数値（糖質・インスリン・異常値件数）が100%一致することの検証<br>・`user_settings` の食事区分別デフォルトインスリン設定（`enable_default_insulin` トグル ON/OFF および朝・昼・夕・間食の単位解決）の整合性検証<br>・決定論的UUID生成（[`src/lib/uuidUtils.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/uuidUtils.ts)）、論理削除カテゴリの再登録復活（`addOrReviveCategory`）、本番モード（`personal`）でのデモデータ自動投入ゼロ保証、バックアップ復元時のUUID正規化＆全4種メモリキャッシュ破棄の検証 |
-| **双方向クラウド同期エンジン & 家族権限管理**<br>([`src/lib/syncEngine.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/syncEngine.ts) / [`src/lib/supabase.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/supabase.ts)) | ・Supabase (`TIMESTAMPTZ`) から取得した日時の24文字ウォールクロックISO正規化（`normalizeToWallClockIso`: 課題 #7 対応）と `.between()` 境界検索一致検証<br>・1,000件単位チャンク分割（`chunkArray`）<br>・`family_permissions` に基づく患者本人 / 招待家族（`viewer` 閲覧専用ロック / `editor` 代理記録）の権限・対象患者解決（`resolveUserAccessFromPermissions`）<br>・未ログイン時のローカルデータ（`DEFAULT_PATIENT_ID`）から認証済み `auth.uid()` への7テーブル自動引き継ぎ（`migrateAnonymousLocalDataToUser`）<br>・7テーブル双方向 Push & Pull、閾値変更・CSV取込時のクラウド側古い異常値エピソード置換（`replaceRemoteAnomalies: true`: 課題 #6 対応）、および閲覧専用ロール時の Push 抑止 |
+| **双方向クラウド同期エンジン & 招待専用権限管理・キャッシュ全消去**<br>([`src/lib/syncEngine.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/syncEngine.ts) / [`src/lib/supabase.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/supabase.ts)) | ・Supabase (`TIMESTAMPTZ`) から取得した日時の24文字ウォールクロックISO正規化（`normalizeToWallClockIso`: 課題 #7 対応）と `.between()` 境界検索一致検証<br>・1,000件単位チャンク分割（`chunkArray`）<br>・`family_permissions` に基づく患者本人 / 招待家族（`viewer` 閲覧専用ロック / `editor` 代理記録）の権限・対象患者解決（`resolveUserAccessFromPermissions`）<br>・未招待第三者のログイン・サインアップ遮断検証（`verifyUserAccessWithCloud`: オーナー本人・招待家族は許可、未招待第三者は `authorized: false` で即座に拒否）<br>・ログアウト時のローカル端末キャッシュ完全消去（`purgeAllLocalPatientCaches`: IndexedDB全7テーブル＋全4種メモリキャッシュ消去）<br>・未ログイン時のローカルデータ（`DEFAULT_PATIENT_ID`）から認証済み `auth.uid()` への7テーブル自動引き継ぎ（`migrateAnonymousLocalDataToUser`）<br>・7テーブル双方向 Push & Pull、閾値変更・CSV取込時のクラウド側古い異常値エピソード置換（`replaceRemoteAnomalies: true`: 課題 #6 対応）、および閲覧専用ロール時の Push 抑止 |
 | **糖質自動推定エンジン & BFF**<br>([`src/lib/gemini.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/gemini.ts) / `functions/api/gemini.ts`) | ・日本食品標準成分表内蔵辞書による主要食品・料理の糖質量推定<br>・Cloudflare Pages Functions BFF（`POST /api/gemini`）の `GEMINI_API_KEY` 検証・レスポンス整形・未設定時の安全なローカル辞書フォールバック<br>・`localStorage` に一切依存しない安全な動作 |
 
 ### 2.2 Layer 3: Runtime Smoke Test & Doc/Security Gate
@@ -53,8 +53,8 @@
 
 | 検証項目 | 手法・判定基準 |
 | :--- | :--- |
-| **DDD 仕様書・コード同期 & セキュリティ検査 (`scripts/verify-docs-sync.mjs`)** | ソースコード変更時に対応する `SPEC_*.md` が同時更新されていること、仕様書内の参照ファイルパスがすべて実在すること、`src/` 内に `localStorage` へのAPIキー保存や虚偽の「安全に保管」表示が存在しないこと |
-| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | 稼働中の `http://localhost:3000` に対して全33エンドポイントのリクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
+| **DDD 仕様書・ユーザーガイド・コード同期 & セキュリティ検査 (`scripts/verify-docs-sync.mjs`)** | ソースコード変更時に対応する `SPEC_*.md` / `USER_GUIDE.md` が同時更新されていること、仕様書内の参照ファイルパスがすべて実在すること、`src/` 内に `localStorage` へのAPIキー保存や虚偽の「安全に保管」表示が存在しないこと |
+| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | 稼働中の `http://localhost:3000` に対して全34エンドポイントのリクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
 
 ### 2.3 Layer 4: Browser E2E テスト計画 (Playwright)
 

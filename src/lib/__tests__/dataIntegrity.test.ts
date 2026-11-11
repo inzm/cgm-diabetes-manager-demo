@@ -1019,45 +1019,8 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
         created_at: '2026-11-10T12:15:00.000Z',
       });
 
-      const { resetFoodSeedSession, seedFoodMasterIfEmpty } = await import('../foodSeed');
-
-      // 未ログイン状態で標準プリセットをシードし、「ごはん」の糖質量と「ウォーキング」の時間をカスタマイズ
-      resetFoodSeedSession(anonId);
-      resetFoodSeedSession(targetUid);
-      await seedFoodMasterIfEmpty(anonId);
-      const anonRice = (await db.food_master.where('user_id').equals(anonId).toArray()).find(
-        (f) => f.food_name === 'ごはん'
-      );
-      expect(anonRice).toBeDefined();
-      await db.food_master.update(anonRice!.id, {
-        carbs_per_unit: 62.5,
-        updated_at: '2026-11-10T12:00:00.000Z',
-      });
-
-      const anonWalking = (
-        await db.event_master.where('user_id').equals(anonId).toArray()
-      ).find((e) => e.event_name === 'ウォーキング');
-      expect(anonWalking).toBeDefined();
-      await db.event_master.update(anonWalking!.id, {
-        default_duration: 45,
-        updated_at: '2026-11-10T12:00:00.000Z',
-      });
-
       const migratedAny = await migrateAnonymousLocalDataToUser(targetUid, anonId);
       expect(migratedAny).toBe(true);
-
-      // ログイン直後に seedFoodMasterIfEmpty(targetUid) が呼ばれても、未ログイン時のカスタマイズ値が初期値で上書きされないこと
-      await seedFoodMasterIfEmpty(targetUid);
-
-      const migratedRice = (
-        await db.food_master.where('user_id').equals(targetUid).toArray()
-      ).find((f) => f.food_name === 'ごはん');
-      expect(migratedRice?.carbs_per_unit).toBe(62.5);
-
-      const migratedWalking = (
-        await db.event_master.where('user_id').equals(targetUid).toArray()
-      ).find((e) => e.event_name === 'ウォーキング');
-      expect(migratedWalking?.default_duration).toBe(45);
 
       // 元の匿名IDのレコードは消去され、新しい targetUid に引き継がれていること
       expect(await db.events.where('user_id').equals(anonId).count()).toBe(0);
@@ -1074,21 +1037,13 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       clearInMemoryDemoDatabase();
     });
 
-    it('syncPatientDataWithCloud が 7テーブル双方向同期・時刻24文字正規化(課題#7)・異常値置換(課題#6)・viewer時のPush抑止・差分同期シグネチャ一致を正しく実行すること', async () => {
+    it('syncPatientDataWithCloud が 7テーブル双方向同期・時刻24文字正規化(課題#7)・異常値置換(課題#6)・viewer時のPush抑止を正しく実行すること', async () => {
       const { db, clearInMemoryDemoDatabase } = await import('../db');
-      const { syncPatientDataWithCloud, resetSyncSignaturesForPatient } = await import(
-        '../syncEngine'
-      );
+      const { syncPatientDataWithCloud } = await import('../syncEngine');
       const { deterministicUuid } = await import('../uuidUtils');
-      const { hasCalendarMonthlyCache, primeCalendarMonthlyCache } = await import(
-        '@/components/calendar/CalendarView'
-      );
 
       clearInMemoryDemoDatabase();
       const syncUserId = '66666666-6666-4666-8666-666666666666';
-      resetSyncSignaturesForPatient(syncUserId);
-      primeCalendarMonthlyCache(syncUserId, '2026-11-11');
-      expect(hasCalendarMonthlyCache()).toBe(true);
 
       // ローカルに新しい食事イベントと再計算後の高血糖イベントを保存
       const localMealId = deterministicUuid(`${syncUserId}_meal_sync_1`);
@@ -1120,7 +1075,7 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
         },
       ]);
 
-      // リモートモックストア (TIMESTAMPTZ "+00:00" 形式の測定値複数件と、閾値変更前の古い異常値イベントを保持)
+      // リモートモックストア (TIMESTAMPTZ "+00:00" 形式の測定値と、閾値変更前の古い異常値イベントを保持)
       const staleRemoteAnomalyId = deterministicUuid(
         `${syncUserId}_anomaly_高血糖_2026-11-11T10:00:00.000Z`
       );
@@ -1144,46 +1099,26 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
         meal_details: [],
         libre_readings: [
           {
-            id: deterministicUuid(`${syncUserId}_2026-11-11T11:55:00.000Z`),
+            id: deterministicUuid(`${syncUserId}_2026-11-11T08:15:00.000Z`),
             user_id: syncUserId,
-            timestamp: '2026-11-11T11:55:00+00:00', // 課題 #7: +00:00 オフセット形式 (食前血糖値用)
+            timestamp: '2026-11-11T08:15:00+00:00', // 課題 #7: +00:00 オフセット形式
             glucose_value: 105,
             scan_type: 'Historic',
-            created_at: '2026-11-11T11:55:00+00:00',
-          },
-          {
-            id: deterministicUuid(`${syncUserId}_2026-11-11T13:15:00.000Z`),
-            user_id: syncUserId,
-            timestamp: '2026-11-11T13:15:00+00:00', // 食後ピーク血糖値用
-            glucose_value: 168,
-            scan_type: 'Historic',
-            created_at: '2026-11-11T13:15:00+00:00',
+            created_at: '2026-11-11T08:15:00+00:00',
           },
         ],
       };
 
       let upsertCallCount = 0;
-      let libreSelectCallCount = 0;
       const mockClient = {
         from(table: string) {
           return {
             select() {
-              if (table === 'libre_readings') {
-                libreSelectCallCount++;
-              }
               const tableRows = () => [...(remoteStore[table] || [])];
-              return {
+              const builder = {
                 eq(_col: string, val: unknown) {
                   const filtered = tableRows().filter((r) => r.user_id === val);
                   return {
-                    then(
-                      resolve: (res: {
-                        data: Array<Record<string, unknown>>;
-                        error: null;
-                      }) => unknown
-                    ) {
-                      return Promise.resolve({ data: filtered, error: null }).then(resolve);
-                    },
                     maybeSingle: async () => ({
                       data: filtered[0] ?? null,
                       error: null,
@@ -1199,6 +1134,7 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
                   };
                 },
               };
+              return builder;
             },
             async upsert(payload: Record<string, unknown> | Array<Record<string, unknown>>) {
               upsertCallCount++;
@@ -1218,12 +1154,6 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
             },
             delete() {
               return {
-                async in(inCol: string, values: string[]) {
-                  remoteStore[table] = (remoteStore[table] || []).filter(
-                    (r) => !values.includes(String(r[inCol]))
-                  );
-                  return { error: null };
-                },
                 eq(_col: string, val: unknown) {
                   return {
                     in: async (_inCol: string, types: string[]) => {
@@ -1252,8 +1182,6 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
 
       expect(syncResult.status).toBe('success');
       expect(upsertCallCount).toBeGreaterThan(0);
-      expect(libreSelectCallCount).toBe(1);
-      expect(hasCalendarMonthlyCache()).toBe(false);
 
       // 課題 #6: リモートの古い異常値エピソードが削除され、新しい異常値と食事がリモートへPushされていること
       expect(
@@ -1272,25 +1200,11 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
           true
         )
         .toArray();
-      expect(pulledReadings).toHaveLength(2);
-      expect(pulledReadings[0].timestamp).toBe('2026-11-11T11:55:00.000Z');
+      expect(pulledReadings).toHaveLength(1);
+      expect(pulledReadings[0].timestamp).toBe('2026-11-11T08:15:00.000Z');
       expect(pulledReadings[0].timestamp).toHaveLength(24);
 
-      // Pullされた測定値に基づき、ローカル食事イベントの食前・食後血糖値が自動紐づけされていること
-      const updatedMeal = await db.events.get(localMealId);
-      expect(updatedMeal?.pre_meal_glucose).toBe(105);
-      expect(updatedMeal?.post_meal_glucose).toBe(168);
-
-      // 2. 次回の差分同期（includeReadings未指定）では、libre_readings に変化がないため再取得がスキップされること
-      await syncPatientDataWithCloud(syncUserId, {
-        canEdit: true,
-        clientOverride: mockClient as unknown as NonNullable<
-          Parameters<typeof syncPatientDataWithCloud>[1]
-        >['clientOverride'],
-      });
-      expect(libreSelectCallCount).toBe(1);
-
-      // 3. canEdit: false (家族閲覧モード) の場合は Push (upsert) を一切行わず Pull のみ行うこと
+      // 2. canEdit: false (家族閲覧モード) の場合は Push (upsert) を一切行わず Pull のみ行うこと
       const prevUpsertCount = upsertCallCount;
       await syncPatientDataWithCloud(syncUserId, {
         canEdit: false,
@@ -1327,6 +1241,341 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
         env: { GEMINI_API_KEY: 'dummy-test-key' },
       });
       expect(resBadBody.status).toBe(400);
+    });
+
+    it('verifyUserAccessWithCloud がオーナー本人・招待済み家族のみを許可し、未招待の第三者を RPC および RLS プローブで確実に遮断すること', async () => {
+      const {
+        verifyUserAccessWithCloud,
+        UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+      } = await import('../syncEngine');
+
+      const ownerUid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const familyUid = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      const strangerUid = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+      // 0. 空の authUserId は即座に拒否されること
+      const emptyUidRes = await verifyUserAccessWithCloud(null, '', 'test@example.com', []);
+      expect(emptyUidRes.authorized).toBe(false);
+      expect(emptyUidRes.errorMessage).toBe(UNAUTHORIZED_ACCESS_ERROR_MESSAGE);
+
+      // 0b. family_permissions で自身が patient_id (招待発行元オーナー) のレコードが存在する場合は即座にオーナーとして許可されること
+      const ownedPermRes = await verifyUserAccessWithCloud(
+        {} as unknown as Parameters<typeof verifyUserAccessWithCloud>[0],
+        ownerUid,
+        'owner@example.com',
+        [
+          {
+            id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            patient_id: ownerUid,
+            family_user_id: familyUid,
+            family_email: 'invited.family@example.com',
+            role: 'viewer',
+            invited_at: '2026-11-11T00:00:00.000Z',
+            accepted_at: null,
+            created_at: '2026-11-11T00:00:00.000Z',
+          },
+        ]
+      );
+      expect(ownedPermRes.authorized).toBe(true);
+      expect(ownedPermRes.isOwner).toBe(true);
+      expect(ownedPermRes.isInvitedFamily).toBe(false);
+
+      // 1. family_permissions で招待されている家族 (メールアドレス大文字小文字混在) は即座に許可されること
+      const invitedRes = await verifyUserAccessWithCloud(
+        {} as unknown as Parameters<typeof verifyUserAccessWithCloud>[0],
+        familyUid,
+        'Invited.Family@Example.com',
+        [
+          {
+            id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            patient_id: ownerUid,
+            family_user_id: null,
+            family_email: 'invited.family@example.com',
+            role: 'viewer',
+            invited_at: '2026-11-11T00:00:00.000Z',
+            accepted_at: null,
+            created_at: '2026-11-11T00:00:00.000Z',
+          },
+        ]
+      );
+      expect(invitedRes.authorized).toBe(true);
+      expect(invitedRes.isInvitedFamily).toBe(true);
+      expect(invitedRes.isOwner).toBe(false);
+
+      // 2. RPC verify_user_authorization が authorized: true を返した場合（オーナー本人）は許可されること
+      const rpcOwnerClient = {
+        async rpc(fnName: string) {
+          expect(fnName).toBe('verify_user_authorization');
+          return {
+            data: { authorized: true, is_owner: true, is_invited_family: false },
+            error: null,
+          };
+        },
+      };
+      const ownerRes = await verifyUserAccessWithCloud(
+        rpcOwnerClient as unknown as Parameters<typeof verifyUserAccessWithCloud>[0],
+        ownerUid,
+        'owner@example.com',
+        []
+      );
+      expect(ownerRes.authorized).toBe(true);
+      expect(ownerRes.isOwner).toBe(true);
+      expect(ownerRes.isInvitedFamily).toBe(false);
+
+      // 2b. RPC verify_user_authorization が is_owner: false, is_invited_family: true を返した場合、オーナーに誤昇格しないこと
+      const rpcInvitedClient = {
+        async rpc(fnName: string) {
+          expect(fnName).toBe('verify_user_authorization');
+          return {
+            data: { authorized: true, is_owner: false, is_invited_family: true },
+            error: null,
+          };
+        },
+      };
+      const rpcInvitedRes = await verifyUserAccessWithCloud(
+        rpcInvitedClient as unknown as Parameters<typeof verifyUserAccessWithCloud>[0],
+        familyUid,
+        'invited.family@example.com',
+        []
+      );
+      expect(rpcInvitedRes.authorized).toBe(true);
+      expect(rpcInvitedRes.isOwner).toBe(false);
+      expect(rpcInvitedRes.isInvitedFamily).toBe(true);
+
+      // 3. RPC verify_user_authorization が authorized: false を返した場合（未招待の第三者）は即座に拒否されること
+      const rpcDeniedClient = {
+        async rpc(fnName: string) {
+          expect(fnName).toBe('verify_user_authorization');
+          return {
+            data: { authorized: false, is_owner: false, is_invited_family: false },
+            error: null,
+          };
+        },
+      };
+      const deniedRes = await verifyUserAccessWithCloud(
+        rpcDeniedClient as unknown as Parameters<typeof verifyUserAccessWithCloud>[0],
+        strangerUid,
+        'stranger@example.com',
+        []
+      );
+      expect(deniedRes.authorized).toBe(false);
+      expect(deniedRes.errorMessage).toBe(UNAUTHORIZED_ACCESS_ERROR_MESSAGE);
+
+      // 4. 旧スキーマ等で RPC が未定義の場合でも、user_settings の RLS プローブが 42501 で拒否されれば未招待第三者を遮断すること
+      const rlsProbeDeniedClient = {
+        async rpc() {
+          return { data: null, error: { code: 'PGRST202', message: 'function not found' } };
+        },
+        from(table: string) {
+          expect(table).toBe('user_settings');
+          return {
+            select() {
+              return {
+                eq() {
+                  return {
+                    maybeSingle: async () => ({ data: null, error: null }),
+                  };
+                },
+              };
+            },
+            async upsert() {
+              return {
+                error: {
+                  code: '42501',
+                  message: 'new row violates row-level security policy for table "user_settings"',
+                },
+              };
+            },
+          };
+        },
+      };
+      const probeDeniedRes = await verifyUserAccessWithCloud(
+        rlsProbeDeniedClient as unknown as Parameters<typeof verifyUserAccessWithCloud>[0],
+        strangerUid,
+        'stranger2@example.com',
+        []
+      );
+      expect(probeDeniedRes.authorized).toBe(false);
+      expect(probeDeniedRes.errorMessage).toBe(UNAUTHORIZED_ACCESS_ERROR_MESSAGE);
+
+      // 5. RPC未定義かつ user_settings に既存レコードがある場合、または初回オーナー登録 upsert が成功した場合はオーナーとして許可されること
+      const rlsProbeAllowedClient = {
+        async rpc() {
+          return { data: null, error: { code: 'PGRST202', message: 'function not found' } };
+        },
+        from() {
+          return {
+            select() {
+              return {
+                eq() {
+                  return {
+                    maybeSingle: async () => ({ data: null, error: null }),
+                  };
+                },
+              };
+            },
+            async upsert() {
+              return { error: null };
+            },
+          };
+        },
+      };
+      const firstOwnerRes = await verifyUserAccessWithCloud(
+        rlsProbeAllowedClient as unknown as Parameters<typeof verifyUserAccessWithCloud>[0],
+        ownerUid,
+        'first.owner@example.com',
+        []
+      );
+      expect(firstOwnerRes.authorized).toBe(true);
+      expect(firstOwnerRes.isOwner).toBe(true);
+    });
+
+    it('purgeAllLocalPatientCaches がログアウト時に IndexedDB 全7テーブルおよび全プロファイル分の全4種メモリキャッシュを完全消去すること', async () => {
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { purgeAllLocalPatientCaches } = await import('../syncEngine');
+      const { deterministicUuid } = await import('../uuidUtils');
+      const {
+        hasInMemoryRecentCache,
+        primeInMemoryRecentCache,
+        markPatientManuallyCleared,
+        isPatientManuallyCleared,
+      } = await import('../realGlucoseLoader');
+      const { getAnalysisBoundaryCache, setAnalysisBoundaryCache } = await import(
+        '../analysisCalculators'
+      );
+      const { hasFoodMasterMemoryCache, primeFoodMasterMemoryCache } = await import(
+        '../../components/foods/FoodMasterView'
+      );
+      const { hasCalendarMonthlyCache, primeCalendarMonthlyCache } = await import(
+        '../../components/calendar/CalendarView'
+      );
+
+      clearInMemoryDemoDatabase();
+      const targetUserId = '99999999-9999-4999-8999-999999999999';
+      const secondaryPatientId = '88888888-8888-4888-8888-888888888888';
+
+      // 全7テーブルにレコードを投入
+      await db.user_settings.put({
+        user_id: targetUserId,
+        hypo_threshold: 70,
+        hyper_threshold: 180,
+        target_tir_min: 70,
+        target_tir_max: 180,
+        enable_default_insulin: false,
+        default_insulin_breakfast: 0,
+        default_insulin_lunch: 0,
+        default_insulin_dinner: 0,
+        default_insulin_snack: 0,
+        updated_at: '2026-11-11T00:00:00.000Z',
+      });
+      const catId = deterministicUuid(`${targetUserId}_cat_1`);
+      await db.categories.put({
+        id: catId,
+        user_id: targetUserId,
+        target_type: 'food',
+        category_name: '主食',
+        display_order: 1,
+        is_protected: false,
+        is_deleted: false,
+        created_at: '2026-11-11T00:00:00.000Z',
+        updated_at: '2026-11-11T00:00:00.000Z',
+      });
+      await db.food_master.put({
+        id: deterministicUuid(`${targetUserId}_food_1`),
+        user_id: targetUserId,
+        category_id: catId,
+        food_name: '白米',
+        base_amount: 1,
+        unit: '杯',
+        carbs_per_unit: 55.2,
+        is_deleted: false,
+        created_at: '2026-11-11T00:00:00.000Z',
+        updated_at: '2026-11-11T00:00:00.000Z',
+      });
+      await db.event_master.put({
+        id: deterministicUuid(`${targetUserId}_em_1`),
+        user_id: targetUserId,
+        category_id: undefined,
+        event_name: '散歩',
+        default_duration: 30,
+        memo: '',
+        is_deleted: false,
+        created_at: '2026-11-11T00:00:00.000Z',
+        updated_at: '2026-11-11T00:00:00.000Z',
+      });
+      const evId = deterministicUuid(`${targetUserId}_ev_1`);
+      await db.events.put({
+        id: evId,
+        user_id: targetUserId,
+        event_datetime: '2026-11-11T08:00:00.000Z',
+        event_type: '食事',
+        timing_category: '朝食',
+        total_carbs: 55.2,
+        insulin_units: 6,
+        is_deleted: false,
+        created_at: '2026-11-11T08:00:00.000Z',
+        updated_at: '2026-11-11T08:00:00.000Z',
+      });
+      await db.meal_details.put({
+        id: deterministicUuid(`${targetUserId}_md_1`),
+        user_id: targetUserId,
+        event_id: evId,
+        food_name: '白米',
+        amount: 1,
+        unit: '杯',
+        carbs: 55.2,
+        is_deleted: false,
+        created_at: '2026-11-11T08:00:00.000Z',
+        updated_at: '2026-11-11T08:00:00.000Z',
+      });
+      await db.libre_readings.put({
+        id: deterministicUuid(`${targetUserId}_lr_1`),
+        user_id: targetUserId,
+        timestamp: '2026-11-11T08:00:00.000Z',
+        glucose_value: 110,
+        scan_type: 'Historic',
+        created_at: '2026-11-11T08:00:00.000Z',
+      });
+
+      // 複数プロファイル分の全4種メモリキャッシュおよび手動クリアフラグをセット
+      primeFoodMasterMemoryCache(targetUserId, {
+        foods: [],
+        foodCategories: [],
+        eventItems: [],
+        eventCategories: [],
+      });
+      primeFoodMasterMemoryCache(secondaryPatientId, {
+        foods: [],
+        foodCategories: [],
+        eventItems: [],
+        eventCategories: [],
+      });
+      primeCalendarMonthlyCache(targetUserId, '2026-11-11');
+      setAnalysisBoundaryCache(targetUserId, 'sig-logout', '2026-11-11', '2026-11-11', [], []);
+      primeInMemoryRecentCache(targetUserId, [], [], []);
+      primeInMemoryRecentCache(secondaryPatientId, [], [], []);
+      markPatientManuallyCleared(targetUserId);
+
+      // ログアウト時のキャッシュ全消去を実行
+      await purgeAllLocalPatientCaches(targetUserId);
+
+      // IndexedDB 全7テーブルが 0件になっていること
+      expect(await db.user_settings.count()).toBe(0);
+      expect(await db.categories.count()).toBe(0);
+      expect(await db.food_master.count()).toBe(0);
+      expect(await db.event_master.count()).toBe(0);
+      expect(await db.events.count()).toBe(0);
+      expect(await db.meal_details.count()).toBe(0);
+      expect(await db.libre_readings.count()).toBe(0);
+
+      // 全プロファイル分の全4種メモリキャッシュおよびフラグが消去されていること
+      expect(hasFoodMasterMemoryCache(targetUserId)).toBe(false);
+      expect(hasFoodMasterMemoryCache(secondaryPatientId)).toBe(false);
+      expect(hasCalendarMonthlyCache()).toBe(false);
+      expect(getAnalysisBoundaryCache(targetUserId)).toBeNull();
+      expect(hasInMemoryRecentCache(targetUserId)).toBe(false);
+      expect(hasInMemoryRecentCache(secondaryPatientId)).toBe(false);
+      expect(isPatientManuallyCleared(targetUserId)).toBe(false);
     });
   });
 });

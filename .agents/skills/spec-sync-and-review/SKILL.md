@@ -36,13 +36,14 @@ description: デザイン・仕様の意図検証（ユーザーレビュー）�
 | 変更対象ソースパス | 同時更新が必須の仕様書 (SSOT) |
 | :--- | :--- |
 | `src/components/calendar/*`<br>`src/components/common/Header.tsx`<br>`src/components/common/BottomNav.tsx` | `docs/Web_Project/SPEC_CALENDAR.md` |
+| `src/components/common/AuthGateScreen.tsx`<br>`src/App.tsx` | `docs/Web_Project/SPEC_CALENDAR.md` / `SPEC_SETTINGS.md` / `ARCHITECTURE.md` / `USER_GUIDE.md` |
 | `src/components/daily/*` | `docs/Web_Project/SPEC_CALENDAR.md` または `docs/Web_Project/SPEC_MEAL_RECORD.md` |
 | `src/components/common/OfflineBanner.tsx`<br>`src/lib/pwa.ts` | `docs/Web_Project/SPEC_PWA.md`（および必要に応じ `SPEC_SETTINGS.md`） |
-| `src/components/analysis/*`<br>`src/lib/analysisCalculators.ts` | `docs/Web_Project/SPEC_ANALYSIS.md` |
-| `src/components/foods/*`<br>`src/lib/foodSeed.ts`<br>`src/lib/gemini.ts` | `docs/Web_Project/SPEC_FOOD_MASTER.md` |
-| `src/components/import/*`<br>`src/workers/csvParser.worker.ts`<br>`src/lib/anomalyExtractor.ts` | `docs/Web_Project/SPEC_CSV_IMPORT.md` |
-| `src/components/records/*` | `docs/Web_Project/SPEC_MEAL_RECORD.md` |
-| `src/components/settings/*` | `docs/Web_Project/SPEC_SETTINGS.md` |
+| `src/components/analysis/*`<br>`src/lib/analysisCalculators.ts` | `docs/Web_Project/SPEC_ANALYSIS.md`（および必要に応じ `USER_GUIDE.md`） |
+| `src/components/foods/*`<br>`src/lib/foodSeed.ts`<br>`src/lib/gemini.ts` | `docs/Web_Project/SPEC_FOOD_MASTER.md`（および必要に応じ `USER_GUIDE.md`） |
+| `src/components/import/*`<br>`src/workers/csvParser.worker.ts`<br>`src/lib/anomalyExtractor.ts` | `docs/Web_Project/SPEC_CSV_IMPORT.md`（および必要に応じ `USER_GUIDE.md`） |
+| `src/components/records/*` | `docs/Web_Project/SPEC_MEAL_RECORD.md`（および必要に応じ `USER_GUIDE.md`） |
+| `src/components/settings/*`<br>`src/contexts/PatientContext.tsx`<br>`src/lib/syncEngine.ts`<br>`supabase/migrations/*` | `docs/Web_Project/SPEC_SETTINGS.md` / `ARCHITECTURE.md` / `USER_GUIDE.md` |
 | `src/lib/db.ts`<br>`src/types/database.ts` | `docs/Web_Project/ARCHITECTURE.md` |
 | 新規仕様書の追加・名称変更時 | `docs/Web_Project/README.md` |
 
@@ -52,7 +53,7 @@ description: デザイン・仕様の意図検証（ユーザーレビュー）�
 
 1. **Step 1: 4軸自律評価 & ユーザー相談（問題・選択肢がある場合）**
 2. **Step 2: Issue 起票 & トピックブランチ作成**
-3. **Step 3: 仕様書 (`docs/Web_Project/SPEC_*.md`) の先行更新**
+3. **Step 3: 仕様書 (`docs/Web_Project/SPEC_*.md` および操作・招待手順変更時は `USER_GUIDE.md`) の先行更新**
 4. **Step 4: コード実装 & 単体/統合テスト追加**
 5. **Step 5: 5大品質ゲート + ドキュメント同期検証の実行 (`npm run verify:all; npm run test:smoke`)**
 6. **Step 6: アトミックコミット & PR マージ**

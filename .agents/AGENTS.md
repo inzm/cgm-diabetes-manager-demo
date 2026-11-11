@@ -38,8 +38,8 @@
   - [`ARCHITECTURE.md`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/docs/Web_Project/ARCHITECTURE.md): システム構成、Local-First同期、認証・権限、本番DDL
   - [`SEQUENCE_AND_ERD.md`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md): 認可・同期シーケンス、Mermaid ER図
   - [`system_architecture.drawio`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/docs/Web_Project/diagrams/system_architecture.drawio): GUI編集可能な全体構成図
-- **Level 2: 画面・機能別詳細仕様書 (実装前作成必須)**
-  - 各画面（カレンダー、日次詳細、食品、イベント、分析等）の実装に着手する前に、必ず `docs/Web_Project/SPEC_*.md` を策定し、受け入れ基準（DoD）を定義すること。
+- **Level 2: 画面・機能別詳細仕様書 & ユーザーガイド (実装前・変更時更新必須)**
+  - 各画面（カレンダー、日次詳細、食品、イベント、分析、ログイン画面等）の実装や仕様変更に着手する際は、必ず `docs/Web_Project/SPEC_*.md` および患者・家族向け操作手順書 [`USER_GUIDE.md`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/docs/Web_Project/USER_GUIDE.md) を策定・同時更新し、受け入れ基準（DoD）を定義すること。
 - **Level 3: 実装コード & テスト**
   - Level 1およびLevel 2に100%合致するソースコード、型定義、マイグレーションSQL。
 
@@ -61,7 +61,7 @@ AI（および全サブエージェント）は、設計・実装・レビュー
 
 | 評価軸 | 自律評価・チェックすべき具体的観点 |
 | :--- | :--- |
-| **1. セキュリティ (Security)** | ・APIキー（Gemini API等）やシークレットをブラウザの `localStorage` / `sessionStorage` やフロントエンドコードに保持しない（必ずCloudflare Workers BFF `/api/gemini` 経由とし、虚偽の「安全保管」表示をしない）<br>・家族閲覧ロール（`isReadOnly`）における登録・編集・削除・設定変更の完全ロック<br>・患者ID（`user_id`）によるデータ分離とRLS整合性 |
+| **1. セキュリティ (Security)** | ・APIキー（Gemini API等）やシークレットをブラウザの `localStorage` / `sessionStorage` やフロントエンドコードに保持しない（必ずCloudflare Workers BFF `/api/gemini` 経由とし、虚偽の「安全保管」表示をしない）<br>・本番モード（`VITE_APP_MODE=personal` かつ Supabase 有効時）における未ログイン時の専用ログイン画面（Auth Gate）強制ロック、未招待第三者のサインアップ/アクセス遮断、およびログアウト時のローカルキャッシュ完全消去<br>・家族閲覧ロール（`isReadOnly`）における登録・編集・削除・設定変更の完全ロック<br>・患者ID（`user_id`）によるデータ分離とRLS整合性 |
 | **2. 拡張性 (Extensibility)** | ・Web版DBスキーマ（UUID、`categories.target_type`、`event_master`、`user_settings` 等）を活かした疎結合な設計<br>・ハードコードされた選択肢や固定閾値（`70`/`180`等）を排除し、マスタや設定テーブルから動的に読み込む構造<br>・将来のSupabaseクラウド同期や新カテゴリ追加時に破綻しないインターフェース |
 | **3. 保守性 (Maintainability)** | ・「1つのロジック＝1つのSingle Source of Truth（関数・モジュール）」の徹底（例: 異常値抽出ステートマシン `anomalyExtractor.ts` をWorker・デモデータ生成・再判定で共通化）<br>・タイムゾーン処理（ローカル時刻とUTCの混同防止 `dateUtils.ts`）の統一ヘルパー化<br>・自動統合テストによる画面間データ整合性（マスタ ⇔ 記録 ⇔ カレンダー ⇔ 分析）の機械的保証 |
 | **4. ユーザビリティ (Usability)** | ・**徹底したユーザー目線（開発者用語の排除）**: 画面表示文言に「マスタ」「IndexedDB」「Dexie」「Web Worker」「物理テーブル名（`libre_readings`等）」などの開発者目線用語を一切露出させず、「登録済みから選ぶ」「よく使う食品・活動」など日常の言葉に統一する<br>・**引き算の法則と視覚的メリハリ**: 見れば分かる説明文・サブタイトル・不要な番号ラベル（①/②）を削ぎ落とし、主役（血糖値・異常値・合計糖質・保存ボタン）を目立たせ脇役を控えめにする<br>・実際には機能しない外観のみ（ハリボテ）のUIの完全排除（未実装ボタンには必ず `（未実装）` を表記）<br>・グラフ・一覧・サマリー間で数値や件数が100%一致する高い信頼性と視認性 |
@@ -74,7 +74,7 @@ AI（および全サブエージェント）は、設計・実装・レビュー
 
 1. **専門サブエージェントの役割分担 (`define_subagent` / `invoke_subagent`)**:
    - **Orchestrator Agent (親エージェント)**: ユーザー要件の4軸自律評価、サブエージェントへのタスク分割・ファイル境界割り当て、および最終パイプライン（`npm run pipeline:verify` / `npm run pipeline:ship`）の統括。
-   - **Spec & Docs Agent**: コード変更に対応する `docs/Web_Project/SPEC_*.md`・`ARCHITECTURE.md`・図面（Mermaid / draw.io）の先行・同時更新（`spec-sync-and-review` スキル準拠）。
+   - **Spec & Docs Agent**: コード変更に対応する `docs/Web_Project/SPEC_*.md`・`USER_GUIDE.md`・`ARCHITECTURE.md`・図面（Mermaid / draw.io）の先行・同時更新（`spec-sync-and-review` スキル準拠）。
    - **Frontend / Logic Agent**: 仕様書に準拠したReactコンポーネント、Tailwindスタイル、ECharts描画、Dexie.js / Web Worker 処理、および単体・統合テストの実装。
    - **Visual QA & E2E Agent**: Playwrightによる全11画面（デスクトップ `1280x800` ＆モバイル `375x812`）の自動スクリーンショット撮影（`npm run test:visual`）、DOMレイアウト監査（横スクロール・開発者用語ゼロ検証）、および `read_file` によるPNG画像のマルチモーダル視覚検査（`visual-design-test` スキル準拠）。
    - **Release & Deploy Agent**: 全品質ゲート通過後のアトミックコミット、Git Push、および Cloudflare Pages への自動デプロイ実行（`ai-orchestrator-pipeline` スキル準拠）。
@@ -108,9 +108,9 @@ AI（および全サブエージェント）は、設計・実装・レビュー
 
 ## 5. データ整合性・セキュリティ規約（重要）
 
-1. **Supabase RLS（行レベルセキュリティ）の完全遵守**:
-   - すべてのテーブルで RLS を強制有効化し、`can_view_patient_data(user_id)` および `can_edit_patient_data(user_id)` を適用すること。
-   - 他患者の血糖値・食事データへの不正アクセスをデータベース層で100%防止する。
+1. **Supabase RLS（行レベルセキュリティ）と招待専用アクセスの完全遵守**:
+   - すべてのテーブルで RLS を強制有効化し、`is_authorized_system_user` / `can_view_patient_data(user_id)` / `can_edit_patient_data(user_id)` および `auth.users` トリガー（`trg_enforce_invited_or_owner_signup`）を適用すること。
+   - オーナー（患者本人）およびオーナーが `family_permissions` に招待した家族以外の第三者によるサインアップ・データ閲覧をデータベース層とアプリ層（Auth Gate）の両方で100%遮断する。
 2. **家族閲覧ロール（`family_viewer`）の不可侵性**:
    - 家族アカウントでログインしている場合（`isReadOnly === true`）、UI上で登録・編集・削除・CSV取込ボタンを物理的に非表示または非活性化（disabled）すること。
 3. **主キーとオフライン採番の保証**:
@@ -129,7 +129,7 @@ AI（および全サブエージェント）は、設計・実装・レビュー
 ```text
   [Step 1: 4軸自律評価 & 仕様定義・更新 (Spec-First)]
     セキュリティ・拡張性・保守性・ユーザビリティを自律評価し、
-    docs/Web_Project/ 配下の仕様書・型定義・受け入れ条件(DoD)・図面を先行作成/更新
+    docs/Web_Project/ 配下の仕様書・USER_GUIDE.md・型定義・受け入れ条件(DoD)・図面を先行作成/更新
            ▼
   [Step 2: 設計レビュー & ユーザー相談・合意]
     評価結果・懸念点・選択肢と更新した仕様書の内容をユーザーへ提示し、合意を形成
@@ -138,7 +138,7 @@ AI（および全サブエージェント）は、設計・実装・レビュー
     合意された仕様書の内容に100%忠実にコードを実装 (推測コード・ハリボテUI・虚偽表示の混入ゼロ)
            ▼
   [Step 4: 受け入れ基準に基づく検証 (Verification & Quality Gateway)]
-    ・仕様書・ソース同期＆セキュリティ検査 (npm run test:docs)
+    ・仕様書・ユーザーガイド・ソース同期＆セキュリティ検査 (npm run test:docs)
     ・TypeScript型検査 (npm run typecheck)
     ・本番バンドル整合性検査 (npm run build)
     ・臨床計算・データ整合性単体/統合テスト (npm test: 全件Green必須)
@@ -196,4 +196,4 @@ AI（および全サブエージェント）は、設計・実装・レビュー
 - 必ず `src/lib/dateUtils.ts` のローカルタイムゾーン安全関数（`formatLocalDate`, `buildLocalDateTimeString`, `extractLocalDateStr`, `extractLocalTimeStr`）を使用すること。
 
 ### 8.4 ドキュメント同期 & セキュリティ・ハリボテ・開発者用語防止強制ゲート (`npm run test:docs`)
-- ソースコード（`src/components/*`, `src/lib/*`, `src/workers/*`）を変更した際、対応する仕様書（`docs/Web_Project/SPEC_*.md` または `ARCHITECTURE.md`）が同一変更セット内で更新されていること、ブラウザの `localStorage` にAPIキーを保存する危険なコードや虚偽の「安全保管」文言が存在しないこと、およびUIコンポーネント内に「マスタ」「IndexedDB」「Dexie.js」「Web Worker」等の開発者用語が露出していないことを [`scripts/verify-docs-sync.mjs`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/scripts/verify-docs-sync.mjs) により機械的に検証する。
+- ソースコード（`src/components/*`, `src/lib/*`, `src/workers/*`, `supabase/migrations/*`）を変更した際、対応する仕様書（`docs/Web_Project/SPEC_*.md`, `ARCHITECTURE.md`, または `USER_GUIDE.md`）が同一変更セット内で更新されていること、ブラウザの `localStorage` にAPIキーを保存する危険なコードや虚偽の「安全保管」文言が存在しないこと、およびUIコンポーネント内に「マスタ」「IndexedDB」「Dexie.js」「Web Worker」等の開発者用語が露出していないことを [`scripts/verify-docs-sync.mjs`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/scripts/verify-docs-sync.mjs) により機械的に検証する。

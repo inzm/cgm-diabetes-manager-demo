@@ -24,6 +24,7 @@ export const ENDPOINTS_TO_CHECK = [
   '/src/components/common/BottomNav.tsx',
   '/src/components/common/ConfirmDialog.tsx',
   '/src/components/common/DemoWelcomeModal.tsx',
+  '/src/components/common/AuthGateScreen.tsx',
   '/src/components/calendar/CalendarView.tsx',
   '/src/components/calendar/CalendarGrid.tsx',
   '/src/components/calendar/CalendarDayCell.tsx',

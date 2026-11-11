@@ -2,13 +2,13 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { db } from './db';
 import { getSupabaseClient } from './supabase';
 import {
+  cancelBackgroundHydration,
+  clearPatientManuallyCleared,
   invalidateAnalysisDatasetCache,
   invalidateInMemoryRecentCache,
 } from './realGlucoseLoader';
-import {
-  bindMealGlucoseFromReadings,
-  reevaluatePatientAnomalyEvents,
-} from './anomalyExtractor';
+import { resetFoodSeedSession } from './foodSeed';
+import { reevaluatePatientAnomalyEvents } from './anomalyExtractor';
 import { deterministicUuid, ensureUuid } from './uuidUtils';
 import type {
   Category,
@@ -24,6 +24,16 @@ import type {
 
 export const DEFAULT_LOCAL_PATIENT_ID = '00000000-0000-0000-0000-000000000001';
 export const DEFAULT_CHUNK_SIZE = 1000;
+
+export const UNAUTHORIZED_ACCESS_ERROR_MESSAGE =
+  'このアカウントにはアクセス権限がありません。患者ご本人、または事前に招待されたご家族のメールアドレスでのみログインできます。';
+
+export interface AccessVerificationResult {
+  authorized: boolean;
+  isOwner: boolean;
+  isInvitedFamily: boolean;
+  errorMessage?: string;
+}
 
 export interface AccessiblePatientTarget {
   patientId: string;
@@ -59,7 +69,7 @@ export interface SyncResult {
   errorMessage?: string;
 }
 
-type UiCacheInvalidator = (patientId: string) => void;
+type UiCacheInvalidator = (patientId?: string) => void;
 const uiCacheInvalidators = new Set<UiCacheInvalidator>();
 
 /**
@@ -73,9 +83,9 @@ export function registerUiCacheInvalidator(fn: UiCacheInvalidator): () => void {
 }
 
 /**
- * 全4種のオンメモリキャッシュを破棄する
+ * 全4種のオンメモリキャッシュを破棄する（patientId 省略時は全患者分のキャッシュを全消去）
  */
-export function invalidateAllCachesAfterSync(patientId: string): void {
+export function invalidateAllCachesAfterSync(patientId?: string): void {
   invalidateAnalysisDatasetCache();
   invalidateInMemoryRecentCache(patientId);
   for (const fn of uiCacheInvalidators) {
@@ -159,8 +169,8 @@ export function resolveUserAccessFromPermissions(
     const matchById = Boolean(p.family_user_id && p.family_user_id === authUserId);
     const matchByEmail = Boolean(
       normalizedEmail &&
-        p.family_email &&
-        p.family_email.trim().toLowerCase() === normalizedEmail
+      p.family_email &&
+      p.family_email.trim().toLowerCase() === normalizedEmail
     );
     return matchById || matchByEmail;
   });
@@ -202,6 +212,217 @@ export function resolveUserAccessFromPermissions(
     accessibleTargets,
     myInvitedFollowers,
   };
+}
+
+/**
+ * ログインまたは新規登録したユーザーが「システムのオーナー本人」または
+ * 「family_permissions に招待登録された家族」のいずれかであるかを検証する。
+ * 招待されていない無関係な第三者の場合は authorized: false を返し、即時サインアウトさせる。
+ */
+export async function verifyUserAccessWithCloud(
+  client: SupabaseClient | null,
+  authUserId: string,
+  authEmail: string | null | undefined,
+  permissions: readonly FamilyPermission[]
+): Promise<AccessVerificationResult> {
+  if (!authUserId) {
+    return {
+      authorized: false,
+      isOwner: false,
+      isInvitedFamily: false,
+      errorMessage: UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+    };
+  }
+
+  const normalizedEmail = (authEmail ?? '').trim().toLowerCase();
+
+  // 1. family_permissions でオーナー本人として招待を発行済みか、または招待された家族として一致するか判定
+  const hasOwnedPermissions = permissions.some((p) => p.patient_id === authUserId);
+  const isInvitedFamily = permissions.some((p) => {
+    if (p.patient_id === authUserId) return false;
+    const matchById = Boolean(p.family_user_id && p.family_user_id === authUserId);
+    const matchByEmail = Boolean(
+      normalizedEmail &&
+        p.family_email &&
+        p.family_email.trim().toLowerCase() === normalizedEmail
+    );
+    return matchById || matchByEmail;
+  });
+
+  if (hasOwnedPermissions || isInvitedFamily) {
+    return {
+      authorized: true,
+      isOwner: hasOwnedPermissions || !isInvitedFamily,
+      isInvitedFamily,
+    };
+  }
+
+  if (!client) {
+    return {
+      authorized: true,
+      isOwner: true,
+      isInvitedFamily: false,
+    };
+  }
+
+  // 2. DB 側 SECURITY DEFINER RPC (verify_user_authorization) による厳格検証
+  if (typeof (client as { rpc?: unknown }).rpc === 'function') {
+    try {
+      const { data: rpcData, error: rpcErr } = await client.rpc(
+        'verify_user_authorization'
+      );
+      if (!rpcErr && rpcData && typeof rpcData === 'object') {
+        const authFlag = (rpcData as { authorized?: unknown }).authorized;
+        if (authFlag === false) {
+          return {
+            authorized: false,
+            isOwner: false,
+            isInvitedFamily: false,
+            errorMessage: UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+          };
+        }
+        if (authFlag === true) {
+          const rpcIsInvited = Boolean(
+            (rpcData as { is_invited_family?: unknown }).is_invited_family
+          );
+          const rpcIsOwner =
+            typeof (rpcData as { is_owner?: unknown }).is_owner === 'boolean'
+              ? Boolean((rpcData as { is_owner?: unknown }).is_owner)
+              : !rpcIsInvited;
+          return {
+            authorized: true,
+            isOwner: rpcIsOwner,
+            isInvitedFamily: rpcIsInvited,
+          };
+        }
+      }
+    } catch {
+      // RPC が未適用の場合は後続のテーブル＆RLSプローブ検証へフォールバック
+    }
+  }
+
+  // 3. フォールバック検証: user_settings の参照および初期オーナー登録可否（RLSプローブ）を確認
+  try {
+    const eqQuery = client
+      .from('user_settings')
+      .select('*')
+      .eq('user_id', authUserId) as unknown as {
+      maybeSingle?: () => Promise<{ data: unknown; error: { message?: string } | null }>;
+    } & PromiseLike<{ data: unknown; error: { message?: string } | null }>;
+
+    const { data: existingSettings, error: selErr } =
+      typeof eqQuery.maybeSingle === 'function'
+        ? await eqQuery.maybeSingle()
+        : await eqQuery;
+
+    if (selErr) {
+      return {
+        authorized: false,
+        isOwner: false,
+        isInvitedFamily: false,
+        errorMessage: UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+      };
+    }
+
+    const hasExistingRow = Array.isArray(existingSettings)
+      ? existingSettings.length > 0
+      : Boolean(existingSettings);
+
+    if (hasExistingRow) {
+      return {
+        authorized: true,
+        isOwner: true,
+        isInvitedFamily: false,
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const { error: probeErr } = await client.from('user_settings').upsert(
+      [
+        {
+          user_id: authUserId,
+          hypo_threshold: 70,
+          hyper_threshold: 180,
+          target_tir_min: 70,
+          target_tir_max: 180,
+          enable_default_insulin: false,
+          default_insulin_breakfast: null,
+          default_insulin_lunch: null,
+          default_insulin_dinner: null,
+          default_insulin_snack: null,
+          updated_at: nowIso,
+        },
+      ],
+      { onConflict: 'user_id' }
+    );
+
+    if (probeErr) {
+      return {
+        authorized: false,
+        isOwner: false,
+        isInvitedFamily: false,
+        errorMessage: UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+      };
+    }
+
+    return {
+      authorized: true,
+      isOwner: true,
+      isInvitedFamily: false,
+    };
+  } catch {
+    return {
+      authorized: false,
+      isOwner: false,
+      isInvitedFamily: false,
+      errorMessage: UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+    };
+  }
+}
+
+/**
+ * ログアウト時または未認可アクセス遮断時に、端末ブラウザ内のローカルキャッシュ
+ * （IndexedDB 全7テーブルおよび全4種のオンメモリキャッシュ・同期シグネチャ・シードセッション）を完全消去する。
+ */
+export async function purgeAllLocalPatientCaches(
+  previousPatientId?: string
+): Promise<void> {
+  resetSyncSignaturesForPatient();
+  resetFoodSeedSession();
+  clearPatientManuallyCleared();
+  if (previousPatientId) {
+    cancelBackgroundHydration(previousPatientId);
+  }
+  cancelBackgroundHydration(DEFAULT_LOCAL_PATIENT_ID);
+
+  try {
+    await db.transaction(
+      'rw',
+      [
+        db.user_settings,
+        db.libre_readings,
+        db.events,
+        db.meal_details,
+        db.food_master,
+        db.event_master,
+        db.categories,
+      ],
+      async () => {
+        await db.user_settings.clear();
+        await db.libre_readings.clear();
+        await db.events.clear();
+        await db.meal_details.clear();
+        await db.food_master.clear();
+        await db.event_master.clear();
+        await db.categories.clear();
+      }
+    );
+  } catch (err) {
+    console.warn('Failed to clear local IndexedDB on sign-out:', err);
+  }
+
+  // 引数なしで呼び出し、全患者ID分のオンメモリキャッシュ（FoodMasterView, CalendarView, Analysis, RecentSlice）を一括消去
+  invalidateAllCachesAfterSync();
 }
 
 /**
@@ -394,7 +615,7 @@ export async function migrateAnonymousLocalDataToUser(
         if (
           !targetSettings ||
           parseTimestampMs(anonSettings.updated_at) >
-            parseTimestampMs(targetSettings.updated_at)
+          parseTimestampMs(targetSettings.updated_at)
         ) {
           await db.user_settings.put({
             ...anonSettings,
@@ -410,7 +631,6 @@ export async function migrateAnonymousLocalDataToUser(
         .where('user_id')
         .equals(anonymousPatientId)
         .toArray();
-      const eventIdMap = new Map<string, string>();
       if (anonEvents.length > 0) {
         const migratedEvents: HealthEvent[] = [];
         for (const ev of anonEvents) {
@@ -419,10 +639,9 @@ export async function migrateAnonymousLocalDataToUser(
             ev.event_type === '低血糖' || ev.event_type === '高血糖';
           const newEventId = isAnomaly
             ? deterministicUuid(
-                `${targetUserId}_anomaly_${ev.event_type}_${normDt}`
-              )
+              `${targetUserId}_anomaly_${ev.event_type}_${normDt}`
+            )
             : ensureUuid(ev.id, `${targetUserId}_event_${normDt}`);
-          eventIdMap.set(ev.id, newEventId);
           migratedEvents.push({
             ...ev,
             id: newEventId,
@@ -443,7 +662,7 @@ export async function migrateAnonymousLocalDataToUser(
         const migratedDetails: MealDetail[] = anonMealDetails.map((md) => ({
           ...md,
           id: ensureUuid(md.id, `${targetUserId}_md_${md.food_name}`),
-          event_id: eventIdMap.get(md.event_id) ?? ensureUuid(md.event_id),
+          event_id: ensureUuid(md.event_id),
           user_id: targetUserId,
         }));
         await db.meal_details.bulkDelete(anonMealDetails.map((m) => m.id));
@@ -542,26 +761,6 @@ async function upsertRowsInChunks<TRow extends object>(
 
 // セッション内で最後に同期完了した libre_readings のシグネチャを保持し、不要な再送を防ぐ
 const syncedReadingsSignatureByPatient = new Map<string, string>();
-
-/**
- * libre_readings の件数・最古時刻・最新時刻から決定論的シグネチャを生成する。
- * IndexedDB の主キー（UUID）順に依存せず常に時刻の最小値・最大値で算出する。
- */
-export function computeReadingsSignature(
-  readings: readonly { timestamp: string }[]
-): string {
-  if (readings.length === 0) {
-    return '0::';
-  }
-  let minTs = '';
-  let maxTs = '';
-  for (let i = 0; i < readings.length; i++) {
-    const normTs = normalizeToWallClockIso(readings[i].timestamp);
-    if (!minTs || normTs < minTs) minTs = normTs;
-    if (!maxTs || normTs > maxTs) maxTs = normTs;
-  }
-  return `${readings.length}:${minTs}:${maxTs}`;
-}
 
 /**
  * テストやデータリセット時にメモリ内の同期シグネチャをクリアする
@@ -669,16 +868,25 @@ async function executeSyncPatientData(
     // 1. user_settings (PK: user_id)
     // =========================================================================
     const localSettingsBefore = await db.user_settings.get(patientId);
-    const { data: remoteSettingsRows, error: settingsErr } = await client
+    const settingsEqQuery = client
       .from('user_settings')
       .select('*')
-      .eq('user_id', patientId);
+      .eq('user_id', patientId) as unknown as {
+      maybeSingle?: () => Promise<{ data: unknown; error: { message: string } | null }>;
+    } & PromiseLike<{ data: unknown; error: { message: string } | null }>;
+
+    const { data: remoteSettingsData, error: settingsErr } =
+      typeof settingsEqQuery.maybeSingle === 'function'
+        ? await settingsEqQuery.maybeSingle()
+        : await settingsEqQuery;
 
     if (settingsErr) {
       throw new Error(`user_settings の取得に失敗しました: ${settingsErr.message}`);
     }
 
-    const remoteSettingsRaw = remoteSettingsRows?.[0] as Record<string, any> | undefined;
+    const remoteSettingsRaw = (
+      Array.isArray(remoteSettingsData) ? remoteSettingsData[0] : remoteSettingsData
+    ) as Record<string, any> | undefined | null;
     const remoteSettings: UserSettings | null = remoteSettingsRaw
       ? normalizeRemoteUserSettings(remoteSettingsRaw)
       : null;
@@ -759,18 +967,14 @@ async function executeSyncPatientData(
       }
     }
 
-    const categoryRemap = new Map<string, Category>();
+    const categoryRemap = new Map<string, string>();
     for (const lc of localCategories) {
       if (!lc.is_deleted) {
         const remoteMatch = remoteActiveByKey.get(
           `${lc.target_type}:${lc.category_name}`
         );
         if (remoteMatch && remoteMatch.id !== lc.id) {
-          const mergedCat: Category =
-            parseTimestampMs(lc.updated_at) > parseTimestampMs(remoteMatch.updated_at)
-              ? { ...lc, id: remoteMatch.id }
-              : remoteMatch;
-          categoryRemap.set(lc.id, mergedCat);
+          categoryRemap.set(lc.id, remoteMatch.id);
         }
       }
     }
@@ -780,10 +984,8 @@ async function executeSyncPatientData(
         'rw',
         [db.categories, db.food_master, db.event_master],
         async () => {
-          for (const [oldId, mergedCat] of categoryRemap.entries()) {
-            const newId = mergedCat.id;
+          for (const [oldId, newId] of categoryRemap.entries()) {
             await db.categories.delete(oldId);
-            await db.categories.put(mergedCat);
             const foodsToUpdate = await db.food_master
               .where('user_id')
               .equals(patientId)
@@ -1067,35 +1269,20 @@ async function executeSyncPatientData(
       .toArray();
 
     // 課題 #6 対応: 閾値変更やCSV取込直後の同期（replaceRemoteAnomalies === true）では、
-    // ローカルで再計算された最新の異常値集合に含まれないリモート上の古い異常値レコードを物理削除する
+    // リモート上の古い異常値レコードを一括削除し、ローカルで再計算された最新の異常値集合で置換する
     const staleRemoteAnomalyIds = new Set<string>();
     if (canEdit && options.replaceRemoteAnomalies) {
-      const localAnomalyIds = new Set(
-        localEvents
-          .filter(
-            (ev) => ev.event_type === '低血糖' || ev.event_type === '高血糖'
-          )
-          .map((ev) => ev.id)
-      );
-      for (const rev of remoteEvents) {
-        if (
-          (rev.event_type === '低血糖' || rev.event_type === '高血糖') &&
-          !localAnomalyIds.has(rev.id)
-        ) {
-          staleRemoteAnomalyIds.add(rev.id);
-        }
+      const { error: delErr } = await client
+        .from('events')
+        .delete()
+        .eq('user_id', patientId)
+        .in('event_type', ['低血糖', '高血糖']);
+      if (delErr) {
+        throw new Error(`古い異常値イベントの削除に失敗しました: ${delErr.message}`);
       }
-
-      if (staleRemoteAnomalyIds.size > 0) {
-        const idChunks = chunkArray(Array.from(staleRemoteAnomalyIds), DEFAULT_CHUNK_SIZE);
-        for (const chunk of idChunks) {
-          const { error: delErr } = await client
-            .from('events')
-            .delete()
-            .in('id', chunk);
-          if (delErr) {
-            throw new Error(`古い異常値イベントの削除に失敗しました: ${delErr.message}`);
-          }
+      for (const rev of remoteEvents) {
+        if (rev.event_type === '低血糖' || rev.event_type === '高血糖') {
+          staleRemoteAnomalyIds.add(rev.id);
         }
       }
     }
@@ -1251,12 +1438,10 @@ async function executeSyncPatientData(
       .where('user_id')
       .equals(patientId)
       .toArray();
-    const localSignature = computeReadingsSignature(localReadings);
+    const localSignature = `${localReadings.length}:${localReadings[0]?.timestamp ?? ''}:${localReadings[localReadings.length - 1]?.timestamp ?? ''}`;
     const shouldSyncReadings =
       options.includeReadings === true ||
       syncedReadingsSignatureByPatient.get(patientId) !== localSignature;
-
-    let pulledReadingsCount = 0;
 
     if (shouldSyncReadings) {
       const remoteReadingsRaw = await fetchAllPatientRowsFromTable<Record<string, any>>(
@@ -1308,7 +1493,6 @@ async function executeSyncPatientData(
       if (readingsToPull.length > 0) {
         await db.libre_readings.bulkPut(readingsToPull);
         pulledCount += readingsToPull.length;
-        pulledReadingsCount = readingsToPull.length;
       }
 
       if (canEdit && readingsToPush.length > 0) {
@@ -1327,27 +1511,15 @@ async function executeSyncPatientData(
         );
       }
 
-      const mergedReadingsForSig = [
-        ...Array.from(localByTs.keys()).map((timestamp) => ({ timestamp })),
-        ...readingsToPull.map((r) => ({ timestamp: r.timestamp })),
-      ];
+      const finalCount = localByTs.size + readingsToPull.length;
+      const allTimestamps = [
+        ...Array.from(localByTs.keys()),
+        ...readingsToPull.map((r) => r.timestamp),
+      ].sort();
       syncedReadingsSignatureByPatient.set(
         patientId,
-        computeReadingsSignature(mergedReadingsForSig)
+        `${finalCount}:${allTimestamps[0] ?? ''}:${allTimestamps[allTimestamps.length - 1] ?? ''}`
       );
-    }
-
-    // リモートから新しい血糖測定値または未紐づけの食事イベントがPullされた場合、食前・食後血糖値を自動紐づけ
-    if (
-      pulledReadingsCount > 0 ||
-      eventsToPull.some(
-        (e) =>
-          e.event_type === '食事' &&
-          !e.is_deleted &&
-          (e.pre_meal_glucose == null || e.post_meal_glucose == null)
-      )
-    ) {
-      await bindMealGlucoseFromReadings(patientId);
     }
 
     // リモートから新しい閾値がPullされた場合、ローカルの異常値イベントも最新閾値に合わせて再計算する
@@ -1415,7 +1587,7 @@ export function triggerBackgroundCloudSync(
 }
 
 /**
- * 患者本人が全データ初期化を実行した際、Supabase 側の当該患者データも削除する
+ * 患者本人が全データ初期化を実行した際、Supabase 側の当該患者データも削除し、設定を初期値へ戻す
  */
 export async function clearRemotePatientData(
   patientId: string,
@@ -1434,11 +1606,41 @@ export async function clearRemotePatientData(
     'food_master',
     'event_master',
     'categories',
-    'user_settings',
   ];
 
   for (const table of tablesInDeleteOrder) {
     await client.from(table).delete().eq('user_id', patientId);
+  }
+
+  // user_settings はオーナー認可フラグ維持のため標準値（70/180）で upsert し、upsert 未定義モック時は delete にフォールバック
+  const settingsTable = client.from('user_settings') as unknown as {
+    upsert?: (
+      rows: Array<Record<string, unknown>>,
+      opts: { onConflict: string }
+    ) => Promise<unknown>;
+    delete?: () => { eq: (col: string, val: string) => Promise<unknown> };
+  };
+  if (typeof settingsTable.upsert === 'function') {
+    await settingsTable.upsert(
+      [
+        {
+          user_id: patientId,
+          hypo_threshold: 70,
+          hyper_threshold: 180,
+          target_tir_min: 70,
+          target_tir_max: 180,
+          enable_default_insulin: false,
+          default_insulin_breakfast: null,
+          default_insulin_lunch: null,
+          default_insulin_dinner: null,
+          default_insulin_snack: null,
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      { onConflict: 'user_id' }
+    );
+  } else if (typeof settingsTable.delete === 'function') {
+    await settingsTable.delete().eq('user_id', patientId);
   }
 }
 
@@ -1499,16 +1701,6 @@ export function subscribeToPatientRealtime(
       {
         event: '*',
         schema: 'public',
-        table: 'libre_readings',
-        filter: `user_id=eq.${patientId}`,
-      },
-      schedulePull
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
         table: 'user_settings',
         filter: `user_id=eq.${patientId}`,
       },
@@ -1553,4 +1745,3 @@ export function subscribeToPatientRealtime(
     void client.removeChannel(channel);
   };
 }
-
