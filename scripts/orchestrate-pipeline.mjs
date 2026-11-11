@@ -75,7 +75,16 @@ function runStep(stepId, title, command, stepLogs) {
   console.log(`------------------------------------------------------`);
   const start = Date.now();
   try {
-    execSync(command, { stdio: 'inherit', cwd: ROOT_DIR });
+    execSync(command, {
+      stdio: 'inherit',
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        GOMAXPROCS: process.env.GOMAXPROCS || '2',
+        GOMEMLIMIT: process.env.GOMEMLIMIT || '150MiB',
+        NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-semi-space-size=2',
+      },
+    });
     const durationMs = Date.now() - start;
     console.log(`✅ [${stepId}] PASSED (${(durationMs / 1000).toFixed(1)}s)`);
     stepLogs.push({ stepId, title, command, status: 'PASSED', durationMs });

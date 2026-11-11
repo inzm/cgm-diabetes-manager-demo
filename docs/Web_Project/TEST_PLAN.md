@@ -45,7 +45,7 @@
 | **異常値抽出ステートマシン**<br>([`src/lib/anomalyExtractor.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/anomalyExtractor.ts)) | ・28分継続回復ルールおよび45分センサー欠損ギャップによるエピソード確定<br>・カスタム閾値（例: 低血糖 `< 80`, 高血糖 `> 160`）変更時の再判定と件数変化 |
 | **日時・タイムゾーン安全処理**<br>([`src/lib/dateUtils.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/dateUtils.ts)) | ・`buildWallClockIso` / `extractTimeStr` による -9時間ズレ防止<br>・`shiftLocalDateStr` / `getDayOfWeekFromDateStr` の境界日付検証 |
 | **画面間データ整合性統合テスト**<br>([`src/lib/__tests__/dataIntegrity.test.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/__tests__/dataIntegrity.test.ts)) | ・カレンダーセル、選択日サマリー、日次詳細、曜日別分析、糖質インスリン推移、時間帯別異常値分析のすべての数値（糖質・インスリン・異常値件数）が100%一致することの検証<br>・`user_settings` の食事区分別デフォルトインスリン設定（`enable_default_insulin` トグル ON/OFF および朝・昼・夕・間食の単位解決）の整合性検証<br>・決定論的UUID生成（[`src/lib/uuidUtils.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/uuidUtils.ts)）、論理削除カテゴリの再登録復活（`addOrReviveCategory`）、本番モード（`personal`）でのデモデータ自動投入ゼロ保証、バックアップ復元時のUUID正規化＆全4種メモリキャッシュ破棄の検証 |
-| **双方向クラウド同期エンジン & 招待専用権限管理・キャッシュ全消去**<br>([`src/lib/syncEngine.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/syncEngine.ts) / [`src/lib/supabase.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/supabase.ts)) | ・Supabase (`TIMESTAMPTZ`) から取得した日時の24文字ウォールクロックISO正規化（`normalizeToWallClockIso`: 課題 #7 対応）と `.between()` 境界検索一致検証<br>・1,000件単位チャンク分割（`chunkArray`）<br>・`family_permissions` に基づく患者本人 / 招待家族（`viewer` 閲覧専用ロック / `editor` 代理記録）の権限・対象患者解決（`resolveUserAccessFromPermissions`）<br>・未招待第三者のログイン・サインアップ遮断検証（`verifyUserAccessWithCloud`: オーナー本人・招待家族は許可、未招待第三者は `authorized: false` で即座に拒否）<br>・ログアウト時のローカル端末キャッシュ完全消去（`purgeAllLocalPatientCaches`: IndexedDB全7テーブル＋全4種メモリキャッシュ消去）<br>・未ログイン時のローカルデータ（`DEFAULT_PATIENT_ID`）から認証済み `auth.uid()` への7テーブル自動引き継ぎ（`migrateAnonymousLocalDataToUser`）<br>・7テーブル双方向 Push & Pull、閾値変更・CSV取込時のクラウド側古い異常値エピソード置換（`replaceRemoteAnomalies: true`: 課題 #6 対応）、および閲覧専用ロール時の Push 抑止 |
+| **双方向クラウド同期エンジン & 招待専用権限管理・キャッシュ全消去・案Bパスワード強度検証**<br>([`src/lib/syncEngine.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/syncEngine.ts) / [`src/lib/supabase.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/supabase.ts)) | ・Supabase (`TIMESTAMPTZ`) から取得した日時の24文字ウォールクロックISO正規化（`normalizeToWallClockIso`: 課題 #7 対応）と `.between()` 境界検索一致検証<br>・1,000件単位チャンク分割（`chunkArray`）<br>・`family_permissions` に基づく患者本人 / 招待家族（`viewer` 閲覧専用ロック / `editor` 代理記録）の権限・対象患者解決（`resolveUserAccessFromPermissions`）<br>・未招待第三者のログイン・サインアップ遮断検証（`verifyUserAccessWithCloud`: オーナー本人・招待家族は許可、未招待第三者は `authorized: false` で即座に拒否）<br>・パスワード複雑性ポリシー（案B：`validateStrongPassword` により8文字以上＋英大文字・英小文字・数字・記号の4種すべて必須）の境界値・欠落パターン検証<br>・ログアウト時のローカル端末キャッシュ完全消去（`purgeAllLocalPatientCaches`: IndexedDB全7テーブル＋全4種メモリキャッシュ消去）<br>・未ログイン時のローカルデータ（`DEFAULT_PATIENT_ID`）から認証済み `auth.uid()` への7テーブル自動引き継ぎ（`migrateAnonymousLocalDataToUser`）<br>・7テーブル双方向 Push & Pull、閾値変更・CSV取込時のクラウド側古い異常値エピソード置換（`replaceRemoteAnomalies: true`: 課題 #6 対応）、および閲覧専用ロール時の Push 抑止 |
 | **糖質自動推定エンジン & BFF**<br>([`src/lib/gemini.ts`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/src/lib/gemini.ts) / `functions/api/gemini.ts`) | ・日本食品標準成分表内蔵辞書による主要食品・料理の糖質量推定<br>・Cloudflare Pages Functions BFF（`POST /api/gemini`）の `GEMINI_API_KEY` 検証・レスポンス整形・未設定時の安全なローカル辞書フォールバック<br>・`localStorage` に一切依存しない安全な動作 |
 
 ### 2.2 Layer 3: Runtime Smoke Test & Doc/Security Gate
@@ -58,7 +58,7 @@
 
 ### 2.3 Layer 4: Browser E2E テスト計画 (Playwright)
 
-Node.js 上の仮想環境（Vitest）では検出できない **「実ブラウザ（Chromium / Mobile Viewport）での初期描画速度」「UI操作によるマスタ情報の登録・編集・削除と記録モーダル選択肢の連動」「画面上に表示される計算ロジック結果（糖質合算・インスリン合算・食前→食後ピーク $\Delta$・異常値件数再計算）の正確性」「異常系バリデーション・CSV/バックアップI/O・オフライン耐障害性」** を機械的に保証するため、Playwright による以下の **12大 E2E テストスイート（`E2E-1` 〜 `E2E-12`）およびテスト設計規約（Section 2.4）** を定義します。
+Node.js 上の仮想環境（Vitest）では検出できない **「実ブラウザ（Chromium / Mobile Viewport）での初期描画速度」「UI操作によるマスタ情報の登録・編集・削除と記録モーダル選択肢の連動」「画面上に表示される計算ロジック結果（糖質合算・インスリン合算・食前→食後ピーク $\Delta$・異常値件数再計算）の正確性」「異常系バリデーション・CSV/バックアップI/O・オフライン耐障害性」「本番認証ゲート（AuthGateScreen）の完全ロックおよび案Bパスワード複雑性リアルタイムUI」** を機械的に保証するため、Playwright による以下の **14大 E2E テストスイート（`E2E-1` 〜 `E2E-14`）およびテスト設計規約（Section 2.4）** を定義します。
 
 #### E2E-1: 初期表示パフォーマンス SLA & ポートフォリオ自動リセット検証
 - **目的**: ユーザー離脱を防ぐため、初回アクセス時およびリロード時にカレンダー画面が基準時間内に確実に描画されること、およびポートフォリオモードの非永続化仕様を検証する。
@@ -142,6 +142,12 @@ Node.js 上の仮想環境（Vitest）では検出できない **「実ブラウ
 #### E2E-12: 論理削除済み同名カテゴリの復活（UNIQUE衝突防止）・手動初期化後のデモデータ再ハイドレーション抑止 & 全ID正規UUID検証
 - **目的**: カテゴリ削除後に同名カテゴリを再追加した際の既存レコード復活（`is_deleted: false`）、設定画面での「記録データを初期化」実行後にカレンダー・分析画面へ遷移してもデモデータが勝手に再投入されないこと（`markPatientManuallyCleared`）、およびエクスポートされたバックアップJSON内の全テーブル主キー・外部キーが正規UUID形式（`src/lib/uuidUtils.ts`）であることを検証する。
 
+#### E2E-13: 本番認証ゲート（`AuthGateScreen`）による未ログイン画面完全ロック & クイックガイド表示検証
+- **目的**: 本番モード（クラウド認証有効時）において、未ログインの第三者がURLにアクセスした際にカレンダー・ナビゲーション等のアプリ本体がDOMに一切描画されず、専用ログイン画面（`src/components/common/AuthGateScreen.tsx`）のみで完全ロックされること、および初回オーナー・招待家族向けクイックガイドが確認できることを検証する。
+
+#### E2E-14: パスワード複雑性ポリシー（案B：8文字以上＋英大文字・英小文字・数字・記号必須）のリアルタイムUI検証 & 登録ブロック検証
+- **目的**: 新規アカウント登録時に5項目のパスワード要件チェックリスト（`8文字以上` / `英大文字 (A-Z)` / `英小文字 (a-z)` / `数字 (0-9)` / `記号 (!@#$%等)`）がリアルタイムで判定され、要件未達のパスワードでは登録ボタンが非活性化（ブロック）され、4種すべてを含む8文字以上のパスワード入力時のみ登録可能になることを検証する。
+
 ---
 
 ### 2.4 E2E テスト実装・品質保証規約（Zero-Error Policy & Anti-Flakiness）
@@ -166,7 +172,7 @@ Playwright E2E テストを実装・運用する際は、テスト自体の信�
 | `npm test` | Vitestによる全Unitテスト・画面間データ整合性テストの実行 |
 | `npm run test:watch` | 開発時のファイル変更連動自動テスト実行 |
 | `npm run test:smoke` | 開発サーバー（`localhost:3000`）に対するランタイムスモークテストの実行 |
-| `npm run test:e2e` | Playwright による全ブラウザ E2E テストスイート（`E2E-1` 〜 `E2E-12`）の実行 |
+| `npm run test:e2e` | Playwright による全ブラウザ E2E テストスイート（`E2E-1` 〜 `E2E-14`）の実行 |
 | `npm run test:e2e:regression` | デプロイ前自動ゲート用の Playwright E2E リグレッションテスト（`@regression`）の実行 |
 | `npm run typecheck` | TypeScript型検査（`tsc --noEmit`） |
 | `npm run build` | 本番Rollupバンドル整合性検査 |
@@ -185,4 +191,4 @@ Playwright E2E テストを実装・運用する際は、テスト自体の信�
 4. **静的ビルド**: `npm run build`（および `npm run build:personal` / `npm run build:portfolio`）が警告・エラーなく成功すること
 5. **ランタイム疎通**: `npm run test:smoke` で開発サーバー上にエラーオーバーレイが発生せず正常描画されること
 6. **期間局所スライス＆境界キャッシュ検証**: `setAnalysisBoundaryCache` および `buildAndCacheLocalizedPeriodSlice` による期間別キャッシュ再利用が単体テストで保証されること
-7. **デプロイ前ブラウザ E2E リグレッションゲート (`.github/workflows/deploy-pages.yml` & `e2e/app.spec.ts`)**: `npm run build:portfolio` 完了後、Cloudflare Pages へデプロイする前に `npm run test:e2e:regression`（`E2E-1` 〜 `E2E-12`）をヘッドレス Chromium で自動実行し、1件でも失敗またはコンソールエラーが発生した場合はデプロイを自動停止して本番環境のデグレを100%防止すること
+7. **デプロイ前ブラウザ E2E リグレッションゲート (`.github/workflows/deploy-pages.yml` & `e2e/app.spec.ts`)**: `npm run build:portfolio` 完了後、Cloudflare Pages へデプロイする前に `npm run test:e2e:regression`（`E2E-1` 〜 `E2E-14`）をヘッドレス Chromium で自動実行し、1件でも失敗またはコンソールエラーが発生した場合はデプロイを自動停止して本番環境のデグレを100%防止すること

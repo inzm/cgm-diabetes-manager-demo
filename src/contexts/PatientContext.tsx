@@ -10,7 +10,14 @@ import type { FamilyPermission, UserRole } from '@/types/database';
 import { db } from '@/lib/db';
 import { isPortfolioMode } from '@/lib/realGlucoseLoader';
 import { seedFoodMasterIfEmpty } from '@/lib/foodSeed';
-import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
+import {
+  type PasswordStrengthResult,
+  getSupabaseClient,
+  isCloudAuthForcedForE2E,
+  isSupabaseConfigured,
+  validateStrongPassword,
+} from '@/lib/supabase';
+export { type PasswordStrengthResult, validateStrongPassword };
 import {
   type AccessiblePatientTarget,
   type SyncResult,
@@ -84,7 +91,8 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
   const [hyperThreshold, setHyperThreshold] = useState<number>(180);
 
   const isCloudEnabled = isSupabaseConfigured();
-  const isAuthRequired = isCloudEnabled && !isPortfolioMode();
+  const isAuthRequired =
+    isCloudEnabled && (!isPortfolioMode() || isCloudAuthForcedForE2E());
 
   const [authUser, setAuthUser] = useState<AuthUserInfo | null>(null);
   const [isSystemOwner, setIsSystemOwner] = useState<boolean>(
@@ -509,13 +517,16 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
       email: string,
       password: string
     ): Promise<{ error?: string }> => {
-      const client = getSupabaseClient();
-      if (!client) {
-        return { error: 'クラウド接続設定が見つかりません。' };
-      }
       const trimmedEmail = email.trim();
       if (!trimmedEmail || !password) {
         return { error: 'メールアドレスとパスワードを入力してください。' };
+      }
+      if (password.length < 8) {
+        return { error: 'パスワードは8文字以上で入力してください。' };
+      }
+      const client = getSupabaseClient();
+      if (!client) {
+        return { error: 'クラウド接続設定が見つかりません。' };
       }
       const { data, error } = await client.auth.signInWithPassword({
         email: trimmedEmail,
@@ -551,16 +562,23 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
       email: string,
       password: string
     ): Promise<{ error?: string; needsEmailConfirmation?: boolean }> => {
+      const trimmedEmail = email.trim();
+      if (!trimmedEmail || !trimmedEmail.includes('@')) {
+        return {
+          error: '有効なメールアドレスを入力してください。',
+        };
+      }
+      const pwdCheck = validateStrongPassword(password);
+      if (!pwdCheck.isValid) {
+        return {
+          error:
+            pwdCheck.errorMessage ||
+            'パスワードは8文字以上で、英大文字・英小文字・数字・記号の4種類すべてを含めてください。',
+        };
+      }
       const client = getSupabaseClient();
       if (!client) {
         return { error: 'クラウド接続設定が見つかりません。' };
-      }
-      const trimmedEmail = email.trim();
-      if (!trimmedEmail || password.length < 6) {
-        return {
-          error:
-            '有効なメールアドレスと6文字以上のパスワードを入力してください。',
-        };
       }
       const { data, error } = await client.auth.signUp({
         email: trimmedEmail,

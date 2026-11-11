@@ -37,7 +37,7 @@ function parseSummaryInsulin(summaryText: string): number {
   return m ? parseFloat(m[1]) : 0;
 }
 
-test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-12)', () => {
+test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-14)', () => {
   let runtimeErrors: string[] = [];
 
   test.beforeEach(async ({ page }, testInfo) => {
@@ -1299,6 +1299,112 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
       expect(em.id).toMatch(uuidRegex);
       expect(em.category_id).toMatch(uuidRegex);
     }
+  });
+
+  test('E2E-13: 本番認証ゲート（AuthGateScreen）による未ログイン画面完全ロック & クイックガイド表示検証 @regression', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, boolean>).__CGM_E2E_ENABLE_CLOUD_AUTH__ = true;
+    });
+    await page.goto('/');
+
+    // 1. 専用ログイン画面（AuthGateScreen）が表示され、招待制バッジが確認できること
+    await expect(page.getByTestId('auth-gate-screen')).toBeVisible();
+    await expect(
+      page.getByText('招待制・プライベート保護（本人・招待家族専用）')
+    ).toBeVisible();
+
+    // 2. カレンダー画面・ヘッダーナビ・ボトムナビがDOM上に一切描画されていないこと（完全ロック検証）
+    await expect(page.getByText('2026年 8月')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'カレンダー' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '食品・活動' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '分析' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '設定' })).toHaveCount(0);
+
+    // 3. はじめてご利用になる方・招待されたご家族の手順（クイックガイド）アコーディオンが開閉できること
+    await expect(page.getByTestId('auth-gate-quick-guide')).toHaveCount(0);
+    await page.getByTestId('auth-gate-quick-guide-toggle').click();
+    await expect(page.getByTestId('auth-gate-quick-guide')).toBeVisible();
+    await expect(page.getByText('1. 患者ご本人（オーナー）のログイン')).toBeVisible();
+    await expect(
+      page.getByText('2. 招待されたご家族の初回登録・ログイン手順')
+    ).toBeVisible();
+    await expect(page.getByText('3. セキュリティとログアウト時の保護')).toBeVisible();
+
+    await page.getByTestId('auth-gate-quick-guide-toggle').click();
+    await expect(page.getByTestId('auth-gate-quick-guide')).toHaveCount(0);
+  });
+
+  test('E2E-14: パスワード複雑性ポリシー（案B：8文字以上＋英大文字・英小文字・数字・記号必須）のリアルタイムUI検証 & 登録ブロック検証 @regression', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, boolean>).__CGM_E2E_ENABLE_CLOUD_AUTH__ = true;
+    });
+    await page.goto('/');
+    await expect(page.getByTestId('auth-gate-screen')).toBeVisible();
+
+    // 1. 「新規アカウント登録」タブに切り替えると5項目のパスワード要件チェックリストが表示されること
+    await page.getByRole('button', { name: '新規アカウント登録' }).click();
+    await expect(page.getByTestId('auth-gate-password-checklist')).toBeVisible();
+
+    const reqMinLength = page.getByTestId('pwd-req-minLength');
+    const reqUpper = page.getByTestId('pwd-req-hasUpper');
+    const reqLower = page.getByTestId('pwd-req-hasLower');
+    const reqDigit = page.getByTestId('pwd-req-hasDigit');
+    const reqSymbol = page.getByTestId('pwd-req-hasSymbol');
+    const submitBtn = page.getByTestId('auth-gate-submit');
+
+    await expect(reqMinLength).toHaveAttribute('data-satisfied', 'false');
+    await expect(reqUpper).toHaveAttribute('data-satisfied', 'false');
+    await expect(reqLower).toHaveAttribute('data-satisfied', 'false');
+    await expect(reqDigit).toHaveAttribute('data-satisfied', 'false');
+    await expect(reqSymbol).toHaveAttribute('data-satisfied', 'false');
+    await expect(submitBtn).toBeDisabled();
+
+    await page.locator('#auth-gate-email').fill('owner@example.com');
+    const pwdInput = page.locator('#auth-gate-password');
+
+    // 2. 弱いパスワード①（大文字・記号欠落: password123）で未達成バッジ＆警告が表示され登録ボタンがdisabledのままブロックされること
+    await pwdInput.fill('password123');
+    await expect(reqMinLength).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqLower).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqDigit).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqUpper).toHaveAttribute('data-satisfied', 'false');
+    await expect(reqSymbol).toHaveAttribute('data-satisfied', 'false');
+    await expect(page.getByTestId('auth-gate-password-warning')).toBeVisible();
+    await expect(submitBtn).toBeDisabled();
+
+    // 3. 弱いパスワード②（記号のみ欠落: Abcdef12）
+    await pwdInput.fill('Abcdef12');
+    await expect(reqMinLength).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqUpper).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqLower).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqDigit).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqSymbol).toHaveAttribute('data-satisfied', 'false');
+    await expect(page.getByTestId('auth-gate-password-warning')).toContainText('記号');
+    await expect(submitBtn).toBeDisabled();
+
+    // 4. 弱いパスワード③（7文字で文字数不足: Ab1!xyz）
+    await pwdInput.fill('Ab1!xyz');
+    await expect(reqMinLength).toHaveAttribute('data-satisfied', 'false');
+    await expect(reqUpper).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqLower).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqDigit).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqSymbol).toHaveAttribute('data-satisfied', 'true');
+    await expect(page.getByTestId('auth-gate-password-warning')).toContainText('8文字以上');
+    await expect(submitBtn).toBeDisabled();
+
+    // 5. 案B準拠の強いパスワード（8文字以上＋大文字・小文字・数字・記号すべて含む: StrongPass1!）で全5項目達成＆登録ボタン有効化
+    await pwdInput.fill('StrongPass1!');
+    await expect(reqMinLength).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqUpper).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqLower).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqDigit).toHaveAttribute('data-satisfied', 'true');
+    await expect(reqSymbol).toHaveAttribute('data-satisfied', 'true');
+    await expect(page.getByTestId('auth-gate-password-warning')).toHaveCount(0);
+    await expect(submitBtn).toBeEnabled();
   });
 });
 

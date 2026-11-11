@@ -290,7 +290,10 @@ USING (can_edit_patient_data(user_id));
 1. **本番モードでの未ログイン時「専用ログイン画面（Auth Gate）」強制ロック**:
    - 本番環境（`VITE_APP_MODE=personal` かつ Supabase 設定有効時、すなわち `isAuthRequired === true`）では、未ログイン状態（`!authUser`）または権限検証未完了/不許可（`!isAccessAuthorized`）のとき、`src/App.tsx` がヘッダー・カレンダー・分析・設定・ボトムナビ等を一切レンダリングせず、フルスクリーンの専用ログイン画面 **`src/components/common/AuthGateScreen.tsx`** のみを表示して完全にブロックする（URLを知っている第三者がアクセスしてもアプリ画面を一切閲覧・操作できない）。
    - ※公開デモモード（`VITE_APP_MODE=portfolio`）およびローカル専用のE2Eテスト環境では従来通りログイン不要で動作する。
-2. **患者コンテキスト（`PatientContext`）による一元管理**:
+2. **強固なパスワード複雑性ポリシー（`validateStrongPassword`：`src/lib/supabase.ts`）**:
+   - 新規アカウント登録（オーナーおよび招待家族の初回登録）時には、**8文字以上かつ「英大文字 (`A-Z`)」「英小文字 (`a-z`)」「数字 (`0-9`)」「記号（英数字・空白以外のASCII記号文字）」の4種類すべてを含むこと** を必須要件とする。
+   - `AuthGateScreen.tsx` および `SettingsView.tsx` のUI上で5条件の達成状況をリアルタイム表示し、`PatientContext.tsx` の `signUpWithEmail`（および Supabase Auth 側の `Minimum password length: 8` / `Lowercase, uppercase letters, digits and symbols` 設定）により未達成パスワードでの登録を確実に遮断する。
+3. **患者コンテキスト（`PatientContext`）による一元管理**:
    - コンポーネントが直接 `auth.user.id` を参照してデータを取得する設計を禁止し、**「現在選択中の患者ID（`currentPatientId`）」「その患者に対するロール（`userRole`）」「認証ゲート要件（`isAuthRequired` / `isAccessAuthorized`）」「臨床目標閾値（`hypoThreshold` / `hyperThreshold`）」を配信する Context**（`src/contexts/PatientContext.tsx`）で一元管理する。
 
 ### 4.5 Cloudflare Workers BFF (`POST /api/gemini`) による Gemini API キーの完全秘匿 (`src/lib/gemini.ts`)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { usePatient } from '@/contexts/PatientContext';
+import { usePatient, validateStrongPassword } from '@/contexts/PatientContext';
 import { db, requestPersistentStorage } from '@/lib/db';
 import { usePwaInstallPrompt } from '@/lib/pwa';
 import { isGeminiBffEnabled } from '@/lib/gemini';
@@ -809,10 +809,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
   };
 
   // 4-2. クラウド認証（ログイン・新規登録・手動同期・家族招待）ハンドラ
+  const authPasswordStrength = validateStrongPassword(authPasswordInput);
+
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthErrorMsg(null);
     setAuthSuccessMsg(null);
+
+    if (authMode === 'signup') {
+      if (!authPasswordStrength.isValid) {
+        setAuthErrorMsg(
+          authPasswordStrength.errorMessage ||
+            'パスワードは8文字以上で、英大文字・英小文字・数字・記号の4種類すべてを含めてください。'
+        );
+        return;
+      }
+    } else if (authPasswordInput.length < 8) {
+      setAuthErrorMsg('パスワードは8文字以上で入力してください。');
+      return;
+    }
+
     setIsSubmittingAuth(true);
 
     try {
@@ -1494,19 +1510,87 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    パスワード（6文字以上）
+                    {authMode === 'signup'
+                      ? 'パスワード（8文字以上・大文字/小文字/数字/記号を含む）'
+                      : 'パスワード（8文字以上）'}
                   </label>
                   <input
                     type="password"
                     required
-                    minLength={6}
+                    minLength={8}
                     value={authPasswordInput}
                     onChange={(e) => setAuthPasswordInput(e.target.value)}
-                    placeholder="6文字以上のパスワード"
+                    placeholder={
+                      authMode === 'signup'
+                        ? '8文字以上・大文字/小文字/数字/記号を含む'
+                        : '8文字以上のパスワード'
+                    }
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
               </div>
+
+              {authMode === 'signup' && (
+                <div
+                  data-testid="settings-password-checklist"
+                  className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5"
+                >
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      {
+                        key: 'minLength',
+                        label: '8文字以上',
+                        ok: authPasswordStrength.minLength,
+                      },
+                      {
+                        key: 'hasUpper',
+                        label: '英大文字 (A-Z)',
+                        ok: authPasswordStrength.hasUpper,
+                      },
+                      {
+                        key: 'hasLower',
+                        label: '英小文字 (a-z)',
+                        ok: authPasswordStrength.hasLower,
+                      },
+                      {
+                        key: 'hasDigit',
+                        label: '数字 (0-9)',
+                        ok: authPasswordStrength.hasDigit,
+                      },
+                      {
+                        key: 'hasSymbol',
+                        label: '記号 (!@#$%等)',
+                        ok: authPasswordStrength.hasSymbol,
+                      },
+                    ].map((item) => (
+                      <span
+                        key={item.key}
+                        data-satisfied={item.ok ? 'true' : 'false'}
+                        className={cn(
+                          'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors',
+                          item.ok
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-white text-slate-500 border-slate-200'
+                        )}
+                      >
+                        <CheckCircle2
+                          className={cn(
+                            'w-3 h-3 shrink-0',
+                            item.ok ? 'text-emerald-600' : 'text-slate-300'
+                          )}
+                        />
+                        <span>{item.label}</span>
+                      </span>
+                    ))}
+                  </div>
+                  {authPasswordInput.length > 0 && !authPasswordStrength.isValid && (
+                    <p className="text-[11px] font-semibold text-amber-700 flex items-start gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <span>{authPasswordStrength.errorMessage}</span>
+                    </p>
+                  )}
+                </div>
+              )}
 
               {authSuccessMsg && (
                 <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center space-x-2">
@@ -1525,7 +1609,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
               <div className="flex justify-end">
                 <button
                   type="submit"
-                  disabled={isSubmittingAuth}
+                  disabled={
+                    isSubmittingAuth ||
+                    (authMode === 'signup' && !authPasswordStrength.isValid)
+                  }
                   className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-2xs cursor-pointer active:scale-95 disabled:opacity-50"
                 >
                   {isSubmittingAuth ? (
@@ -1667,7 +1754,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onSettingsChanged })
                         <strong>患者本人が招待登録</strong>：下の欄に家族のメールアドレスを入力し、権限を選んで「家族を追加」を押します。
                       </li>
                       <li>
-                        <strong>家族が初回登録</strong>：家族がアプリのURLを開き、ログイン画面の「新規アカウント登録」から<strong>招待された同じメールアドレス</strong>とパスワードを登録します。
+                        <strong>家族が初回登録</strong>：家族がアプリのURLを開き、ログイン画面の「新規アカウント登録」から<strong>招待された同じメールアドレス</strong>とパスワード（8文字以上・大文字/小文字/数字/記号を含む）を登録します。
                       </li>
                       <li>
                         <strong>共有開始</strong>：家族がログインすると自動的に「連携済み」となり、選んだ権限（閲覧のみ／記録・編集も可能）でデータが共有されます。

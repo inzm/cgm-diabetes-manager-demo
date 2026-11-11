@@ -1577,9 +1577,109 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       expect(hasInMemoryRecentCache(secondaryPatientId)).toBe(false);
       expect(isPatientManuallyCleared(targetUserId)).toBe(false);
     });
+
+    it('validateStrongPassword が 8文字未満・大文字欠落・小文字欠落・数字欠落・記号欠落をすべて拒否し、4種すべて含む8文字以上のみ許可すること', async () => {
+      const { validateStrongPassword } = await import('../supabase');
+
+      // 1. 空文字
+      const emptyRes = validateStrongPassword('');
+      expect(emptyRes).toMatchObject({
+        minLength: false,
+        hasUpper: false,
+        hasLower: false,
+        hasDigit: false,
+        hasSymbol: false,
+        isValid: false,
+      });
+      expect(emptyRes.errorMessage).toContain('8文字以上');
+
+      // 2. 8文字未満（4種類の文字をすべて含んでいても7文字は拒否）
+      const shortRes = validateStrongPassword('Ab1!xyz');
+      expect(shortRes).toMatchObject({
+        minLength: false,
+        hasUpper: true,
+        hasLower: true,
+        hasDigit: true,
+        hasSymbol: true,
+        isValid: false,
+      });
+      expect(shortRes.errorMessage).toContain('8文字以上');
+
+      // 3. 英大文字欠落
+      const noUpperRes = validateStrongPassword('abcdef1!@');
+      expect(noUpperRes).toMatchObject({
+        minLength: true,
+        hasUpper: false,
+        hasLower: true,
+        hasDigit: true,
+        hasSymbol: true,
+        isValid: false,
+      });
+      expect(noUpperRes.errorMessage).toContain('英大文字');
+
+      // 4. 英小文字欠落
+      const noLowerRes = validateStrongPassword('ABCDEF1!@');
+      expect(noLowerRes).toMatchObject({
+        minLength: true,
+        hasUpper: true,
+        hasLower: false,
+        hasDigit: true,
+        hasSymbol: true,
+        isValid: false,
+      });
+      expect(noLowerRes.errorMessage).toContain('英小文字');
+
+      // 5. 数字欠落
+      const noDigitRes = validateStrongPassword('Abcdefg!@');
+      expect(noDigitRes).toMatchObject({
+        minLength: true,
+        hasUpper: true,
+        hasLower: true,
+        hasDigit: false,
+        hasSymbol: true,
+        isValid: false,
+      });
+      expect(noDigitRes.errorMessage).toContain('数字');
+
+      // 6. 記号欠落（英大小＋数字のみ）
+      const noSymbolRes = validateStrongPassword('Abcdefg12');
+      expect(noSymbolRes).toMatchObject({
+        minLength: true,
+        hasUpper: true,
+        hasLower: true,
+        hasDigit: true,
+        hasSymbol: false,
+        isValid: false,
+      });
+      expect(noSymbolRes.errorMessage).toContain('記号');
+
+      // 7. 空白や日本語文字は記号として認められないこと
+      expect(validateStrongPassword('Abcdefg1 ').hasSymbol).toBe(false);
+      expect(validateStrongPassword('Abcdefg1 ').isValid).toBe(false);
+      expect(validateStrongPassword('Abcdefg1あ').hasSymbol).toBe(false);
+      expect(validateStrongPassword('Abcdefg1あ').isValid).toBe(false);
+
+      // 8. 8文字以上かつ英大文字・英小文字・数字・ASCII記号の4種類すべてを含む場合のみ許可されること
+      for (const validPwd of [
+        'Abcdef1!',
+        'Pass123@',
+        'Zx9#mN2_',
+        'Qw8$rT5-',
+        'Lp3%kM9.',
+        'Hj7^vB4/',
+        'Gf6&cD1~',
+      ]) {
+        const res = validateStrongPassword(validPwd);
+        expect(res).toEqual({
+          minLength: true,
+          hasUpper: true,
+          hasLower: true,
+          hasDigit: true,
+          hasSymbol: true,
+          isValid: true,
+        });
+        expect(res.errorMessage).toBeUndefined();
+      }
+    });
   });
 });
-
-
-
-

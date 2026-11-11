@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePatient } from '@/contexts/PatientContext';
+import { usePatient, validateStrongPassword } from '@/contexts/PatientContext';
 import {
   ShieldCheck,
   LogIn,
@@ -31,6 +31,8 @@ export const AuthGateScreen: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
 
+  const pwdStrength = validateStrongPassword(password);
+
   if (isAuthLoading) {
     return (
       <div
@@ -56,6 +58,20 @@ export const AuthGateScreen: React.FC = () => {
     e.preventDefault();
     setLocalError(null);
     setSuccessMsg(null);
+
+    if (authMode === 'signup') {
+      if (!pwdStrength.isValid) {
+        setLocalError(
+          pwdStrength.errorMessage ||
+            'パスワードは8文字以上で、英大文字・英小文字・数字・記号の4種類すべてを含めてください。'
+        );
+        return;
+      }
+    } else if (password.length < 8) {
+      setLocalError('パスワードは8文字以上で入力してください。');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -199,21 +215,92 @@ export const AuthGateScreen: React.FC = () => {
                 htmlFor="auth-gate-password"
                 className="block text-xs font-bold text-slate-700 mb-1"
               >
-                パスワード（6文字以上）
+                {authMode === 'signup'
+                  ? 'パスワード（8文字以上・大文字/小文字/数字/記号を含む）'
+                  : 'パスワード（8文字以上）'}
               </label>
               <input
                 id="auth-gate-password"
                 type="password"
                 required
-                minLength={6}
+                minLength={8}
                 autoComplete={
                   authMode === 'login' ? 'current-password' : 'new-password'
                 }
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="6文字以上のパスワード"
+                placeholder={
+                  authMode === 'signup'
+                    ? '8文字以上・大文字/小文字/数字/記号を含む'
+                    : '8文字以上のパスワード'
+                }
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500"
               />
+              {authMode === 'signup' && (
+                <div
+                  data-testid="auth-gate-password-checklist"
+                  className="mt-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5"
+                >
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      {
+                        key: 'minLength',
+                        label: '8文字以上',
+                        ok: pwdStrength.minLength,
+                      },
+                      {
+                        key: 'hasUpper',
+                        label: '英大文字 (A-Z)',
+                        ok: pwdStrength.hasUpper,
+                      },
+                      {
+                        key: 'hasLower',
+                        label: '英小文字 (a-z)',
+                        ok: pwdStrength.hasLower,
+                      },
+                      {
+                        key: 'hasDigit',
+                        label: '数字 (0-9)',
+                        ok: pwdStrength.hasDigit,
+                      },
+                      {
+                        key: 'hasSymbol',
+                        label: '記号 (!@#$%等)',
+                        ok: pwdStrength.hasSymbol,
+                      },
+                    ].map((item) => (
+                      <span
+                        key={item.key}
+                        data-testid={`pwd-req-${item.key}`}
+                        data-satisfied={item.ok ? 'true' : 'false'}
+                        className={cn(
+                          'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors',
+                          item.ok
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-white text-slate-500 border-slate-200'
+                        )}
+                      >
+                        <CheckCircle2
+                          className={cn(
+                            'w-3 h-3 shrink-0',
+                            item.ok ? 'text-emerald-600' : 'text-slate-300'
+                          )}
+                        />
+                        <span>{item.label}</span>
+                      </span>
+                    ))}
+                  </div>
+                  {password.length > 0 && !pwdStrength.isValid && (
+                    <p
+                      data-testid="auth-gate-password-warning"
+                      className="text-[11px] font-semibold text-amber-700 flex items-start gap-1"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <span>{pwdStrength.errorMessage}</span>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {successMsg && (
@@ -239,7 +326,11 @@ export const AuthGateScreen: React.FC = () => {
 
             <button
               type="submit"
-              disabled={isSubmitting || isSyncing}
+              disabled={
+                isSubmitting ||
+                isSyncing ||
+                (authMode === 'signup' && !pwdStrength.isValid)
+              }
               data-testid="auth-gate-submit"
               className="w-full inline-flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-bold transition-all shadow-2xs cursor-pointer active:scale-95 disabled:opacity-50"
             >
@@ -265,6 +356,7 @@ export const AuthGateScreen: React.FC = () => {
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden">
           <button
             type="button"
+            data-testid="auth-gate-quick-guide-toggle"
             onClick={() => setIsGuideOpen((prev) => !prev)}
             className="w-full px-4 py-3 flex items-center justify-between text-left text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
           >
@@ -280,7 +372,10 @@ export const AuthGateScreen: React.FC = () => {
           </button>
 
           {isGuideOpen && (
-            <div className="px-4 pb-4 pt-1 border-t border-slate-100 text-xs text-slate-600 space-y-3 leading-relaxed">
+            <div
+              data-testid="auth-gate-quick-guide"
+              className="px-4 pb-4 pt-1 border-t border-slate-100 text-xs text-slate-600 space-y-3 leading-relaxed"
+            >
               <div className="space-y-1">
                 <div className="font-bold text-slate-800">
                   1. 患者ご本人（オーナー）のログイン
@@ -299,7 +394,7 @@ export const AuthGateScreen: React.FC = () => {
                     事前に患者ご本人が、アプリ内の「設定 ＞ 家族へのデータ共有・招待設定」であなたのメールアドレスを登録します。
                   </li>
                   <li>
-                    この画面で<strong>「新規アカウント登録」</strong>を選び、招待されたものと同じメールアドレスとご希望のパスワード（6文字以上）を入力して登録します。
+                    この画面で<strong>「新規アカウント登録」</strong>を選び、招待されたものと同じメールアドレスとご希望のパスワード（8文字以上・大文字/小文字/数字/記号を含む）を入力して登録します。
                   </li>
                   <li>
                     ログインすると自動的に患者ご本人の記録が共有表示されます（「閲覧のみ」権限ではデータの変更や削除はロックされます）。

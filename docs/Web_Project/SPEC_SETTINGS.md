@@ -120,6 +120,9 @@
 - **未招待の第三者による勝手な利用・アクセス遮断ガード（オーナー本人 ＋ 招待済み家族のみ許可）**:
   - アプリを利用できるのは **①オーナー（最初に登録された患者本人、または既存の患者本人アカウント）** と、**②その患者本人が `family_permissions` テーブルに招待登録した家族（`family_user_id` または `LOWER(family_email)` が一致するユーザー）** のみに限定する。
   - DB層（`supabase/migrations/0001_initial_schema.sql` の `public.is_authorized_system_user`、`public.verify_user_authorization` RPC、`trg_enforce_invited_or_owner_signup` トリガー、および `can_view_patient_data` / `can_edit_patient_data`）とクライアント層（`src/lib/syncEngine.ts` の `verifyUserAccessWithCloud`）の二重ガードにより、招待されていない無関係な第三者が万が一サインアップ・ログインしようとしてもアクセス権限エラー（`このアカウントにはアクセス権限がありません。患者本人から招待されたメールアドレスでログインしてください。`）として即座に遮断・強制サインアウトさせる。
+- **パスワード複雑性要件（8文字以上 かつ 英大文字・英小文字・数字・記号の4種類すべて必須）**:
+  - 医療・健康データを保護するため、新規アカウント登録（`signUpWithEmail`）時は純粋関数 `validateStrongPassword(password)`（`src/lib/supabase.ts`）を用いて **①8文字以上 (`minLength`)、②英大文字 (`hasUpper`: `/[A-Z]/`)、③英小文字 (`hasLower`: `/[a-z]/`)、④数字 (`hasDigit`: `/[0-9]/`)、⑤記号 (`hasSymbol`: `/[^A-Za-z0-9\s]/`)** の5条件すべてを満たしていることを検証し、未達成の場合は Supabase API 呼び出し前に即座にエラーを返してブロックする（ログイン `signInWithEmail` 時も最低8文字チェックを行う）。
+  - 専用ログイン画面（`src/components/common/AuthGateScreen.tsx`）および設定画面（`src/components/settings/SettingsView.tsx`）の新規アカウント登録モード（`authMode === 'signup'`）では、パスワード入力欄のラベル・プレースホルダーに「8文字以上・大文字/小文字/数字/記号を含む」と明示し、5つの条件それぞれの達成状況をリアルタイムに視覚的フィードバック（チェックマーク）で表示するとともに、未達成時は登録送信を防止・警告表示する。
 - **Supabase Auth ログイン & 自動同期・ログアウト時のローカルキャッシュ完全消去**:
   - 初回オーナーログイン時には `verifyUserAccessWithCloud` でオーナー権限を確認した上で、`migrateAnonymousLocalDataToUser`（`src/lib/syncEngine.ts`）によって自身の `auth.uid()` へローカルデータを自動引き継ぎし、そのままクラウド（Supabase PostgreSQL 全7テーブル）と双方向同期を実行する。
   - ログイン中は現在のアカウントメールアドレス、権限バッジ（「患者本人」「家族（記録・編集可）」「家族（閲覧のみ）」）、最終同期時刻、および **「今すぐ同期」** ボタン（`syncNow`）を表示する。
