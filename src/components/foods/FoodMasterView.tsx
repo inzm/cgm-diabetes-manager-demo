@@ -8,6 +8,10 @@ import {
   pauseBackgroundHydration,
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
+import {
+  registerUiCacheInvalidator,
+  triggerBackgroundCloudSync,
+} from '@/lib/syncEngine';
 import { FoodCard } from './FoodCard';
 import { FoodEditModal } from './FoodEditModal';
 import { EventEditModal } from './EventEditModal';
@@ -49,6 +53,10 @@ export function invalidateFoodMasterMemoryCache(patientId?: string): void {
     foodMasterMemoryCache.clear();
   }
 }
+
+registerUiCacheInvalidator((patientId) => {
+  invalidateFoodMasterMemoryCache(patientId);
+});
 
 export function hasFoodMasterMemoryCache(patientId: string): boolean {
   return foodMasterMemoryCache.has(patientId);
@@ -302,7 +310,9 @@ export const FoodMasterView: React.FC = () => {
 
     setBulkCategoryId('');
     setSelectedIds(new Set());
+    invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
+    triggerBackgroundCloudSync(currentPatientId);
     loadData();
   };
 
@@ -328,7 +338,9 @@ export const FoodMasterView: React.FC = () => {
     }
 
     setSelectedIds(new Set());
+    invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
+    triggerBackgroundCloudSync(currentPatientId);
     loadData();
   };
 
@@ -356,7 +368,9 @@ export const FoodMasterView: React.FC = () => {
       next.delete(id);
       return next;
     });
+    invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
+    triggerBackgroundCloudSync(currentPatientId);
     loadData();
   };
 
@@ -383,7 +397,9 @@ export const FoodMasterView: React.FC = () => {
       next.delete(id);
       return next;
     });
+    invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
+    triggerBackgroundCloudSync(currentPatientId);
     loadData();
   };
 

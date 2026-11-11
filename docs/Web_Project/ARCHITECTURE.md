@@ -305,22 +305,24 @@ interface PatientContextType {
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ------------------------------------------------------------------------------
--- 1. 家族共有・権限管理テーブル
+-- 1. 家族共有・権限管理テーブル (src/types/database.ts / supabase/migrations/0001_initial_schema.sql)
 -- ------------------------------------------------------------------------------
 CREATE TABLE family_permissions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     patient_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    family_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    family_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    family_email VARCHAR(255),
     role VARCHAR(20) NOT NULL DEFAULT 'viewer' CHECK (role IN ('viewer', 'editor')),
     invited_at TIMESTAMPTZ DEFAULT NOW(),
     accepted_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT uq_patient_family UNIQUE (patient_id, family_user_id)
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE UNIQUE INDEX uq_patient_family_user ON family_permissions (patient_id, family_user_id) WHERE family_user_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_patient_family_email ON family_permissions (patient_id, LOWER(family_email)) WHERE family_email IS NOT NULL;
 CREATE INDEX idx_family_lookup ON family_permissions (family_user_id, patient_id);
 
 -- ------------------------------------------------------------------------------
--- 2. 権限判定用ヘルパー関数 (RLS用)
+-- 2. 権限判定用ヘルパー関数 (RLS用: family_user_id & family_email 双方に対応)
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION can_view_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
@@ -330,7 +332,13 @@ BEGIN
         OR EXISTS (
             SELECT 1 FROM family_permissions
             WHERE patient_id = target_patient_id
-              AND family_user_id = auth.uid()
+              AND (
+                  family_user_id = auth.uid()
+                  OR (
+                      family_email IS NOT NULL
+                      AND LOWER(family_email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+                  )
+              )
         )
     );
 END;
@@ -344,8 +352,14 @@ BEGIN
         OR EXISTS (
             SELECT 1 FROM family_permissions
             WHERE patient_id = target_patient_id
-              AND family_user_id = auth.uid()
               AND role = 'editor'
+              AND (
+                  family_user_id = auth.uid()
+                  OR (
+                      family_email IS NOT NULL
+                      AND LOWER(family_email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+                  )
+              )
         )
     );
 END;
@@ -549,3 +563,21 @@ END $$;
   - **デモ公開リポジトリ (`public-demo`: Public)**:
     - 過去コミット履歴および `legacy_vba/` 資産を除外したクリーンな孤立ブランチ `demo-public` を用い、`npm run pipeline:ship:demo`（`--target=demo`）により `VITE_APP_MODE=portfolio` でビルド・検証し、Public リポジトリ（`public-demo` の `main` ブランチ）への Push およびデモ公開用 Cloudflare Pages（`cgm-diabetes-manager-demo`）へのデプロイを実行します。
     - 本番開発中に生まれた共通UI改善・デザイン修正・バグ修正は、`git cherry-pick <commit-sha>` により `main` から `demo-public` へ選択的に移植することで、本番専用の非公開コードを一切露出させずにデモアプリへ反映します。
+
+---
+
+## 7. Local-First 双方向クラウド同期エンジン & BFF 実装仕様 (`src/lib/supabase.ts`, `src/lib/syncEngine.ts`, `functions/api/gemini.ts`)
+
+1. **Supabase クライアント初期化とクリーンなローカルフォールバック (`src/lib/supabase.ts`)**:
+   - `isPortfolioMode() === false` かつ環境変数 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` が設定されている場合のみ `@supabase/supabase-js` クライアントを初期化します。
+   - `portfolio` モード、環境変数未設定時、Vitest 単体テスト、および Playwright E2E テスト環境（`__CGM_E2E_FORCE_LOCAL_ONLY__` / `__CGM_E2E_ALLOW_CSV_IMPORT__`）では自動的にローカル専用モードへフォールバックし、オフライン単体動作およびE2E回帰テストの100%決定論的動作を保証します。
+2. **双方向クラウド同期エンジン (`src/lib/syncEngine.ts`)**:
+   - **7テーブル一括 Push & Pull**: `user_settings`, `categories`, `food_master`, `event_master`, `events`, `meal_details`, `libre_readings` の全7テーブルについて、ローカル（Dexie.js）とクラウド（Supabase PostgreSQL）の双方向同期を実行します。
+   - **24文字ウォールクロックISO時刻正規化（課題 #7 対応）**: Supabase (`TIMESTAMPTZ`) から Pull した `timestamp` および `event_datetime`（`+00:00` オフセット等）は、`normalizeToWallClockIso` により必ず24文字の `"YYYY-MM-DDTHH:mm:ss.000Z"` 形式へ正規化してからローカルDBへ格納し、複合インデックス `.between()` 検索の整合性を100%保証します。
+   - **1,000件単位のバッチチャンク処理 (`chunkArray`)**: `libre_readings` 等の大量レコードは 1,000件単位のチャンクに分割して `upsert` およびページネーション取得します。
+   - **異常値エピソードのクラウド再計算整合性（課題 #6 対応）**: 目標血糖閾値の変更時やCSV取込時には `replaceRemoteAnomalies: true` を指定し、Supabase 側の古い自動抽出エピソード（`低血糖` / `高血糖`）をクリーンアップした上で最新の異常値エピソードへ置き換えます。
+   - **未ログイン時ローカルデータの自動引き継ぎ (`migrateAnonymousLocalDataToUser`)**: 未ログイン状態（`DEFAULT_PATIENT_ID`）で記録されたローカルデータは、初回ログイン時に自動的に認証済み `auth.uid()` へマイグレーションされ、そのままクラウドへ同期されます。
+   - **家族共有権限の自動解決 & Realtime 同期 (`resolveUserAccessFromPermissions`, `subscribeToPatientRealtime`)**: `family_permissions` テーブルを `family_user_id = auth.uid()` または `LOWER(family_email) = LOWER(user.email)` で照会し、招待元の `patient_id` とロール（`viewer` は閲覧専用ロック `isReadOnly = true`、`editor` は代理記録可能）を解決します。初回ログイン時に `family_user_id` が未設定の場合は自身の `auth.uid()` と `accepted_at` を自動紐づけし、Realtime 購読および同期完了時に全4種メモリキャッシュを即時破棄してUIを更新します。
+3. **Cloudflare Pages Functions BFF (`functions/api/gemini.ts`)**:
+   - `POST /api/gemini` エンドポイント（`onRequestPost`）を提供し、サーバーサイド環境変数 `GEMINI_API_KEY` が設定されている場合は Google Gemini REST API を呼び出して糖質量推定結果（`{ carbs_g, confidence, note }`）を返却します。`GEMINI_API_KEY` 未設定時は HTTP 503 を返し、クライアント（`src/lib/gemini.ts`）の内蔵日本食品標準成分表辞書（`estimateCarbsLocally`）へシームレスにフォールバックします。
+

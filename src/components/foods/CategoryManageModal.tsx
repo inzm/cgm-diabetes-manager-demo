@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { invalidateAnalysisDatasetCache } from '@/lib/realGlucoseLoader';
 import { invalidateFoodMasterMemoryCache } from '@/components/foods/FoodMasterView';
 import { deterministicUuid, ensureUuid } from '@/lib/uuidUtils';
+import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { usePatient } from '@/contexts/PatientContext';
 import { X, Tag, Plus, Edit3, Trash2, Check } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
@@ -176,6 +177,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
     setNewCategoryName('');
     invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
+    triggerBackgroundCloudSync(currentPatientId);
     onChanged();
   };
 
@@ -217,6 +219,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
     setEditingName('');
     invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
+    triggerBackgroundCloudSync(currentPatientId);
     onChanged();
   };
 
@@ -285,6 +288,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
 
     invalidateFoodMasterMemoryCache(currentPatientId);
     invalidateAnalysisDatasetCache();
+    triggerBackgroundCloudSync(currentPatientId);
     onChanged();
   };
 

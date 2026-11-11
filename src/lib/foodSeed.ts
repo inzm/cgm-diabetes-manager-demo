@@ -597,23 +597,31 @@ export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
   }
 
   const task = (async () => {
-    const now = new Date().toISOString();
+    const now = '2020-01-01T00:00:00.000Z';
 
     await db.transaction('rw', db.categories, db.food_master, db.event_master, async () => {
       const existingCats = await db.categories.where('user_id').equals(patientId).toArray();
       const existingCatById = new Map(existingCats.map((c) => [c.id, c]));
+      const existingCatByKey = new Map(
+        existingCats.map((c) => [`${c.target_type}:${c.category_name}`, c])
+      );
 
       const existingFoods = await db.food_master.where('user_id').equals(patientId).toArray();
       const existingFoodById = new Map(existingFoods.map((f) => [f.id, f]));
+      const existingFoodByName = new Map(existingFoods.map((f) => [f.food_name, f]));
 
       const existingEvents = await db.event_master.where('user_id').equals(patientId).toArray();
       const existingEventById = new Map(existingEvents.map((e) => [e.id, e]));
+      const existingEventByName = new Map(existingEvents.map((e) => [e.event_name, e]));
 
       // 1. 標準カテゴリを決定論的UUIDで作成（既存の削除・編集状態は維持しつつ、is_protectedのみ最新仕様へ同期）
       const canonicalCategories: Category[] = INITIAL_CATEGORIES.map((def) => {
         const legacyId = `${patientId}_${def.key}`;
         const id = deterministicUuid(legacyId);
-        const prev = existingCatById.get(id) ?? existingCatById.get(legacyId);
+        const prev =
+          existingCatById.get(id) ??
+          existingCatById.get(legacyId) ??
+          existingCatByKey.get(`${def.target_type}:${def.category_name}`);
         if (prev) {
           return {
             ...prev,
@@ -679,7 +687,10 @@ export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
         const legacyId = `${patientId}_${def.key}`;
         const id = deterministicUuid(legacyId);
         const defaultCategoryId = deterministicUuid(`${patientId}_${def.categoryKey}`);
-        const prev = existingFoodById.get(id) ?? existingFoodById.get(legacyId);
+        const prev =
+          existingFoodById.get(id) ??
+          existingFoodById.get(legacyId) ??
+          existingFoodByName.get(def.food_name);
         if (prev) {
           const normalizedCatId = prev.category_id
             ? (catIdRemap.get(prev.category_id) ?? ensureUuid(prev.category_id, defaultCategoryId))
@@ -758,7 +769,10 @@ export async function seedFoodMasterIfEmpty(patientId: string): Promise<void> {
         const legacyId = `${patientId}_${def.key}`;
         const id = deterministicUuid(legacyId);
         const defaultCategoryId = deterministicUuid(`${patientId}_${def.categoryKey}`);
-        const prev = existingEventById.get(id) ?? existingEventById.get(legacyId);
+        const prev =
+          existingEventById.get(id) ??
+          existingEventById.get(legacyId) ??
+          existingEventByName.get(def.event_name);
         if (prev) {
           const normalizedCatId = prev.category_id
             ? (catIdRemap.get(prev.category_id) ?? ensureUuid(prev.category_id, defaultCategoryId))

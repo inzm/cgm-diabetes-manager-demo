@@ -47,6 +47,8 @@ export const ENDPOINTS_TO_CHECK = [
   '/src/components/settings/SettingsView.tsx',
   '/src/lib/uuidUtils.ts',
   '/src/lib/realGlucoseLoader.ts',
+  '/src/lib/supabase.ts',
+  '/src/lib/syncEngine.ts',
 ];
 
 const ERROR_PATTERNS = [

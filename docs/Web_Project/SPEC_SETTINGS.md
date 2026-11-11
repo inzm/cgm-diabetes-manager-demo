@@ -44,12 +44,13 @@
 │ │  [ 📥 バックアップを保存 ] [ 📤 バックアップから復元 ] [ 🗑️ 記録データを削除]│
 │ └─────────────────────────────────────────────────────────────────────────┘ │
 │                                                                             │
-│ 【4. 糖質の自動推定 & 家族見守り共有（実装予定）】                          │
+│ 【4. クラウド同期 & 家族見守り共有（本番クラウド接続時）】                  │
 │ ┌─────────────────────────────────────────────────────────────────────────┐ │
-│ │  ・糖質の自動推定: 食品名から自動で糖質量を計算します                    │ │
-│ │    [ 🔌 クラウドAI接続確認（未実装） ] (disabled)                        │ │
-│ │  ・家族見守り共有・クラウド同期（実装予定）                              │ │
-│ │    [ 🔗 招待リンクを発行（未実装） ] [ ☁️ クラウド同期を実行（未実装） ]  │ │
+│ │  ・クラウドアカウント・端末間同期:                                      │ │
+│ │    ログイン / 新規登録フォーム、またはログイン中アドレス＋[今すぐ同期]  │ │
+│ │  ・表示対象の切り替え（本人＋招待家族の場合）: [自分の記録] [家族の記録]│ │
+│ │  ・家族への共有・権限管理（患者本人のみ）:                              │ │
+│ │    家族メール入力＋権限選択（閲覧のみ / 記録・編集も可能）＋一覧・解除  │ │
 │ └─────────────────────────────────────────────────────────────────────────┘ │
 │                                                                             │
 │ 【5. 動作検証・アプリ追加】                                                 │
@@ -64,7 +65,7 @@
 
 ## 3. 機能要件 & データ仕様
 
-### 3.1 血糖値の目標範囲設定 & 食事区分別デフォルトインスリン設定 (`UserSettings` / `src/contexts/PatientContext.tsx` / `src/lib/anomalyExtractor.ts`)
+### 3.1 血糖値の目標範囲設定 & 食事区分別デフォルトインスリン設定 (`UserSettings` / `src/contexts/PatientContext.tsx` / `src/lib/anomalyExtractor.ts` / `src/lib/syncEngine.ts`)
 - **データエンティティ**: `db.user_settings`
   - `user_id`: UUID
   - `hypo_threshold`: number（デフォルト: 70.0 mg/dL）
@@ -84,17 +85,16 @@
   - 低血糖基準値: $54 \le \text{hypo} \le 90$
   - 高血糖基準値: $130 \le \text{hyper} \le 250$
   - 常に $\text{hypo} < \text{hyper}$ であること。
-- **保存時の自動再判定と即時反映**:
-  - 保存時に `PatientContext` の `updateClinicalThresholds(hypo, hyper)` を呼び出し、`reevaluatePatientAnomalyEvents`（`src/lib/anomalyExtractor.ts`）によって `db.libre_readings` から `db.events` の低血糖・高血糖エピソードを再抽出・更新する。またポートフォリオモードの初期起動時は `PatientContext` が初期値 `70` / `180` を即時適用して起動直後の IndexedDB 競合アクセスを回避する。なお、`PatientContext` には未使用の架空患者モック配列（`accessiblePatients`）を保持しない。
+- **保存時の自動再判定・即時反映・クラウド異常値同期（課題 #6 対応）**:
+  - 保存時に `PatientContext` の `updateClinicalThresholds(hypo, hyper)` を呼び出し、`reevaluatePatientAnomalyEvents`（`src/lib/anomalyExtractor.ts`）によって `db.libre_readings` から `db.events` の低血糖・高血糖エピソードを再抽出・更新する。またクラウド接続時には `triggerBackgroundCloudSync(currentPatientId, { replaceRemoteAnomalies: true })`（`src/lib/syncEngine.ts`）を実行し、Supabase 側の古い異常値エピソードも確実に更新する。
   - カレンダーのTIR%・平均血糖色分け・スパークライン目標帯・異常値ラベル、日次詳細24H推移グラフの目標緑帯（`DailyGlucoseChart.tsx`）、CSV取込時の基準値（`CsvImportModal.tsx`）、および分析画面（`AnalysisView.tsx` / `TimeAnomalyTab.tsx`）のすべてに即時反映される。
 
-### 3.2 糖質の自動推定 (`src/lib/gemini.ts` — 方式1: BFFプロキシ + 内蔵食品辞書)
+### 3.2 糖質の自動推定 (`src/lib/gemini.ts` / `functions/api/gemini.ts` — 方式1: BFFプロキシ + 内蔵食品辞書)
 - **フロントエンド秘密情報保持の禁止**:
   - ブラウザの `localStorage` にAPIキーを保存する機能および入力欄は一切設けない。
   - 「ローカルストレージに安全に保管されます」等の事実と異なるセキュリティ表示を厳禁とする。
 - **推定ロジックと優先順位**:
-  - クラウドBFFプロキシ（`/api/gemini`）が有効化（`VITE_ENABLE_GEMINI_BFF === 'true'`）されている場合はサーバー側プロキシ経由で推定し、未接続時やオフライン時は日本食品標準成分表に基づく内蔵食品辞書（`estimateCarbsLocally`）で即座に推定を行う。
-  - `estimateCarbsLocally` では初期登録食品（`INITIAL_FOODS`）の完全一致・複合食品一致を最優先で参照し、さらに複合語・派生語の優先順位（「焼きそば」＞「そば」、「カレーパン」＞「カレー」、「肉まん・豚まん・水ようかん・いちご大福」＞「肉・水・果物」、「水飴」＞「水」等）を厳密に制御する。
+  - クラウドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効化（`VITE_ENABLE_GEMINI_BFF === 'true'`）されている場合はサーバー側プロキシ経由で推定し、未接続時やオフライン時は日本食品標準成分表に基づく内蔵食品辞書（`estimateCarbsLocally`）で即座に推定を行う。
   - **デモアプリ（`isPortfolioMode()`）における非表示制御**: デモアプリでは設定画面の「糖質の自動推定」セクションおよび食事記録・食品登録モーダル内の糖質推定ボタンを非表示とする。
 
 ### 3.3 データのバックアップ・初期化 (`src/lib/db.ts`, `src/lib/uuidUtils.ts`) & デモ環境のデータ管理 (`src/lib/realGlucoseLoader.ts`, `src/components/common/DemoWelcomeModal.tsx`)
@@ -105,41 +105,48 @@
 - **保存データ件数の表示（通常モード・物理テーブル名の非表示化）**:
   - 血糖データ、食事・活動記録、食事明細、登録食品、登録活動、カテゴリの各件数をユーザー目線の名称で表示し、`(libre_readings)` 等の物理テーブル名は表示しない。
 - **バックアップの保存（JSONエクスポート）**:
-  - 全7テーブルをまとめたバックアップJSONを `Blob` + `URL.createObjectURL` 方式（大容量データでもブラウザのURI長制限を超過しない方式）でダウンロード保存。
+  - 全7テーブルをまとめたバックアップJSONを `Blob` + `URL.createObjectURL` 方式でダウンロード保存。
 - **バックアップからの復元（JSONインポート: `restorePatientBackupPayload`）**:
   - ファイル選択時に件数を確認するカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）を表示する。
   - 承認後、`markPatientManuallyCleared(currentPatientId)` および `cancelBackgroundHydration(currentPatientId)` を実行した上で、トランザクション内で **既存7テーブルの該当患者レコードをクリア（削除）してから** バックアップデータを復元（`bulkPut`）する。
   - 復元時には `src/lib/uuidUtils.ts` の `ensureUuid` を用いて、旧形式の非UUID文字列ID（`id`, `category_id`, `event_id`）が存在しても100%正規UUIDへ自動マイグレーション変換し、食品・活動・カテゴリが空のバックアップの場合は `seedFoodMasterIfEmpty(currentPatientId)` で初期プリセットを補完する。
-  - 続けて目標範囲およびデフォルトインスリン等のフォーム state を即時更新し、**全4種メモリキャッシュ（`invalidateFoodMasterMemoryCache`, `clearCalendarMonthlyCache`, `invalidateAnalysisDatasetCache`, `invalidateInMemoryRecentCache`）を一括破棄（`invalidateAllPatientMemoryCaches`）** する。
+  - 続けて目標範囲およびデフォルトインスリン等のフォーム state を即時更新し、**全4種メモリキャッシュ（`invalidateFoodMasterMemoryCache`, `clearCalendarMonthlyCache`, `invalidateAnalysisDatasetCache`, `invalidateInMemoryRecentCache`）を一括破棄（`invalidateAllPatientMemoryCaches`）** し、クラウド接続時は `triggerBackgroundCloudSync` でクラウドへ反映する。
 - **記録データを初期化（全削除: `resetPatientDataAndInvalidateCaches`）**:
-  - 共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認した上で、`markPatientManuallyCleared(currentPatientId)` および `cancelBackgroundHydration(currentPatientId)` によりバックグラウンド同期および同一セッション内でのデモ再ハイドレーションを完全抑止する。
-  - 血糖・食事・活動記録および設定をすべて消去してよく使う食品・活動・カテゴリの初期プリセット（`src/lib/foodSeed.ts`：決定論的UUID）のみを再シードし、**全4種メモリキャッシュ（`invalidateFoodMasterMemoryCache`, `clearCalendarMonthlyCache`, `invalidateAnalysisDatasetCache`, `invalidateInMemoryRecentCache`）を確実に破棄**したクリーンな初期状態に戻す（架空のデモデータは生成しない）。
+  - 共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認した上で、血糖・食事・活動記録および設定をすべて消去してよく使う食品・活動・カテゴリの初期プリセット（`src/lib/foodSeed.ts`：決定論的UUID）のみを再シードし、クラウド接続時は `clearRemotePatientData` と `syncPatientDataWithCloud` を実行して全4種メモリキャッシュを確実に破棄したクリーンな初期状態に戻す。
 
-### 3.4 家族見守り共有・クラウド同期（実装予定表示 & デモアプリでの非表示化）
-- 永続化やバックエンド連携を伴わない架空の家族メンバー一覧（ハリボテUI）は一切表示しない。
-- デモアプリ（`isPortfolioMode()`）では、未実装ボタンの露出を防ぐため本セクション自体を非表示とする。通常モードで表示する場合はコンテンツ領域に「家族見守り共有・クラウド同期機能を実装予定」と明記し、未実装機能を呼び出すボタンには必ずボタンテキストに `（未実装）` を含め、`disabled` 属性を付与する。
+### 3.4 クラウドアカウント認証・手動同期・家族見守り共有管理 (`src/lib/supabase.ts`, `src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`)
+- **本番クラウド構成時（`isCloudConfigured === true`）の認証 & 双方向同期**:
+  - メールアドレスとパスワードによるログイン・新規アカウント作成・ログアウトを提供する。
+  - 未ログイン時でも端末へのローカル記録が可能であり、初回ログイン時に `migrateAnonymousLocalDataToUser`（`src/lib/syncEngine.ts`）によって自身の `auth.uid()` へローカルデータを自動引き継ぎし、そのままクラウド（Supabase PostgreSQL 全7テーブル）と双方向同期を実行する。
+  - ログイン中は現在のアカウントメールアドレス、権限バッジ（「患者本人」「家族（記録・編集可）」「家族（閲覧のみ）」）、最終同期時刻、および **「今すぐ同期」** ボタン（`syncNow`）を表示する。
+- **家族共有・権限管理（`family_permissions` テーブル連携）**:
+  - 患者本人（`userRole === 'patient'`）でログインしている場合、家族のメールアドレスと権限（`viewer`: 閲覧のみ / `editor`: 記録・編集も可能）を登録・一覧表示・削除（確認ダイアログ付き）できる。
+  - 招待された家族がログインした際は、`resolveUserAccessFromPermissions`（`src/lib/syncEngine.ts`）により `family_user_id = auth.uid()` または `LOWER(family_email) = LOWER(user.email)` で招待レコードを照会し、初回ログイン時は `family_user_id` と `accepted_at` を自動更新（承認済みに遷移）する。
+  - 同時に監視対象患者（`currentPatientId`）を招待元の `patient_id` へ切り替え、`role === 'viewer'` の場合は `isReadOnly = true`（全画面で登録・編集・削除・CSV取込・設定変更をロック）、`role === 'editor'` の場合は代理記録・編集を可能とする。また自身の記録と招待された家族の記録の双方を持つ場合は、「表示対象の切り替え」セレクターで切り替え可能とする。
+- **ローカル単体構成時 & デモアプリでの制御**:
+  - デモアプリ（`isPortfolioMode()`）では本セクションを非表示とし、Supabase 環境変数が未設定のローカル単体構成時のみ `（未実装）` かつ `disabled` の案内表示へフォールバックする（架空人物のハリボテ一覧は一切表示しない）。
 
 ### 3.5 動作検証・アプリ追加（表示モード切替 & PWA追加・デモアプリでの非表示化）
-- デモアプリ（`isDemoCsvImportDisabled()`）では、認証なしでのクライアント側ロール切替トグルが採用担当者に擬似認可と誤解されるのを防ぐため、「動作検証・アプリ追加」セクションを非表示とする（E2E回帰テスト `E2E-6` 実行時のみテストフラグで有効化して閲覧専用ロックを検証）。
-- 通常モードでは表示モード切替（`patient` ⇄ `viewer`）および PWA ホーム画面追加ボタン（`usePwaInstallPrompt`）を提供する。
+- デモアプリ（`isDemoCsvImportDisabled()`）およびクラウド本番ログイン中（実アカウントの権限で動作中）は、クライアント側ロール切替トグルを非表示とする（未ログインのローカル検証時またはE2E回帰テスト `E2E-6` 実行時のみ表示）。
 - 見守り家族モード（`viewer` / `isReadOnly === true`）に切り替えた状態でも、再度「患者本人」へ戻せるよう、この切替ボタン自体は常に操作可能とする。
 
 ### 3.6 家族閲覧ロール（`isReadOnly === true`）の制約と1画面視認性
 - 家族アカウント（閲覧専用）でログインしている場合：
   - 目標値の保存、デフォルトインスリン設定の保存、バックアップからの復元、記録データ初期化ボタンをすべて非活性化（disabled）する。
-- デスクトップ（`1280x800`）表示時に、「血糖値の目標範囲・アラート設定」「食事記録のデフォルトインスリン設定」が下端で見切れることなく一目で把握できるよう、各カードの縦パディング（`p-3.5 sm:p-4 space-y-2.5 sm:space-y-3`）およびセクション間隔（`py-3 sm:py-3.5 space-y-3`）を最適化する。
+- デスクトップ（`1280x800`）表示時に、「血糖値の目標範囲・アラート設定」「食事記録のデフォルトインスリン設定」が下端で見切れることなく一目で把握できるよう、各カードの縦パディングおよびセクション間隔を最適化する。
 
 ---
 
 ## 4. 受け入れ基準 (Definition of Done: DoD)
 
 - [x] **DoD-1: 血糖値の目標範囲（低血糖/高血糖基準値）の保存・再判定・全画面連動**
-  - 数値入力とバリデーションが動作し、`db.user_settings` に保存されると同時に `db.events` の異常値イベントが再判定され、カレンダー・24Hグラフ・分析画面に即時反映されること。
+  - 数値入力とバリデーションが動作し、`db.user_settings` に保存されると同時に `db.events` の異常値イベントが再判定され、カレンダー・24Hグラフ・分析画面およびクラウドに即時反映されること。
 - [x] **DoD-2: 食事区分別デフォルトインスリン設定とトグルボタン連動**
   - 「デフォルト値を有効にする」トグルボタンと朝・昼・夕・間食ごとのデフォルトインスリン単位を `db.user_settings` に保存でき、食事記録モーダルに反映されること。
 - [x] **DoD-3: 開発者用語（マスタ、IndexedDB、物理テーブル名等）の排除と引き算のUI**
   - 画面内から物理テーブル名や開発者用語が排除され、重複ヘッダーカードのないスッキリした構成になっていること。
 - [x] **DoD-4: デモアプリにおけるページアクセス時＆再読み込み時の案内モーダル毎回表示・不要セクション非表示化・「デモ環境のデータ管理」手動リセット提供**
   - デモアプリ（`isDemoCsvImportDisabled()`）ではページアクセス時および再読み込み（リロード）時に毎回案内モーダル（`DemoWelcomeModal.tsx`：`デモ環境について`）が表示されて初期化の目印となり、設定画面では未実装ボタン・通常バックアップ初期化・クライアント側ロール切替セクションが非表示となり、「デモ環境のデータ管理」カードから端末への非保存明示とワンクリック初期状態リセットが行えること。
-- [x] **DoD-5: バックアップ保存・確認付きクリーン復元（UUIDマイグレーション付き）・クリーン初期化・全4種キャッシュ破棄 & 家族閲覧ロール（`isReadOnly`）での不可侵保護**
-  - バックアップの保存、既存テーブル消去＆UUID正規化を伴う確認ダイアログ付き復元、架空データなしのクリーン初期化、および全4種メモリキャッシュ破棄が正常に動作し、閲覧専用時に設定変更や復元・初期化がロックされること。
+- [x] **DoD-5: バックアップ保存・確認付きクリーン復元（UUIDマイグレーション付き）・クリーン初期化・全4種キャッシュ破棄 & クラウド認証・家族共有・双方向同期**
+  - バックアップの保存、既存テーブル消去＆UUID正規化を伴う確認ダイアログ付き復元、架空データなしのクリーン初期化、全4種メモリキャッシュ破棄、および本番クラウド環境でのログイン・手動同期・家族招待＆閲覧専用ロック（`isReadOnly`）が正常に動作すること。
+

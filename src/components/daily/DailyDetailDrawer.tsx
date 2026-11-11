@@ -11,6 +11,7 @@ import {
   pauseBackgroundHydration,
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
+import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import {
   X,
   ChevronLeft,
@@ -314,6 +315,7 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
       });
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache();
+      triggerBackgroundCloudSync(currentPatientId);
       if (onReloadData) onReloadData();
     } catch (err) {
       console.error('[DailyDetailDrawer] Delete failed:', err);

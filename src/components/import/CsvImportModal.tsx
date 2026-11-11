@@ -7,6 +7,7 @@ import {
   invalidateInMemoryRecentCache,
   isDemoCsvImportDisabled,
 } from '@/lib/realGlucoseLoader';
+import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { clearCalendarMonthlyCache } from '@/components/calendar/CalendarView';
 import {
   X,
@@ -164,6 +165,10 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           clearCalendarMonthlyCache();
           invalidateAnalysisDatasetCache();
           invalidateInMemoryRecentCache(currentPatientId);
+          triggerBackgroundCloudSync(currentPatientId, {
+            replaceRemoteAnomalies: true,
+            includeReadings: true,
+          });
 
           setCompleteStats(data.stats);
           setIsProcessing(false);

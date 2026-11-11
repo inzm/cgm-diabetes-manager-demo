@@ -874,7 +874,463 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       clearInMemoryDemoDatabase();
     });
   });
+
+  describe('12. 双方向クラウド同期エンジン (syncEngine) & 家族権限解決 & Gemini BFF 検証', () => {
+    it('normalizeToWallClockIso (課題 #7) が PostgreSQL TIMESTAMPTZ 文字列を 24文字 ISO へ正規化し、chunkArray が 1,000件単位で分割すること', async () => {
+      const { normalizeToWallClockIso, chunkArray } = await import('../syncEngine');
+
+      expect(normalizeToWallClockIso('2026-11-11T08:15:00+00:00')).toBe(
+        '2026-11-11T08:15:00.000Z'
+      );
+      expect(normalizeToWallClockIso('2026-11-11 19:30:45+00')).toBe(
+        '2026-11-11T19:30:45.000Z'
+      );
+      expect(normalizeToWallClockIso('2026-11-11T08:15:00.123456Z')).toBe(
+        '2026-11-11T08:15:00.000Z'
+      );
+      expect(normalizeToWallClockIso('2026-11-11T08:15')).toBe(
+        '2026-11-11T08:15:00.000Z'
+      );
+      expect(normalizeToWallClockIso('2026-11-11T08:15:00.000Z')).toHaveLength(24);
+
+      const items = Array.from({ length: 2500 }, (_, i) => i);
+      const chunks = chunkArray(items, 1000);
+      expect(chunks).toHaveLength(3);
+      expect(chunks[0]).toHaveLength(1000);
+      expect(chunks[1]).toHaveLength(1000);
+      expect(chunks[2]).toHaveLength(500);
+      expect(chunkArray([], 1000)).toEqual([]);
+    });
+
+    it('resolveUserAccessFromPermissions が患者本人・家族招待(viewer/editor)・メールアドレス大文字小文字無視・表示対象切替を正しく解決すること', async () => {
+      const { resolveUserAccessFromPermissions } = await import('../syncEngine');
+
+      const selfUid = '11111111-1111-4111-8111-111111111111';
+      const parentPatientUid = '22222222-2222-4222-8222-222222222222';
+
+      // 1. 招待がない場合は患者本人 (編集可)
+      const selfOnly = resolveUserAccessFromPermissions(selfUid, 'self@example.com', []);
+      expect(selfOnly.currentPatientId).toBe(selfUid);
+      expect(selfOnly.currentRole).toBe('patient');
+
+      // 2. family_email で viewer 招待されている場合 (大文字小文字混在でもマッチし、閲覧専用ロール)
+      const viewerInvite = resolveUserAccessFromPermissions(
+        selfUid,
+        'Family.Viewer@Example.com',
+        [
+          {
+            id: '33333333-3333-4333-8333-333333333333',
+            patient_id: parentPatientUid,
+            family_user_id: null,
+            family_email: 'family.viewer@example.com',
+            role: 'viewer',
+            invited_at: '2026-11-11T00:00:00.000Z',
+            accepted_at: null,
+            created_at: '2026-11-11T00:00:00.000Z',
+          },
+        ]
+      );
+      expect(viewerInvite.currentPatientId).toBe(parentPatientUid);
+      expect(viewerInvite.currentRole).toBe('viewer');
+      expect(viewerInvite.accessibleTargets).toHaveLength(2);
+
+      // 3. preferredPatientId で自分自身の記録へ切り替えた場合は patient (編集可) になること
+      const switchedToSelf = resolveUserAccessFromPermissions(
+        selfUid,
+        'Family.Viewer@Example.com',
+        [
+          {
+            id: '33333333-3333-4333-8333-333333333333',
+            patient_id: parentPatientUid,
+            family_user_id: selfUid,
+            family_email: 'family.viewer@example.com',
+            role: 'viewer',
+            invited_at: '2026-11-11T00:00:00.000Z',
+            accepted_at: '2026-11-11T01:00:00.000Z',
+            created_at: '2026-11-11T00:00:00.000Z',
+          },
+        ],
+        selfUid
+      );
+      expect(switchedToSelf.currentPatientId).toBe(selfUid);
+      expect(switchedToSelf.currentRole).toBe('patient');
+
+      // 4. editor 招待の場合は対象患者のデータに対して editor ロールとなること
+      const editorInvite = resolveUserAccessFromPermissions(
+        selfUid,
+        'editor@example.com',
+        [
+          {
+            id: '44444444-4444-4444-8444-444444444444',
+            patient_id: parentPatientUid,
+            family_user_id: selfUid,
+            family_email: 'editor@example.com',
+            role: 'editor',
+            invited_at: '2026-11-11T00:00:00.000Z',
+            accepted_at: '2026-11-11T01:00:00.000Z',
+            created_at: '2026-11-11T00:00:00.000Z',
+          },
+        ]
+      );
+      expect(editorInvite.currentPatientId).toBe(parentPatientUid);
+      expect(editorInvite.currentRole).toBe('editor');
+    });
+
+    it('migrateAnonymousLocalDataToUser が未ログイン時のローカル記録を認証済み auth.uid() へ欠損なく引き継ぐこと', async () => {
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { migrateAnonymousLocalDataToUser } = await import('../syncEngine');
+      const { deterministicUuid, isValidUuid } = await import('../uuidUtils');
+
+      clearInMemoryDemoDatabase();
+      const anonId = '00000000-0000-0000-0000-000000000001';
+      const targetUid = '55555555-5555-4555-8555-555555555555';
+
+      const anonMealId = deterministicUuid(`${anonId}_meal_local_1`);
+      await db.events.add({
+        id: anonMealId,
+        user_id: anonId,
+        event_datetime: '2026-11-10T12:30:00.000Z',
+        event_type: '食事',
+        timing_category: '昼食',
+        total_carbs: 48.0,
+        insulin_units: 5,
+        is_deleted: false,
+        created_at: '2026-11-10T12:30:00.000Z',
+        updated_at: '2026-11-10T12:30:00.000Z',
+      });
+      await db.meal_details.add({
+        id: deterministicUuid(`${anonId}_detail_local_1`),
+        user_id: anonId,
+        event_id: anonMealId,
+        food_name: 'かけそば',
+        amount: 1,
+        unit: '杯',
+        carbs: 48.0,
+        is_deleted: false,
+        created_at: '2026-11-10T12:30:00.000Z',
+        updated_at: '2026-11-10T12:30:00.000Z',
+      });
+      await db.libre_readings.add({
+        id: deterministicUuid(`${anonId}_2026-11-10T12:15:00.000Z`),
+        user_id: anonId,
+        timestamp: '2026-11-10T12:15:00.000Z',
+        glucose_value: 112,
+        scan_type: 'Historic',
+        created_at: '2026-11-10T12:15:00.000Z',
+      });
+
+      const { resetFoodSeedSession, seedFoodMasterIfEmpty } = await import('../foodSeed');
+
+      // 未ログイン状態で標準プリセットをシードし、「ごはん」の糖質量と「ウォーキング」の時間をカスタマイズ
+      resetFoodSeedSession(anonId);
+      resetFoodSeedSession(targetUid);
+      await seedFoodMasterIfEmpty(anonId);
+      const anonRice = (await db.food_master.where('user_id').equals(anonId).toArray()).find(
+        (f) => f.food_name === 'ごはん'
+      );
+      expect(anonRice).toBeDefined();
+      await db.food_master.update(anonRice!.id, {
+        carbs_per_unit: 62.5,
+        updated_at: '2026-11-10T12:00:00.000Z',
+      });
+
+      const anonWalking = (
+        await db.event_master.where('user_id').equals(anonId).toArray()
+      ).find((e) => e.event_name === 'ウォーキング');
+      expect(anonWalking).toBeDefined();
+      await db.event_master.update(anonWalking!.id, {
+        default_duration: 45,
+        updated_at: '2026-11-10T12:00:00.000Z',
+      });
+
+      const migratedAny = await migrateAnonymousLocalDataToUser(targetUid, anonId);
+      expect(migratedAny).toBe(true);
+
+      // ログイン直後に seedFoodMasterIfEmpty(targetUid) が呼ばれても、未ログイン時のカスタマイズ値が初期値で上書きされないこと
+      await seedFoodMasterIfEmpty(targetUid);
+
+      const migratedRice = (
+        await db.food_master.where('user_id').equals(targetUid).toArray()
+      ).find((f) => f.food_name === 'ごはん');
+      expect(migratedRice?.carbs_per_unit).toBe(62.5);
+
+      const migratedWalking = (
+        await db.event_master.where('user_id').equals(targetUid).toArray()
+      ).find((e) => e.event_name === 'ウォーキング');
+      expect(migratedWalking?.default_duration).toBe(45);
+
+      // 元の匿名IDのレコードは消去され、新しい targetUid に引き継がれていること
+      expect(await db.events.where('user_id').equals(anonId).count()).toBe(0);
+      const userEvents = await db.events.where('user_id').equals(targetUid).toArray();
+      const userDetails = await db.meal_details.where('user_id').equals(targetUid).toArray();
+      const userReadings = await db.libre_readings.where('user_id').equals(targetUid).toArray();
+
+      expect(userEvents).toHaveLength(1);
+      expect(userDetails).toHaveLength(1);
+      expect(userDetails[0].event_id).toBe(userEvents[0].id);
+      expect(userReadings).toHaveLength(1);
+      expect(isValidUuid(userReadings[0].id)).toBe(true);
+
+      clearInMemoryDemoDatabase();
+    });
+
+    it('syncPatientDataWithCloud が 7テーブル双方向同期・時刻24文字正規化(課題#7)・異常値置換(課題#6)・viewer時のPush抑止・差分同期シグネチャ一致を正しく実行すること', async () => {
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { syncPatientDataWithCloud, resetSyncSignaturesForPatient } = await import(
+        '../syncEngine'
+      );
+      const { deterministicUuid } = await import('../uuidUtils');
+      const { hasCalendarMonthlyCache, primeCalendarMonthlyCache } = await import(
+        '@/components/calendar/CalendarView'
+      );
+
+      clearInMemoryDemoDatabase();
+      const syncUserId = '66666666-6666-4666-8666-666666666666';
+      resetSyncSignaturesForPatient(syncUserId);
+      primeCalendarMonthlyCache(syncUserId, '2026-11-11');
+      expect(hasCalendarMonthlyCache()).toBe(true);
+
+      // ローカルに新しい食事イベントと再計算後の高血糖イベントを保存
+      const localMealId = deterministicUuid(`${syncUserId}_meal_sync_1`);
+      const localHyperId = deterministicUuid(
+        `${syncUserId}_anomaly_高血糖_2026-11-11T14:00:00.000Z`
+      );
+      await db.events.bulkPut([
+        {
+          id: localMealId,
+          user_id: syncUserId,
+          event_datetime: '2026-11-11T12:00:00.000Z',
+          event_type: '食事',
+          timing_category: '昼食',
+          total_carbs: 65.0,
+          insulin_units: 7,
+          is_deleted: false,
+          created_at: '2026-11-11T12:00:00.000Z',
+          updated_at: '2026-11-11T12:05:00.000Z',
+        },
+        {
+          id: localHyperId,
+          user_id: syncUserId,
+          event_datetime: '2026-11-11T14:00:00.000Z',
+          event_type: '高血糖',
+          memo: '最高 210 mg/dL (継続 45分間)',
+          is_deleted: false,
+          created_at: '2026-11-11T14:00:00.000Z',
+          updated_at: '2026-11-11T14:00:00.000Z',
+        },
+      ]);
+
+      // リモートモックストア (TIMESTAMPTZ "+00:00" 形式の測定値複数件と、閾値変更前の古い異常値イベントを保持)
+      const staleRemoteAnomalyId = deterministicUuid(
+        `${syncUserId}_anomaly_高血糖_2026-11-11T10:00:00.000Z`
+      );
+      const remoteStore: Record<string, Array<Record<string, unknown>>> = {
+        user_settings: [],
+        categories: [],
+        food_master: [],
+        event_master: [],
+        events: [
+          {
+            id: staleRemoteAnomalyId,
+            user_id: syncUserId,
+            event_datetime: '2026-11-11T10:00:00+00:00',
+            event_type: '高血糖',
+            memo: '旧閾値での高血糖エピソード',
+            is_deleted: false,
+            created_at: '2026-11-11T10:00:00+00:00',
+            updated_at: '2026-11-11T10:00:00+00:00',
+          },
+        ],
+        meal_details: [],
+        libre_readings: [
+          {
+            id: deterministicUuid(`${syncUserId}_2026-11-11T11:55:00.000Z`),
+            user_id: syncUserId,
+            timestamp: '2026-11-11T11:55:00+00:00', // 課題 #7: +00:00 オフセット形式 (食前血糖値用)
+            glucose_value: 105,
+            scan_type: 'Historic',
+            created_at: '2026-11-11T11:55:00+00:00',
+          },
+          {
+            id: deterministicUuid(`${syncUserId}_2026-11-11T13:15:00.000Z`),
+            user_id: syncUserId,
+            timestamp: '2026-11-11T13:15:00+00:00', // 食後ピーク血糖値用
+            glucose_value: 168,
+            scan_type: 'Historic',
+            created_at: '2026-11-11T13:15:00+00:00',
+          },
+        ],
+      };
+
+      let upsertCallCount = 0;
+      let libreSelectCallCount = 0;
+      const mockClient = {
+        from(table: string) {
+          return {
+            select() {
+              if (table === 'libre_readings') {
+                libreSelectCallCount++;
+              }
+              const tableRows = () => [...(remoteStore[table] || [])];
+              return {
+                eq(_col: string, val: unknown) {
+                  const filtered = tableRows().filter((r) => r.user_id === val);
+                  return {
+                    then(
+                      resolve: (res: {
+                        data: Array<Record<string, unknown>>;
+                        error: null;
+                      }) => unknown
+                    ) {
+                      return Promise.resolve({ data: filtered, error: null }).then(resolve);
+                    },
+                    maybeSingle: async () => ({
+                      data: filtered[0] ?? null,
+                      error: null,
+                    }),
+                    order() {
+                      return {
+                        range: async (fromIdx: number, toIdx: number) => ({
+                          data: filtered.slice(fromIdx, toIdx + 1),
+                          error: null,
+                        }),
+                      };
+                    },
+                  };
+                },
+              };
+            },
+            async upsert(payload: Record<string, unknown> | Array<Record<string, unknown>>) {
+              upsertCallCount++;
+              const rows = Array.isArray(payload) ? payload : [payload];
+              const list = remoteStore[table] || [];
+              const pk = table === 'user_settings' ? 'user_id' : 'id';
+              for (const row of rows) {
+                const idx = list.findIndex((existing) => existing[pk] === row[pk]);
+                if (idx >= 0) {
+                  list[idx] = { ...list[idx], ...row };
+                } else {
+                  list.push({ ...row });
+                }
+              }
+              remoteStore[table] = list;
+              return { error: null };
+            },
+            delete() {
+              return {
+                async in(inCol: string, values: string[]) {
+                  remoteStore[table] = (remoteStore[table] || []).filter(
+                    (r) => !values.includes(String(r[inCol]))
+                  );
+                  return { error: null };
+                },
+                eq(_col: string, val: unknown) {
+                  return {
+                    in: async (_inCol: string, types: string[]) => {
+                      remoteStore[table] = (remoteStore[table] || []).filter(
+                        (r) => !(r.user_id === val && types.includes(String(r.event_type)))
+                      );
+                      return { error: null };
+                    },
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+
+      // 1. replaceRemoteAnomalies: true で双方向同期を実行
+      const syncResult = await syncPatientDataWithCloud(syncUserId, {
+        canEdit: true,
+        replaceRemoteAnomalies: true,
+        includeReadings: true,
+        clientOverride: mockClient as unknown as NonNullable<
+          Parameters<typeof syncPatientDataWithCloud>[1]
+        >['clientOverride'],
+      });
+
+      expect(syncResult.status).toBe('success');
+      expect(upsertCallCount).toBeGreaterThan(0);
+      expect(libreSelectCallCount).toBe(1);
+      expect(hasCalendarMonthlyCache()).toBe(false);
+
+      // 課題 #6: リモートの古い異常値エピソードが削除され、新しい異常値と食事がリモートへPushされていること
+      expect(
+        remoteStore.events.some((e) => e.id === staleRemoteAnomalyId)
+      ).toBe(false);
+      expect(remoteStore.events.some((e) => e.id === localMealId)).toBe(true);
+      expect(remoteStore.events.some((e) => e.id === localHyperId)).toBe(true);
+
+      // 課題 #7: リモートの "+00:00" 測定値がローカルDBに 24文字 ".000Z" 形式で保存され、.between() 検索でヒットすること
+      const pulledReadings = await db.libre_readings
+        .where('[user_id+timestamp]')
+        .between(
+          [syncUserId, '2026-11-11T00:00:00.000Z'],
+          [syncUserId, '2026-11-11T23:59:59.999Z'],
+          true,
+          true
+        )
+        .toArray();
+      expect(pulledReadings).toHaveLength(2);
+      expect(pulledReadings[0].timestamp).toBe('2026-11-11T11:55:00.000Z');
+      expect(pulledReadings[0].timestamp).toHaveLength(24);
+
+      // Pullされた測定値に基づき、ローカル食事イベントの食前・食後血糖値が自動紐づけされていること
+      const updatedMeal = await db.events.get(localMealId);
+      expect(updatedMeal?.pre_meal_glucose).toBe(105);
+      expect(updatedMeal?.post_meal_glucose).toBe(168);
+
+      // 2. 次回の差分同期（includeReadings未指定）では、libre_readings に変化がないため再取得がスキップされること
+      await syncPatientDataWithCloud(syncUserId, {
+        canEdit: true,
+        clientOverride: mockClient as unknown as NonNullable<
+          Parameters<typeof syncPatientDataWithCloud>[1]
+        >['clientOverride'],
+      });
+      expect(libreSelectCallCount).toBe(1);
+
+      // 3. canEdit: false (家族閲覧モード) の場合は Push (upsert) を一切行わず Pull のみ行うこと
+      const prevUpsertCount = upsertCallCount;
+      await syncPatientDataWithCloud(syncUserId, {
+        canEdit: false,
+        clientOverride: mockClient as unknown as NonNullable<
+          Parameters<typeof syncPatientDataWithCloud>[1]
+        >['clientOverride'],
+      });
+      expect(upsertCallCount).toBe(prevUpsertCount);
+
+      clearInMemoryDemoDatabase();
+    });
+
+    it('Cloudflare Pages Functions BFF (/api/gemini) が GEMINI_API_KEY 未設定時に HTTP 503 を返し、設定時は糖質推定JSONを返すこと', async () => {
+      const { onRequestPost } = await import('../../../functions/api/gemini');
+
+      // 1. GEMINI_API_KEY 未設定時は 503 を返すこと
+      const resNoKey = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ foodName: 'カレーライス', amount: 1, unit: '皿' }),
+        }),
+        env: {},
+      });
+      expect(resNoKey.status).toBe(503);
+
+      // 2. 不正なリクエストボディ時は 400 を返すこと
+      const resBadBody = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ foodName: '', amount: 1, unit: '皿' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-test-key' },
+      });
+      expect(resBadBody.status).toBe(400);
+    });
+  });
 });
+
 
 
 

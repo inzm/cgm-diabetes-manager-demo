@@ -200,10 +200,11 @@
 - **異常値エピソード抽出の単一真実源化 (`src/lib/anomalyExtractor.ts`)**:
   - CSV取込（`src/workers/csvParser.worker.ts`）および設定閾値変更時の再判定はすべて `extractAnomalyEventsFromReadings` を使用して `db.events` に正規UUID（`deterministicUuid`）の `低血糖`・`高血糖` イベントを生成する。
   - `aggregateMonthlyData`（`src/lib/aggregates.ts`）における各日の `hypoCount` / `hyperCount` は、その日の `低血糖`・`高血糖` イベント件数を集計するため、カレンダーセル・選択日サマリー・日次詳細ドロワー・分析画面で件数が100%一致する。
-- **オンメモリ月別集計キャッシュ (`monthlyCacheMap`) & 複合インデックス局所取得 (`src/lib/db.ts`, `src/lib/echartsCore.ts`)**:
-  - カレンダー表示時は全件取得（`toArray()`）を行わず、`db.libre_readings.where('[user_id+timestamp]').between(...)` および `db.events.where('[user_id+event_datetime]').between(...)` で42日グリッド範囲のみをピンポイント取得する。
-  - `${patientId}:${year}-${month}:${hypoThreshold}-${hyperThreshold}` をキーとして保持し、設定画面で目標閾値が変更された場合やバックアップ復元・データ初期化が実行された場合も `clearCalendarMonthlyCache()` によりキャッシュを確実に破棄して再集計する。
-  - 日次詳細ドロワー（`DailyDetailDrawer.tsx`）および24時間血糖チャート（`DailyGlucoseChart.tsx`, `src/lib/echartsCore.ts`）は `React.lazy()` で初回オープン時に遅延ロードする。
+- **オンメモリ月別集計キャッシュ (`monthlyCacheMap`) & 複合インデックス局所取得 & クラウド同期連動 (`src/lib/db.ts`, `src/lib/echartsCore.ts`, `src/lib/syncEngine.ts`, `src/components/common/Header.tsx`)**:
+  - カレンダー表示時は全件取得（`toArray()`）を行わず、`db.libre_readings.where('[user_id+timestamp]').between(...)` および `db.events.where('[user_id+event_datetime]').between(...)` で42日グリッド範囲のみをピンポイント取得する。Supabase から Pull された日時は `normalizeToWallClockIso`（`src/lib/syncEngine.ts`）により 24文字 ISO（`"YYYY-MM-DDTHH:mm:ss.000Z"`）へ正規化されるため `.between()` 検索が100%一致する。
+  - `${patientId}:${year}-${month}:${hypoThreshold}-${hyperThreshold}` をキーとして保持し、設定画面で目標閾値が変更された場合、バックアップ復元・データ初期化が実行された場合、またはクラウド双方向同期・Realtime受信時（`registerUiCacheInvalidator` 経由）に `clearCalendarMonthlyCache()` によりキャッシュを確実に破棄して再集計する。
+  - 本番クラウド構成時（`isCloudConfigured === true`）は、共通ヘッダー（`src/components/common/Header.tsx`）の右上にクラウド同期・ログイン状態ボタンを表示し、ログイン中はワンタップで手動同期（`syncNow`）、未ログイン時は設定画面のクラウドアカウント欄へ移動できるようにする。
+  - 日次詳細ドロワー（`DailyDetailDrawer.tsx`）でのイベント削除時も `triggerBackgroundCloudSync` を実行し、24時間血糖チャート（`DailyGlucoseChart.tsx`, `src/lib/echartsCore.ts`）は `React.lazy()` で初回オープン時に遅延ロードする。
 - **デスクトップ1画面（`1280x800`）完結レイアウト・空セルノイズ排除・24Hチャート即時描画**:
   - デスクトップ表示時（`1280x800`）において、6週分のカレンダーセル（`sm:min-h-[88px] lg:min-h-[92px]`）と下部の凡例バー（`【凡例】`）が縦スクロールによる見切れなしに1画面内へ収まるよう余白を最適化する。
   - 記録が1件もない空の日付セルでは `--` プレースホルダーの3段重ね表示を行わず、余白を活かしたクリーンなセル表示とする。モバイル選択日サマリーバーの平均血糖単位は医学的に正確な `mg/dL` と表記する。

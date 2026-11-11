@@ -17,6 +17,7 @@ import {
   isPatientManuallyCleared,
   isPortfolioMode,
 } from '@/lib/realGlucoseLoader';
+import { registerUiCacheInvalidator } from '@/lib/syncEngine';
 import { SelectedDaySummary } from './SelectedDaySummary';
 import { CalendarGrid } from './CalendarGrid';
 import { LibreReading, HealthEvent } from '@/types/database';
@@ -56,6 +57,10 @@ export function clearCalendarMonthlyCache(): void {
   latestDateCacheMap.clear();
   hasAutoJumpedPatients.clear();
 }
+
+registerUiCacheInvalidator(() => {
+  clearCalendarMonthlyCache();
+});
 
 export function hasCalendarMonthlyCache(): boolean {
   return monthlyCacheMap.size > 0 || latestDateCacheMap.size > 0;

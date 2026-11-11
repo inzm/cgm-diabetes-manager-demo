@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { FoodMaster, Category } from '@/types/database';
 import { estimateCarbsWithGemini } from '@/lib/gemini';
 import { invalidateAnalysisDatasetCache, isPortfolioMode } from '@/lib/realGlucoseLoader';
+import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { X, Sparkles, Loader2, Check, AlertCircle, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
@@ -179,6 +180,7 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
     try {
       await db.food_master.put(record);
       invalidateAnalysisDatasetCache();
+      triggerBackgroundCloudSync(currentPatientId);
       onSaveSuccess();
       onClose();
     } catch (err: any) {

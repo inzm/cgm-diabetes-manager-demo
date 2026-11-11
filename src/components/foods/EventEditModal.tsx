@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { EventMaster, Category } from '@/types/database';
 import { db } from '@/lib/db';
 import { invalidateAnalysisDatasetCache } from '@/lib/realGlucoseLoader';
+import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { usePatient } from '@/contexts/PatientContext';
 import { X, Footprints, Check, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -148,6 +149,7 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
       }
 
       invalidateAnalysisDatasetCache();
+      triggerBackgroundCloudSync(currentPatientId);
       onSaved();
       onClose();
     } catch (err) {

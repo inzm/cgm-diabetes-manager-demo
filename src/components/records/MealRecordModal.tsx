@@ -16,6 +16,7 @@ import {
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
 import { bindMealGlucoseFromReadings } from '@/lib/anomalyExtractor';
+import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { estimateCarbsWithGemini } from '@/lib/gemini';
 import {
   buildWallClockIso,
@@ -645,6 +646,7 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
       // 既に取り込み済みの血糖データがある日の場合は、食前・食後ピーク血糖値を自動反映
       await bindMealGlucoseFromReadings(currentPatientId, targetMealId);
       invalidateInMemoryRecentCache(currentPatientId);
+      triggerBackgroundCloudSync(currentPatientId);
 
       onSuccess();
       onClose();
@@ -675,6 +677,7 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
       });
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache();
+      triggerBackgroundCloudSync(currentPatientId);
       onSuccess();
       onClose();
     } catch (err: any) {

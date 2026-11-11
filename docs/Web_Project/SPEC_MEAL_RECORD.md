@@ -123,11 +123,11 @@
   - 食事を記録する時点では当日のCGM履歴データ（CSV）はまだ取り込まれていないのが一般的な運用であるため、食事記録モーダルの保存時には `libre_readings` の検索・バインドを行わない。
   - 代わりに、後日リブレCSV履歴データを取り込んだ時点（[`SPEC_CSV_IMPORT.md`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/docs/Web_Project/SPEC_CSV_IMPORT.md) / `src/lib/anomalyExtractor.ts` の `bindMealGlucoseFromReadings`）および分析計算時に、履歴データから食前血糖値（`pre_meal_glucose`）と食後ピーク血糖値（`post_meal_glucose`）を自動バインドする。
 
-### 3.5 データ永続化 (IndexedDB トランザクション & カスケード論理削除)
+### 3.5 データ永続化 (IndexedDB トランザクション & カスケード論理削除 & クラウド同期)
 1. **新規作成 / 編集更新**:
-   - `events` および `meal_details` を Dexie トランザクション内で原子的に保存。
+   - `events` および `meal_details` を Dexie トランザクション内で原子的に保存し、クラウド接続時は `triggerBackgroundCloudSync(currentPatientId)`（`src/lib/syncEngine.ts`）を実行して即時同期する。
 2. **削除（カスケード論理削除）**:
-   - `events.is_deleted = true` に更新し、紐づく `meal_details` の全レコードも連動して `is_deleted = true` に更新する。
+   - `events.is_deleted = true` に更新し、紐づく `meal_details` の全レコードも連動して `is_deleted = true` に更新した上で、`triggerBackgroundCloudSync(currentPatientId)` によりクラウド側へ論理削除を同期する。
 
 ### 3.6 ロール制約（家族閲覧ロール）・デモアプリ制御 & モーダル開閉アニメーション
 - `isReadOnly === true`（家族アカウント・閲覧専用）の場合：

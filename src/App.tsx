@@ -16,6 +16,7 @@ import {
 } from '@/lib/realGlucoseLoader';
 import { CalendarView, clearCalendarMonthlyCache } from '@/components/calendar/CalendarView';
 import { BottomNav, NAV_TAB_ORDER, NavTabType } from '@/components/common/BottomNav';
+import { registerUiCacheInvalidator } from '@/lib/syncEngine';
 import {
   Calendar,
   FolderKanban,
@@ -25,6 +26,10 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+registerUiCacheInvalidator(() => {
+  clearCalendarMonthlyCache();
+});
 
 // 初期表示（カレンダー画面）以外のサブビュー・モーダルを遅延読み込み (Code Splitting)
 const FoodMasterView = lazy(() =>
@@ -116,6 +121,16 @@ export const App: React.FC = () => {
   const handleCloseWelcomeModal = () => {
     setIsWelcomeModalOpen(false);
   };
+
+  // クラウド同期完了時に画面を自動再描画
+  useEffect(() => {
+    const handleCloudSynced = () => {
+      clearCalendarMonthlyCache();
+      setRefreshKey((k) => k + 1);
+    };
+    window.addEventListener('cgm-cloud-sync-updated', handleCloudSynced);
+    return () => window.removeEventListener('cgm-cloud-sync-updated', handleCloudSynced);
+  }, []);
 
   useEffect(() => {
     const handlePageShow = (e: PageTransitionEvent) => {
@@ -300,6 +315,7 @@ export const App: React.FC = () => {
       {/* 1. ブランドヘッダー & カレンダー年月操作バー */}
       <Header
         activeTab={activeTab}
+        onNavigateToSettings={() => setActiveTab('settings')}
         calendarControls={
           activeTab === 'calendar'
             ? {

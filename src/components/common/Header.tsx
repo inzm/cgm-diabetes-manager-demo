@@ -10,6 +10,8 @@ import {
   FolderKanban,
   BarChart3,
   Settings,
+  Cloud,
+  LogIn,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -26,10 +28,15 @@ export interface CalendarHeaderControls {
 interface HeaderProps {
   activeTab?: string;
   calendarControls?: CalendarHeaderControls;
+  onNavigateToSettings?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeTab = 'calendar', calendarControls }) => {
-  const { isReadOnly } = usePatient();
+export const Header: React.FC<HeaderProps> = ({
+  activeTab = 'calendar',
+  calendarControls,
+  onNavigateToSettings,
+}) => {
+  const { isReadOnly, isCloudEnabled, authUser, isSyncing } = usePatient();
   const isOnline = useOnlineStatus();
   const [isSpinning, setIsSpinning] = useState(false);
 
@@ -151,6 +158,44 @@ export const Header: React.FC<HeaderProps> = ({ activeTab = 'calendar', calendar
               <span>{currentTabBadge.label}</span>
             </div>
           ) : null}
+
+          {/* 本番クラウド有効時: ログイン・同期ステータスバッジ */}
+          {isCloudEnabled && onNavigateToSettings && (
+            <button
+              type="button"
+              onClick={onNavigateToSettings}
+              className={cn(
+                'inline-flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full border text-[11px] sm:text-xs font-bold transition-colors cursor-pointer whitespace-nowrap',
+                authUser
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100'
+              )}
+              title={
+                authUser
+                  ? `クラウド同期中 (${authUser.email ?? ''})`
+                  : 'ログインしてクラウド同期を利用する'
+              }
+            >
+              {authUser ? (
+                <>
+                  <Cloud
+                    className={cn(
+                      'h-3 w-3 text-emerald-600 shrink-0',
+                      isSyncing && 'animate-pulse'
+                    )}
+                  />
+                  <span className="hidden md:inline">
+                    {isSyncing ? '同期中' : 'クラウド同期'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="h-3 w-3 text-sky-600 shrink-0" />
+                  <span className="hidden md:inline">ログイン</span>
+                </>
+              )}
+            </button>
+          )}
 
           {/* オフライン警告 (ネットワーク切断時のみ) */}
           {!isOnline && (

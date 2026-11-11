@@ -182,6 +182,26 @@ export const SOURCE_TO_SPEC_RULES = [
     specs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_CALENDAR.md', 'docs/Web_Project/SPEC_ANALYSIS.md'],
     description: 'ECharts ツリーシェイク済み軽量コアモジュール',
   },
+  {
+    prefix: 'src/lib/supabase.ts',
+    specs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_SETTINGS.md'],
+    description: 'Supabase クライアント初期化・ローカルフォールバック管理',
+  },
+  {
+    prefix: 'src/lib/syncEngine.ts',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/SPEC_CALENDAR.md',
+      'docs/Web_Project/TEST_PLAN.md',
+    ],
+    description: 'Local-First 双方向クラウド同期エンジン & 家族権限解決',
+  },
+  {
+    prefix: 'functions/api/gemini.ts',
+    specs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_FOOD_MASTER.md', 'docs/Web_Project/SPEC_SETTINGS.md'],
+    description: 'Cloudflare Pages Functions BFF (/api/gemini)',
+  },
 ];
 
 function walkFiles(dir, extFilter = null) {

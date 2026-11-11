@@ -70,10 +70,10 @@
 
 ---
 
-## 3. 糖質量自動推定プロトコル (`src/lib/gemini.ts` — 方式1)
+## 3. 糖質量自動推定プロトコル (`src/lib/gemini.ts`, `functions/api/gemini.ts` — 方式1)
 
 - 食品名、分量、単位から日本食品標準成分表に基づいて糖質量（`carbs_g`）を自動推定します。
-- セキュリティ保護のため、フロントエンド（`localStorage`）にはAPIキーを一切保持せず、サーバーサイドBFFプロキシ（`/api/gemini`）が有効な場合はプロキシ経由、未接続時やオフライン時は内蔵の日本食品標準成分表辞書（`estimateCarbsLocally`）で安全かつ即座に推定値を返します。
+- セキュリティ保護のため、フロントエンド（`localStorage`）にはAPIキーを一切保持せず、サーバーサイドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効な場合はプロキシ経由、未接続時やオフライン時は内蔵の日本食品標準成分表辞書（`estimateCarbsLocally`）で安全かつ即座に推定値を返します。
 
 ---
 
@@ -83,9 +83,9 @@
 
 ---
 
-## 5. 初期デフォルトデータと重複排除・栄養素理論値 (`src/lib/foodSeed.ts`, `src/lib/uuidUtils.ts`)
+## 5. 初期デフォルトデータと重複排除・栄養素理論値・クラウド同期連動 (`src/lib/foodSeed.ts`, `src/lib/uuidUtils.ts`, `src/lib/syncEngine.ts`)
 
-初回起動時、以下の初期データを決定論的UUID（`src/lib/uuidUtils.ts` の `deterministicUuid(`${patientId}_${def.key}`)`、フォーマット `xxxxxxxx-xxxx-5xxx-8xxx-xxxxxxxxxxxx`）、シングルトン排他制御（`activeSeedPromises`）、およびセッション内メモリキャッシュ（`seededPatientsInSession`）により重複ゼロ・2回目以降 1ms 未満でシードし、既存DBに旧形式の文字列IDや重複レコードが存在する場合も自動統合・正規UUIDマイグレーションします：
+初回起動時、以下の初期データを決定論的UUID（`src/lib/uuidUtils.ts` の `deterministicUuid(`${patientId}_${def.key}`)`、フォーマット `xxxxxxxx-xxxx-5xxx-8xxx-xxxxxxxxxxxx`）、シングルトン排他制御（`activeSeedPromises`）、およびセッション内メモリキャッシュ（`seededPatientsInSession`）により重複ゼロ・2回目以降 1ms 未満でシードし、既存DBに旧形式の文字列IDや重複レコードが存在する場合も自動統合・正規UUIDマイグレーションします（未編集の初期シード時刻は `'2020-01-01T00:00:00.000Z'` とし、2台目の端末で新規起動した際にクラウド上のカスタマイズ済み食品・カテゴリを上書きしないように保護します）：
 - **食品カテゴリ**: 主食、主菜、副菜、間食・デザート、飲料、調味料・その他（すべて `is_protected: false` で削除・再編可能）、および受け皿用の **未分類（`is_protected: true` で削除不可）**
 - **代表的食品（日本食品標準成分表および `src/lib/gemini.ts` 内蔵辞書に完全準拠した理論値）**:
   - 主食: ごはん(茶碗1杯150g=55.2g)、食パン6枚切り(1枚60g=26.6g)、ロールパン(2個60g=28.0g)、ゆでうどん(1玉250g=52.0g)、かけそば(1杯260g=48.0g)、中華麺・ラーメン(1玉230g=65.0g)、スパゲッティ・パスタ(1人前250g=70.0g)、ビーフカレーライス(1皿350g=85.0g)、天丼(1杯380g=115.0g)、握り寿司10貫(1人前320g=78.0g)、おにぎり(1個110g=38.0g)
@@ -96,8 +96,8 @@
   - 調味料・その他: 砂糖(大さじ1=9.0g)、はちみつ(大さじ1=17.0g)、ブドウ糖補食(1包10g=10.0g)
 - **活動カテゴリ**: 運動、生活・入浴、体調・補食、インスリン（すべて `is_protected: false` で削除・再編可能）、および受け皿用の **未分類（`is_protected: true` で削除不可）**
 - **代表的活動**: ウォーキング(30分)、軽い運動・ストレッチ(20分)、ジョギング(20分)、筋力トレーニング(30分)、入浴(20分)、持効型インスリン投与(就寝前)、ブドウ糖補食(10g)
-- **オンメモリ即時キャッシュ・外部更新時キャッシュ無効化 & モバイル基準量全表示**:
-  - `FoodMasterView.tsx` に患者単位のオンメモリキャッシュ（`foodMasterMemoryCache`）を保持し、タブ切り替え時に `よく使う食品 (0)` や `該当する食品がありません` が一瞬ちらつく現象（Empty-State Flash）を防止する。さらに `invalidateFoodMasterMemoryCache` 関数をエクスポートし、設定画面（`SettingsView.tsx`）でのバックアップ復元やデータ初期化時、およびカテゴリ追加・編集・削除時（`CategoryManageModal.tsx`）にキャッシュを即時クリアして古いデータの瞬間表示を防止する。
+- **オンメモリ即時キャッシュ・外部更新時キャッシュ無効化・クラウド自動同期 & モバイル基準量全表示**:
+  - `FoodMasterView.tsx` に患者単位のオンメモリキャッシュ（`foodMasterMemoryCache`）を保持し、タブ切り替え時に `よく使う食品 (0)` や `該当する食品がありません` が一瞬ちらつく現象（Empty-State Flash）を防止する。さらに `invalidateFoodMasterMemoryCache` 関数をエクスポートし、`registerUiCacheInvalidator`（`src/lib/syncEngine.ts`）に登録するとともに、食品・活動・カテゴリの追加・編集・削除・一括操作時に `triggerBackgroundCloudSync` を実行してクラウドと即時同期する。
   - スマートフォン表示（`sm` 未満、`375x812`）でも食品リストの12カラムグリッド配分を従来の `7 / 2 / 3` から `col-span-7（食品名）/ col-span-3（基準量）/ col-span-2（糖質量）`（モバイル・PC共通）に最適化し、`1 玉(250g)` や `1 小鉢(60g)` などのグラム表記が `...` で省略されず100%視認できるようにする。
   - `CategoryManageModal.tsx` のカテゴリ一覧コンテナ高さを `max-h-80`（`320px`）とし、初期7カテゴリすべてが文字見切れなく一覧表示されるようにする。また、`isOpen` または `targetType` が変化した際に `newCategoryName`, `editingId`, `editingName`, `errorMsg`, `deleteTargetCategory` をクリーンにリセットする。
   - **モーダル背景（グレー領域）タップ時の入力保持＆キーボード収納と `isDirty` 破棄確認ダイアログ (`FoodEditModal.tsx`, `EventEditModal.tsx`, `CategoryManageModal.tsx`)**:

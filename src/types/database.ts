@@ -8,10 +8,11 @@ export type UserRole = 'patient' | 'editor' | 'viewer';
 export interface FamilyPermission {
   id: string; // UUID
   patient_id: string; // UUID
-  family_user_id: string; // UUID
+  family_user_id?: string | null; // UUID (nullable until invited family logs in)
+  family_email?: string | null; // Invited email address
   role: 'viewer' | 'editor';
   invited_at: string;
-  accepted_at?: string;
+  accepted_at?: string | null;
   created_at: string;
 }
 

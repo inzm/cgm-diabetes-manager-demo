@@ -59,6 +59,9 @@ export default defineConfig(({ mode }) => ({
             if (id.includes('dexie')) {
               return 'vendor-dexie';
             }
+            if (id.includes('@supabase')) {
+              return 'vendor-supabase';
+            }
             if (id.includes('lucide-react')) {
               return 'vendor-icons';
             }

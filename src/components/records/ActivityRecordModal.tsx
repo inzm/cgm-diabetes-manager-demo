@@ -9,6 +9,7 @@ import {
   pauseBackgroundHydration,
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
+import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import {
   buildWallClockIso,
   extractDateStr,
@@ -344,6 +345,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
 
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache();
+      triggerBackgroundCloudSync(currentPatientId);
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -367,6 +369,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       await db.events.update(editEventId, { is_deleted: true, updated_at: nowIso });
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache();
+      triggerBackgroundCloudSync(currentPatientId);
       onSuccess();
       onClose();
     } catch (err: any) {

@@ -121,7 +121,7 @@ CSV取込Worker（`src/workers/csvParser.worker.ts`）では、各測定値レ�
 - **デモアプリ（ポートフォリオモード）における非活性化制御**: デモアプリ環境（`isPortfolioMode()`）では、PCサブナビ（`src/App.tsx`）およびモバイル下部ナビのスピードダイヤル（`src/components/common/BottomNav.tsx`）のCSV取込ボタンを `disabled`（非活性化）にし、**「デモアプリでは利用できません」** というメッセージを明示する（万一モーダル内でファイル処理が呼ばれた場合も `isDemoCsvImportDisabled()` により「デモアプリでは利用できません」と表示して中断する）。
 - オープン・クローズ時は2段階マウント制御により、背景オーバーレイのフェードイン/アウトとモーダル本体のズーム＆フェードトランジションを滑らかに実行する。
 - `usePatient()` から現在の `hypoThreshold` および `hyperThreshold` を取得し、Worker の `START_IMPORT` メッセージへ引き渡す。
-- 取込完了時は、`[user_id+event_datetime]` 複合インデックスの `between()` で対象期間内の既存自動抽出異常値イベントを高速置換して二重登録を防止するとともに、日付バケット化された `bindMealGlucoseFromReadings(currentPatientId)` を実行して既存の食事イベントに食前・食後血糖値を $O(N + M)$ で自動反映する。
+- 取込完了時は、`[user_id+event_datetime]` 複合インデックスの `between()` で対象期間内の既存自動抽出異常値イベントを高速置換して二重登録を防止するとともに、日付バケット化された `bindMealGlucoseFromReadings(currentPatientId)` を実行して既存の食事イベントに食前・食後血糖値を $O(N + M)$ で自動反映し、クラウド接続時は `triggerBackgroundCloudSync(currentPatientId, { replaceRemoteAnomalies: true, includeReadings: true })`（`src/lib/syncEngine.ts`）により1,000件単位チャンクで `libre_readings` と最新の異常値イベントをクラウドへ自動同期する。
 
 ---
 
