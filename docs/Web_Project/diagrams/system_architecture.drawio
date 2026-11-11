@@ -1,0 +1,140 @@
+<mxfile host="65bd71144e">
+    <diagram id="web-architecture" name="全体システム構成 & マルチデバイス同期">
+        <mxGraphModel dx="1240" dy="840" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" background="#f8fafc" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+
+                <!-- Container: Client Layer -->
+                <mxCell id="c_client" value="【クライアント層】 PC / スマートフォン (React 18+ / Local-First PWA)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#16a34a;fontColor=#166534;fontStyle=1;fontSize=14;rounded=1;arcSize=4;" vertex="1" parent="1">
+                    <mxGeometry x="40" y="40" width="460" height="480" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_ui" value="&lt;b&gt;React UI コンポーネント&lt;/b&gt;&lt;br&gt;・カレンダー / 日次詳細 / 分析 / 食品&lt;br&gt;・Tailwind CSS + shadcn/ui&lt;br&gt;&lt;i&gt;PatientContext (ロール別表示制御)&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#0f172a;fontSize=12;shadow=1;" vertex="1" parent="c_client">
+                    <mxGeometry x="30" y="50" width="400" height="80" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_echarts" value="&lt;b&gt;Apache ECharts 可視化エンジン&lt;/b&gt;&lt;br&gt;・24H血糖散布図 (垂直破線・食事/異常重畳)&lt;br&gt;・曜日別/時間帯別 複合グラフ&lt;br&gt;・マイクロSVGスパークライン" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#059669;fontColor=#064e3b;fontSize=11;" vertex="1" parent="c_client">
+                    <mxGeometry x="30" y="150" width="400" height="60" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_dexie" value="&lt;b&gt;IndexedDB (Dexie.js)&lt;/b&gt;&lt;br&gt;・8.4万件リブレ生データ高速キャッシュ&lt;br&gt;・食事/活動/食品マスタ (Local-First)&lt;br&gt;・&lt;font color=&quot;#2563eb&quot;&gt;0.01秒描画 &amp;amp; オフライン完全動作&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#eff6ff;strokeColor=#2563eb;fontColor=#1e3a8a;fontSize=11;fontStyle=1;" vertex="1" parent="c_client">
+                    <mxGeometry x="40" y="240" width="220" height="100" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_worker" value="&lt;b&gt;Web Worker (並列処理)&lt;/b&gt;&lt;br&gt;・8.4万行CSV高速パース&lt;br&gt;・異常値抽出ステートマシン&lt;br&gt;・食前/食後血糖探索バインド&lt;br&gt;&lt;i&gt;(メインスレッド描画停止ゼロ)&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;fontSize=11;" vertex="1" parent="c_client">
+                    <mxGeometry x="270" y="240" width="160" height="100" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_storage_persist" value="Persistent Storage API&lt;br&gt;(Safari等のデータ自動消去を防止)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#334155;fontSize=10;" vertex="1" parent="c_client">
+                    <mxGeometry x="40" y="360" width="220" height="40" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_ui_echarts" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#059669;strokeWidth=2;" edge="1" parent="c_client" source="node_ui" target="node_echarts">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_ui_dexie" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563eb;strokeWidth=2;" edge="1" parent="c_client" source="node_ui" target="node_dexie">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_ui_worker" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d97706;strokeWidth=2;" edge="1" parent="c_client" source="node_ui" target="node_worker">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_worker_dexie" value="一括書込 (bulkPut)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563eb;fontSize=10;fontColor=#1e40af;" edge="1" parent="c_client" source="node_worker" target="node_dexie">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <!-- Container: Edge Layer (Cloudflare) -->
+                <mxCell id="c_edge" value="【エッジ &amp; BFF層】 Cloudflare" style="swimlane;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#ea580c;fontColor=#9a3412;fontStyle=1;fontSize=14;rounded=1;arcSize=4;" vertex="1" parent="1">
+                    <mxGeometry x="540" y="40" width="280" height="220" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_cf_pages" value="&lt;b&gt;Cloudflare Pages&lt;/b&gt;&lt;br&gt;・React SPA静的グローバル配信&lt;br&gt;・超低遅延エッジキャッシュ&lt;br&gt;・帯域幅無制限（無料枠大）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#ea580c;fontColor=#0f172a;fontSize=11;" vertex="1" parent="c_edge">
+                    <mxGeometry x="20" y="40" width="240" height="60" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_cf_workers" value="&lt;b&gt;Cloudflare Workers (BFF)&lt;/b&gt;&lt;br&gt;・Gemini API 安全中継プロキシ&lt;br&gt;・APIキーを環境変数で完全秘匿&lt;br&gt;・Supabase JWT認証トークン検証" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#c2410c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="c_edge">
+                    <mxGeometry x="20" y="120" width="240" height="80" as="geometry"/>
+                </mxCell>
+
+                <!-- External: Google Gemini -->
+                <mxCell id="node_gemini" value="&lt;b&gt;Google Gemini REST API&lt;/b&gt;&lt;br&gt;・食品名からの糖質量自動推定&lt;br&gt;・分析画面での臨床知見生成" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontColor=#581c87;fontSize=11;shadow=1;" vertex="1" parent="1">
+                    <mxGeometry x="870" y="100" width="220" height="80" as="geometry"/>
+                </mxCell>
+
+                <!-- Container: Cloud Layer (Supabase) -->
+                <mxCell id="c_cloud" value="【クラウド BaaS &amp; DB層】 Supabase (PostgreSQL)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#0284c7;fontColor=#0369a1;fontStyle=1;fontSize=14;rounded=1;arcSize=4;" vertex="1" parent="1">
+                    <mxGeometry x="540" y="280" width="550" height="420" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_supa_auth" value="&lt;b&gt;Supabase Auth&lt;/b&gt;&lt;br&gt;・JWT認証 / 2要素認証(MFA)&lt;br&gt;・患者 &amp;amp; 家族アカウント管理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0f2fe;strokeColor=#0284c7;fontColor=#075985;fontSize=11;" vertex="1" parent="c_cloud">
+                    <mxGeometry x="20" y="40" width="240" height="60" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_supa_rls" value="&lt;b&gt;Row Level Security (RLS)&lt;/b&gt;&lt;br&gt;・患者データの完全分離&lt;br&gt;・&lt;font color=&quot;#dc2626&quot;&gt;can_view_patient_data()&lt;/font&gt;&lt;br&gt;・家族閲覧ロール(viewer)の厳格制御" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;fontColor=#991b1b;fontSize=11;fontStyle=1;" vertex="1" parent="c_cloud">
+                    <mxGeometry x="280" y="40" width="250" height="60" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_family_table" value="&lt;b&gt;家族共有関係テーブル&lt;/b&gt;&lt;br&gt;`family_permissions`&lt;br&gt;(patient_id, family_user_id, role)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#ef4444;fontColor=#7f1d1d;fontSize=10;" vertex="1" parent="c_cloud">
+                    <mxGeometry x="280" y="115" width="250" height="45" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_supa_db" value="&lt;b&gt;PostgreSQL データベース (Single Source of Truth)&lt;/b&gt;&lt;br&gt;・`libre_readings`: 8.4万行血糖生データ (Append-only)&lt;br&gt;・`events` &amp;amp; `meal_details`: 親子テーブル (論理削除/LWW)&lt;br&gt;・`food_master` / `event_master` / `categories` / `user_settings`" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f0f9ff;strokeColor=#0369a1;fontColor=#0c4a6e;fontSize=11;" vertex="1" parent="c_cloud">
+                    <mxGeometry x="20" y="180" width="510" height="120" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_supa_realtime" value="&lt;b&gt;Supabase Realtime&lt;/b&gt;&lt;br&gt;WebSocket更新通知&lt;br&gt;(他端末の変更を即時検知)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdfa;strokeColor=#0d9488;fontColor=#115e59;fontSize=10;" vertex="1" parent="c_cloud">
+                    <mxGeometry x="20" y="320" width="240" height="50" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="node_supa_storage" value="&lt;b&gt;Supabase Storage&lt;/b&gt;&lt;br&gt;リブレCSV原本ファイル保管&lt;br&gt;(長期履歴アーカイブ)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#64748b;fontColor=#334155;fontSize=10;" vertex="1" parent="c_cloud">
+                    <mxGeometry x="280" y="320" width="250" height="50" as="geometry"/>
+                </mxCell>
+
+                <!-- Connections between layers -->
+                <mxCell id="edge_cf_pages_app" value="静的配信" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#ea580c;strokeWidth=1;dashed=1;fontColor=#c2410c;fontSize=10;" edge="1" parent="1" source="node_cf_pages" target="node_ui">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_ui_workers" value="AI糖質推定 (JWT付加)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#c2410c;strokeWidth=2;fontColor=#9a3412;fontSize=10;" edge="1" parent="1" source="node_ui" target="node_cf_workers">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_workers_gemini" value="API Key通信" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9333ea;strokeWidth=2;fontColor=#6b21a8;fontSize=10;" edge="1" parent="1" source="node_cf_workers" target="node_gemini">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_ui_auth" value="ログイン認証" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0284c7;strokeWidth=1;fontColor=#0369a1;fontSize=10;" edge="1" parent="1" source="node_ui" target="node_supa_auth">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_sync_delta" value="双方向差分同期 (Delta Sync)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0284c7;strokeWidth=3;fontColor=#0369a1;fontSize=11;fontStyle=1;" edge="1" parent="1" source="node_dexie" target="node_supa_db">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="edge_worker_storage" value="CSV原本退避" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;dashed=1;fontColor=#475569;fontSize=10;" edge="1" parent="1" source="node_worker" target="node_supa_storage">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="450" y="320"/>
+                            <mxPoint x="450" y="630"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+
+                <mxCell id="edge_realtime_notify" value="WebSocket通知 (他端末同期)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0d9488;strokeWidth=2;dashed=1;fontColor=#0f766e;fontSize=10;" edge="1" parent="1" source="node_supa_realtime" target="node_ui">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="660" y="730"/>
+                            <mxPoint x="200" y="730"/>
+                            <mxPoint x="200" y="550"/>
+                            <mxPoint x="100" y="550"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

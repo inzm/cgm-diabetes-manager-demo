@@ -1,0 +1,13 @@
+{
+  "ddd-stop-guard": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node hooks/stop-guard.mjs",
+        "timeout": 15
+      }
+    ]
+  }
+}
+

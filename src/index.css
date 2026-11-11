@@ -1,0 +1,219 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%; /* Slate 50 */
+    --foreground: 222.2 84% 4.9%; /* Slate 950 */
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    /* Primary: Emerald 600 */
+    --primary: 158 64% 40%;
+    --primary-foreground: 210 40% 98%;
+
+    /* Secondary: Sky 600 */
+    --secondary: 199 89% 48%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 158 64% 40%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 158 64% 45%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 199 89% 55%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 158 64% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* UX Animations: カレンダーセル入場・ドロワー日付遷移・スパークライン描画 */
+@keyframes cgmFadeSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cgmDrawerContentFade {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cgmSparklineDraw {
+  0% {
+    stroke-dasharray: 240;
+    stroke-dashoffset: 240;
+    opacity: 0.3;
+  }
+  100% {
+    stroke-dasharray: 240;
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+.cgm-cell-enter {
+  animation: cgmFadeSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cgm-drawer-content-enter {
+  animation: cgmDrawerContentFade 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cgm-sparkline-path {
+  animation: cgmSparklineDraw 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes cgmPopoverEnter {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.cgm-popover-enter {
+  animation: cgmPopoverEnter 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 方向連動マイクロ・スライド＆フェード (180ms: タブ切り替え・カレンダー月切り替え共通) */
+@keyframes cgmSlideFadeInForward {
+  0% {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes cgmSlideFadeInBackward {
+  0% {
+    opacity: 0;
+    transform: translate3d(-14px, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.cgm-slide-fade-forward {
+  animation: cgmSlideFadeInForward 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cgm-slide-fade-backward {
+  animation: cgmSlideFadeInBackward 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 方向連動スライド＆フェード中は内部セルの個別遅延フェードを抑止し、180msの一体遷移に統一 */
+.cgm-slide-fade-forward .cgm-cell-enter,
+.cgm-slide-fade-backward .cgm-cell-enter {
+  animation: none;
+}
+
+/* 子孫に固定モーダル・ドロワーが開いている間は transform 包含ブロック化を即時解除 */
+.cgm-slide-fade-forward:has([role="dialog"], [aria-modal="true"], .fixed.inset-0),
+.cgm-slide-fade-backward:has([role="dialog"], [aria-modal="true"], .fixed.inset-0) {
+  animation: none;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cgm-slide-fade-forward,
+  .cgm-slide-fade-backward,
+  .cgm-cell-enter,
+  .cgm-drawer-content-enter,
+  .cgm-sparkline-path,
+  .cgm-popover-enter {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+

@@ -1,0 +1,64 @@
+name: Verify & Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: cloudflare-pages-deploy-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-deploy:
+    name: Verify Quality Gates & Deploy via Wrangler
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run DDD Security & UX Verification
+        env:
+          SKIP_DOC_SYNC: '1'
+        run: npm run test:docs
+
+      - name: Run TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Run Clinical & Data Integrity Unit Tests
+        run: npm test
+
+      - name: Build Portfolio Bundle for E2E Verification (VITE_APP_MODE=portfolio)
+        run: npm run build:portfolio
+
+      - name: Install Playwright Chromium for Pre-Deploy E2E Regression
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Pre-Deployment Playwright E2E Regression Suite
+        run: npm run test:e2e:regression
+
+      - name: Build Personal Production Bundle (when running in Private Production Repo)
+        if: ${{ !endsWith(github.repository, '-demo') && vars.APP_BUILD_MODE != 'portfolio' }}
+        run: npm run build:personal
+
+      - name: Deploy to Cloudflare Pages via Wrangler CLI
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CF_PAGES_PROJECT_NAME || (endsWith(github.repository, '-demo') && 'cgm-diabetes-manager-demo' || 'cgm-diabetes-manager-personal') }} --branch=main

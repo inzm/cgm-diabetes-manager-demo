@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production build outputs
+dist/
+build/
+.output/
+*.tsbuildinfo
+.vite/
+
+# Cloudflare & Supabase local environments
+.wrangler/
+.mf/
+supabase/.temp/
+
+# Environment variables & secrets (CRITICAL)
+.env
+.env.local
+.env.*.local
+*.pem
+
+# IDE & Editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Excel temporary files
+~$*.xlsm
+~$*.xlsx
+*.tmp
+
+# Scratch, local DB & personal clinical CSV/Excel files (Privacy protection)
+.agents/scratch/
+analysis.db
+legacy_vba/
+
+# Playwright E2E artifacts & local video assets
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+docs/video_assets/
