@@ -86,7 +86,9 @@
   - 「全期間（`all`）」選択時は、固定の過去日（2020年等）ではなく `earliestDateStr` から `referenceDateStr` までの実データ記録期間を対象とする。
   - 「月別セレクトボックス（`month:YYYY-MM`）」選択時は、指定された年月の初日（`YYYY-MM-01`）から末日までを集計対象とし、データセットの `earliestDateStr`〜`referenceDateStr` の範囲にクランプすることで、月途中の最新月や最古月でも正確な対象日数・平均値を算出する。
 
-### 3.3 機能 1: 食品別 血糖上昇インパクト分析 (旧VBA `AnalyzeSelectedFood`)
+### 3.3 機能 1: 食品別 血糖上昇インパクト分析 (旧VBA `AnalyzeSelectedFood` / `computeBoundGlucoseForMeal`)
+- **食前・食後ピーク血糖値補完の単一真実源化 (`computeBoundGlucoseForMeal` in `src/lib/anomalyExtractor.ts`)**:
+   - 食事イベントに `pre_meal_glucose` または `post_meal_glucose` が未設定の場合の近傍探索は、`src/lib/anomalyExtractor.ts` の `computeBoundGlucoseForMeal` を共通呼び出しし、食事記録保存時・CSV取込時と100%同一のウィンドウ（食前 $[-15\text{分}, +5\text{分}]$ 最寄り値、食後 $[+60\text{分}, +180\text{分}]$ 最大値）で算出する。また、`invalidateAnalysisDatasetCache(patientId?)` は対象患者単位でのキャッシュ破棄をサポートする。
 - **カテゴリ連動による食品選択**:
    - カテゴリセレクトボックス（`すべてのカテゴリ` または登録済み食品カテゴリ）を選択すると、該当カテゴリに属する食品のみに対象食品セレクトボックスの選択肢を絞り込む。カテゴリ変更時に現在の選択食品が絞り込み後の候補に含まれない場合は、候補先頭の食品を自動選択して即座に分析結果を更新する。
 - **スマートフォンでも横スクロール・文字崩れゼロの5列構成テーブル**:

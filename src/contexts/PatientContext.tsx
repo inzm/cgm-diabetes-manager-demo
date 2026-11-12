@@ -6,7 +6,12 @@ import React, {
   useCallback,
   useRef,
 } from 'react';
-import type { FamilyPermission, UserRole } from '@/types/database';
+import {
+  type FamilyPermission,
+  type UserRole,
+  DEFAULT_HYPER_THRESHOLD,
+  DEFAULT_HYPO_THRESHOLD,
+} from '@/types/database';
 import { db } from '@/lib/db';
 import { isPortfolioMode } from '@/lib/realGlucoseLoader';
 import { seedFoodMasterIfEmpty } from '@/lib/foodSeed';
@@ -87,8 +92,12 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
   const [currentPatientId, setCurrentPatientId] =
     useState<string>(DEFAULT_PATIENT_ID);
   const [currentRole, setCurrentRole] = useState<UserRole>('patient');
-  const [hypoThreshold, setHypoThreshold] = useState<number>(70);
-  const [hyperThreshold, setHyperThreshold] = useState<number>(180);
+  const [hypoThreshold, setHypoThreshold] = useState<number>(
+    DEFAULT_HYPO_THRESHOLD
+  );
+  const [hyperThreshold, setHyperThreshold] = useState<number>(
+    DEFAULT_HYPER_THRESHOLD
+  );
 
   const isCloudEnabled = isSupabaseConfigured();
   const isAuthRequired =
@@ -128,11 +137,11 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
     try {
       const settings = await db.user_settings.get(patientId);
       if (settings) {
-        setHypoThreshold(settings.hypo_threshold || 70);
-        setHyperThreshold(settings.hyper_threshold || 180);
+        setHypoThreshold(settings.hypo_threshold || DEFAULT_HYPO_THRESHOLD);
+        setHyperThreshold(settings.hyper_threshold || DEFAULT_HYPER_THRESHOLD);
       } else {
-        setHypoThreshold(70);
-        setHyperThreshold(180);
+        setHypoThreshold(DEFAULT_HYPO_THRESHOLD);
+        setHyperThreshold(DEFAULT_HYPER_THRESHOLD);
       }
     } catch {
       // Ignore
@@ -142,8 +151,8 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // ポートフォリオモードの初期起動時は常に 70 / 180 にリセットされるため、起動直後のIndexedDB競合アクセスを回避
     if (isPortfolioMode()) {
-      setHypoThreshold(70);
-      setHyperThreshold(180);
+      setHypoThreshold(DEFAULT_HYPO_THRESHOLD);
+      setHyperThreshold(DEFAULT_HYPER_THRESHOLD);
       return;
     }
     let active = true;
@@ -152,11 +161,11 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
       .then((settings) => {
         if (!active) return;
         if (settings) {
-          setHypoThreshold(settings.hypo_threshold || 70);
-          setHyperThreshold(settings.hyper_threshold || 180);
+          setHypoThreshold(settings.hypo_threshold || DEFAULT_HYPO_THRESHOLD);
+          setHyperThreshold(settings.hyper_threshold || DEFAULT_HYPER_THRESHOLD);
         } else {
-          setHypoThreshold(70);
-          setHyperThreshold(180);
+          setHypoThreshold(DEFAULT_HYPO_THRESHOLD);
+          setHyperThreshold(DEFAULT_HYPER_THRESHOLD);
         }
       })
       .catch(() => {});
@@ -233,8 +242,8 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
             setMyInvitedFollowers([]);
             setCurrentPatientId(DEFAULT_PATIENT_ID);
             setCurrentRole('patient');
-            setHypoThreshold(70);
-            setHyperThreshold(180);
+            setHypoThreshold(DEFAULT_HYPO_THRESHOLD);
+            setHyperThreshold(DEFAULT_HYPER_THRESHOLD);
             setLastSyncedAt(null);
             setSyncError(rejectMsg);
             return { authorized: false, error: rejectMsg };
@@ -421,8 +430,8 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
         setMyInvitedFollowers([]);
         setCurrentPatientId(DEFAULT_PATIENT_ID);
         setCurrentRole('patient');
-        setHypoThreshold(70);
-        setHyperThreshold(180);
+        setHypoThreshold(DEFAULT_HYPO_THRESHOLD);
+        setHyperThreshold(DEFAULT_HYPER_THRESHOLD);
         setLastSyncedAt(null);
         if (!rejectionErrorRef.current) {
           setSyncError(null);
@@ -627,8 +636,8 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
     setMyInvitedFollowers([]);
     setCurrentPatientId(DEFAULT_PATIENT_ID);
     setCurrentRole('patient');
-    setHypoThreshold(70);
-    setHyperThreshold(180);
+    setHypoThreshold(DEFAULT_HYPO_THRESHOLD);
+    setHyperThreshold(DEFAULT_HYPER_THRESHOLD);
     setLastSyncedAt(null);
     setSyncError(null);
   }, []);

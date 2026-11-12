@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import { cn } from '@/lib/utils';
 
 export interface ConfirmDialogProps {
@@ -23,26 +24,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   onCancel,
 }) => {
-  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      const rafId = window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setIsVisible(true);
-        });
-      });
-      return () => window.cancelAnimationFrame(rafId);
-    } else {
-      setIsVisible(false);
-      const timerId = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 200);
-      return () => window.clearTimeout(timerId);
-    }
-  }, [isOpen]);
+  const { shouldRender, isVisible } = useAnimatedModal(isOpen, 200);
 
   useEffect(() => {
     if (!isOpen) return;

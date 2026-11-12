@@ -10,16 +10,18 @@ import {
 import { resetFoodSeedSession } from './foodSeed';
 import { reevaluatePatientAnomalyEvents } from './anomalyExtractor';
 import { deterministicUuid, ensureUuid } from './uuidUtils';
-import type {
-  Category,
-  EventMaster,
-  FamilyPermission,
-  FoodMaster,
-  HealthEvent,
-  LibreReading,
-  MealDetail,
-  UserRole,
-  UserSettings,
+import {
+  DEFAULT_HYPER_THRESHOLD,
+  DEFAULT_HYPO_THRESHOLD,
+  type Category,
+  type EventMaster,
+  type FamilyPermission,
+  type FoodMaster,
+  type HealthEvent,
+  type LibreReading,
+  type MealDetail,
+  type UserRole,
+  type UserSettings,
 } from '@/types/database';
 
 export const DEFAULT_LOCAL_PATIENT_ID = '00000000-0000-0000-0000-000000000001';
@@ -86,7 +88,7 @@ export function registerUiCacheInvalidator(fn: UiCacheInvalidator): () => void {
  * 全4種のオンメモリキャッシュを破棄する（patientId 省略時は全患者分のキャッシュを全消去）
  */
 export function invalidateAllCachesAfterSync(patientId?: string): void {
-  invalidateAnalysisDatasetCache();
+  invalidateAnalysisDatasetCache(patientId);
   invalidateInMemoryRecentCache(patientId);
   for (const fn of uiCacheInvalidators) {
     try {
@@ -143,6 +145,69 @@ function parseTimestampMs(iso: string | null | undefined): number {
   if (!iso) return 0;
   const t = Date.parse(iso);
   return Number.isNaN(t) ? 0 : t;
+}
+
+export interface LwwEntity {
+  id: string;
+  updated_at?: string;
+  created_at?: string;
+  is_deleted?: boolean;
+}
+
+export interface ComputeLwwDiffOptions<T extends LwwEntity> {
+  canEdit: boolean;
+  filterLocal?: (item: T) => boolean;
+  preferDeletedOnTie?: boolean;
+  transformBeforePush?: (item: T) => T;
+}
+
+/**
+ * Last-Write-Wins (LWW) 双方向差分解決ジェネリック純粋関数
+ * - ローカルのみに存在するレコードは canEdit === true 時に toPush へ追加
+ * - リモートのみに存在するレコードは常に toPull へ追加
+ * - 両方に存在するレコードは updated_at (または created_at) タイムスタンプを比較し、
+ *   preferDeletedOnTie === true 時は論理削除側 (is_deleted: true) も優先判定する
+ */
+export function computeLwwDiff<T extends LwwEntity>(
+  localItems: readonly T[],
+  remoteItems: readonly T[],
+  options: ComputeLwwDiffOptions<T>
+): { toPush: T[]; toPull: T[] } {
+  const { canEdit, filterLocal, preferDeletedOnTie = false, transformBeforePush } = options;
+  const remoteById = new Map(remoteItems.map((r) => [r.id, r]));
+  const localById = new Map(localItems.map((l) => [l.id, l]));
+  const toPush: T[] = [];
+  const toPull: T[] = [];
+
+  for (const rawLocal of localItems) {
+    if (filterLocal && !filterLocal(rawLocal)) continue;
+    const localItem = transformBeforePush ? transformBeforePush(rawLocal) : rawLocal;
+    const remoteItem = remoteById.get(localItem.id);
+    if (!remoteItem) {
+      if (canEdit) toPush.push(localItem);
+    } else {
+      const lMs = parseTimestampMs(localItem.updated_at || localItem.created_at);
+      const rMs = parseTimestampMs(remoteItem.updated_at || remoteItem.created_at);
+      const localDeletedWins =
+        preferDeletedOnTie && Boolean(localItem.is_deleted) && !remoteItem.is_deleted;
+      const remoteDeletedWins =
+        preferDeletedOnTie && Boolean(remoteItem.is_deleted) && !localItem.is_deleted;
+
+      if ((lMs > rMs || localDeletedWins) && canEdit) {
+        toPush.push(localItem);
+      } else if (rMs > lMs || remoteDeletedWins || !canEdit) {
+        toPull.push(remoteItem);
+      }
+    }
+  }
+
+  for (const remoteItem of remoteItems) {
+    if (!localById.has(remoteItem.id)) {
+      toPull.push(remoteItem);
+    }
+  }
+
+  return { toPush, toPull };
 }
 
 /**
@@ -341,10 +406,10 @@ export async function verifyUserAccessWithCloud(
       [
         {
           user_id: authUserId,
-          hypo_threshold: 70,
-          hyper_threshold: 180,
-          target_tir_min: 70,
-          target_tir_max: 180,
+          hypo_threshold: DEFAULT_HYPO_THRESHOLD,
+          hyper_threshold: DEFAULT_HYPER_THRESHOLD,
+          target_tir_min: DEFAULT_HYPO_THRESHOLD,
+          target_tir_max: DEFAULT_HYPER_THRESHOLD,
           enable_default_insulin: false,
           default_insulin_breakfast: null,
           default_insulin_lunch: null,
@@ -815,10 +880,10 @@ export async function syncPatientDataWithCloud(
 function serializeUserSettingsForRemote(s: UserSettings): Record<string, unknown> {
   return {
     user_id: s.user_id,
-    hypo_threshold: Number(s.hypo_threshold ?? 70),
-    hyper_threshold: Number(s.hyper_threshold ?? 180),
-    target_tir_min: Number(s.target_tir_min ?? s.hypo_threshold ?? 70),
-    target_tir_max: Number(s.target_tir_max ?? s.hyper_threshold ?? 180),
+    hypo_threshold: Number(s.hypo_threshold ?? DEFAULT_HYPO_THRESHOLD),
+    hyper_threshold: Number(s.hyper_threshold ?? DEFAULT_HYPER_THRESHOLD),
+    target_tir_min: Number(s.target_tir_min ?? s.hypo_threshold ?? DEFAULT_HYPO_THRESHOLD),
+    target_tir_max: Number(s.target_tir_max ?? s.hyper_threshold ?? DEFAULT_HYPER_THRESHOLD),
     enable_default_insulin: Boolean(s.enable_default_insulin),
     default_insulin_breakfast:
       s.default_insulin_breakfast != null ? Number(s.default_insulin_breakfast) : null,
@@ -832,13 +897,13 @@ function serializeUserSettingsForRemote(s: UserSettings): Record<string, unknown
   };
 }
 
-function normalizeRemoteUserSettings(raw: Record<string, any>): UserSettings {
+function normalizeRemoteUserSettings(raw: Record<string, unknown>): UserSettings {
   return {
     user_id: String(raw.user_id),
-    hypo_threshold: Number(raw.hypo_threshold ?? 70),
-    hyper_threshold: Number(raw.hyper_threshold ?? 180),
-    target_tir_min: Number(raw.target_tir_min ?? raw.hypo_threshold ?? 70),
-    target_tir_max: Number(raw.target_tir_max ?? raw.hyper_threshold ?? 180),
+    hypo_threshold: Number(raw.hypo_threshold ?? DEFAULT_HYPO_THRESHOLD),
+    hyper_threshold: Number(raw.hyper_threshold ?? DEFAULT_HYPER_THRESHOLD),
+    target_tir_min: Number(raw.target_tir_min ?? raw.hypo_threshold ?? DEFAULT_HYPO_THRESHOLD),
+    target_tir_max: Number(raw.target_tir_max ?? raw.hyper_threshold ?? DEFAULT_HYPER_THRESHOLD),
     enable_default_insulin: Boolean(raw.enable_default_insulin),
     default_insulin_breakfast:
       raw.default_insulin_breakfast != null
@@ -1015,30 +1080,11 @@ async function executeSyncPatientData(
         .toArray();
     }
 
-    const remoteCatById = new Map(remoteCategories.map((c) => [c.id, c]));
-    const localCatById = new Map(localCategories.map((c) => [c.id, c]));
-    const categoriesToPush: Category[] = [];
-    const categoriesToPull: Category[] = [];
-
-    for (const lc of localCategories) {
-      const rc = remoteCatById.get(lc.id);
-      if (!rc) {
-        if (canEdit) categoriesToPush.push(lc);
-      } else {
-        const lMs = parseTimestampMs(lc.updated_at);
-        const rMs = parseTimestampMs(rc.updated_at);
-        if (lMs > rMs && canEdit) {
-          categoriesToPush.push(lc);
-        } else if (rMs > lMs || !canEdit) {
-          categoriesToPull.push(rc);
-        }
-      }
-    }
-    for (const rc of remoteCategories) {
-      if (!localCatById.has(rc.id)) {
-        categoriesToPull.push(rc);
-      }
-    }
+    const { toPush: categoriesToPush, toPull: categoriesToPull } = computeLwwDiff(
+      localCategories,
+      remoteCategories,
+      { canEdit }
+    );
 
     if (categoriesToPull.length > 0) {
       await db.categories.bulkPut(categoriesToPull);
@@ -1094,30 +1140,11 @@ async function executeSyncPatientData(
       .where('user_id')
       .equals(patientId)
       .toArray();
-    const remoteFoodById = new Map(remoteFoods.map((f) => [f.id, f]));
-    const localFoodById = new Map(localFoods.map((f) => [f.id, f]));
-    const foodsToPush: FoodMaster[] = [];
-    const foodsToPull: FoodMaster[] = [];
-
-    for (const lf of localFoods) {
-      const rf = remoteFoodById.get(lf.id);
-      if (!rf) {
-        if (canEdit) foodsToPush.push(lf);
-      } else {
-        const lMs = parseTimestampMs(lf.updated_at);
-        const rMs = parseTimestampMs(rf.updated_at);
-        if (lMs > rMs && canEdit) {
-          foodsToPush.push(lf);
-        } else if (rMs > lMs || !canEdit) {
-          foodsToPull.push(rf);
-        }
-      }
-    }
-    for (const rf of remoteFoods) {
-      if (!localFoodById.has(rf.id)) {
-        foodsToPull.push(rf);
-      }
-    }
+    const { toPush: foodsToPush, toPull: foodsToPull } = computeLwwDiff(
+      localFoods,
+      remoteFoods,
+      { canEdit }
+    );
 
     if (foodsToPull.length > 0) {
       await db.food_master.bulkPut(foodsToPull);
@@ -1171,30 +1198,11 @@ async function executeSyncPatientData(
       .where('user_id')
       .equals(patientId)
       .toArray();
-    const remoteEmById = new Map(remoteEventMasters.map((em) => [em.id, em]));
-    const localEmById = new Map(localEventMasters.map((em) => [em.id, em]));
-    const emsToPush: EventMaster[] = [];
-    const emsToPull: EventMaster[] = [];
-
-    for (const lem of localEventMasters) {
-      const rem = remoteEmById.get(lem.id);
-      if (!rem) {
-        if (canEdit) emsToPush.push(lem);
-      } else {
-        const lMs = parseTimestampMs(lem.updated_at);
-        const rMs = parseTimestampMs(rem.updated_at);
-        if (lMs > rMs && canEdit) {
-          emsToPush.push(lem);
-        } else if (rMs > lMs || !canEdit) {
-          emsToPull.push(rem);
-        }
-      }
-    }
-    for (const rem of remoteEventMasters) {
-      if (!localEmById.has(rem.id)) {
-        emsToPull.push(rem);
-      }
-    }
+    const { toPush: emsToPush, toPull: emsToPull } = computeLwwDiff(
+      localEventMasters,
+      remoteEventMasters,
+      { canEdit }
+    );
 
     if (emsToPull.length > 0) {
       await db.event_master.bulkPut(emsToPull);
@@ -1290,34 +1298,17 @@ async function executeSyncPatientData(
     const activeRemoteEvents = remoteEvents.filter(
       (rev) => !staleRemoteAnomalyIds.has(rev.id)
     );
-    const remoteEvById = new Map(activeRemoteEvents.map((ev) => [ev.id, ev]));
-    const localEvById = new Map(localEvents.map((ev) => [ev.id, ev]));
-    const eventsToPush: HealthEvent[] = [];
-    const eventsToPull: HealthEvent[] = [];
-
-    for (const lev of localEvents) {
-      const normalizedLocal: HealthEvent = {
-        ...lev,
-        event_datetime: normalizeToWallClockIso(lev.event_datetime),
-      };
-      const rev = remoteEvById.get(lev.id);
-      if (!rev) {
-        if (canEdit) eventsToPush.push(normalizedLocal);
-      } else {
-        const lMs = parseTimestampMs(normalizedLocal.updated_at);
-        const rMs = parseTimestampMs(rev.updated_at);
-        if (lMs > rMs && canEdit) {
-          eventsToPush.push(normalizedLocal);
-        } else if (rMs > lMs || !canEdit) {
-          eventsToPull.push(rev);
-        }
+    const { toPush: eventsToPush, toPull: eventsToPull } = computeLwwDiff(
+      localEvents,
+      activeRemoteEvents,
+      {
+        canEdit,
+        transformBeforePush: (lev) => ({
+          ...lev,
+          event_datetime: normalizeToWallClockIso(lev.event_datetime),
+        }),
       }
-    }
-    for (const rev of activeRemoteEvents) {
-      if (!localEvById.has(rev.id)) {
-        eventsToPull.push(rev);
-      }
-    }
+    );
 
     if (eventsToPull.length > 0) {
       await db.events.bulkPut(eventsToPull);
@@ -1381,31 +1372,15 @@ async function executeSyncPatientData(
       .where('user_id')
       .equals(patientId)
       .toArray();
-    const remoteMdById = new Map(remoteMealDetails.map((md) => [md.id, md]));
-    const localMdById = new Map(localMealDetails.map((md) => [md.id, md]));
-    const mdsToPush: MealDetail[] = [];
-    const mdsToPull: MealDetail[] = [];
-
-    for (const lmd of localMealDetails) {
-      if (!validEventIds.has(lmd.event_id)) continue;
-      const rmd = remoteMdById.get(lmd.id);
-      if (!rmd) {
-        if (canEdit) mdsToPush.push(lmd);
-      } else {
-        const lMs = parseTimestampMs(lmd.updated_at || lmd.created_at);
-        const rMs = parseTimestampMs(rmd.updated_at || rmd.created_at);
-        if ((lMs > rMs || (lmd.is_deleted && !rmd.is_deleted)) && canEdit) {
-          mdsToPush.push(lmd);
-        } else if (rMs > lMs || (rmd.is_deleted && !lmd.is_deleted) || !canEdit) {
-          mdsToPull.push(rmd);
-        }
+    const { toPush: mdsToPush, toPull: mdsToPull } = computeLwwDiff(
+      localMealDetails,
+      remoteMealDetails,
+      {
+        canEdit,
+        filterLocal: (lmd) => validEventIds.has(lmd.event_id),
+        preferDeletedOnTie: true,
       }
-    }
-    for (const rmd of remoteMealDetails) {
-      if (!localMdById.has(rmd.id)) {
-        mdsToPull.push(rmd);
-      }
-    }
+    );
 
     if (mdsToPull.length > 0) {
       await db.meal_details.bulkPut(mdsToPull);
@@ -1625,10 +1600,10 @@ export async function clearRemotePatientData(
       [
         {
           user_id: patientId,
-          hypo_threshold: 70,
-          hyper_threshold: 180,
-          target_tir_min: 70,
-          target_tir_max: 180,
+          hypo_threshold: DEFAULT_HYPO_THRESHOLD,
+          hyper_threshold: DEFAULT_HYPER_THRESHOLD,
+          target_tir_min: DEFAULT_HYPO_THRESHOLD,
+          target_tir_max: DEFAULT_HYPER_THRESHOLD,
           enable_default_insulin: false,
           default_insulin_breakfast: null,
           default_insulin_lunch: null,

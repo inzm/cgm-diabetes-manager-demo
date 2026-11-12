@@ -115,27 +115,28 @@
 4. **活動名と補足メモの保存**:
    - 活動名と補足メモを組み合わせて `events.memo` に保存し、実施時間を `events.duration_minutes`、インスリン単位数を `events.insulin_units` に保存する。
 
-### 3.4 タイムゾーン安全な日時保存 & 食前・食後血糖値バインドの責務分離 (`src/lib/dateUtils.ts`)
+### 3.4 タイムゾーン安全な日時保存 & 食前・食後血糖値バインドの局所検索・CSV一括連動 (`src/lib/dateUtils.ts`, `src/lib/anomalyExtractor.ts`)
 - **タイムゾーンズレの完全防止**:
   - 入力された日付（`YYYY-MM-DD`）と時刻（`HH:mm`）は、`new Date(...).toISOString()`（UTC変換による -9時間ズレが発生する）を使わず、必ず `buildWallClockIso(date, time)`（`src/lib/dateUtils.ts`）を用いて `"YYYY-MM-DDTHH:mm:00.000Z"` 形式で保存・検索する。
   - 編集時の日時復元も `extractDateStr(event.event_datetime)` および `extractTimeStr(event.event_datetime)` を用い、入力した時刻と1分の狂いもなく一致させる。
-- **食前・食後血糖値バインドのCSV取込時への集約**:
-  - 食事を記録する時点では当日のCGM履歴データ（CSV）はまだ取り込まれていないのが一般的な運用であるため、食事記録モーダルの保存時には `libre_readings` の検索・バインドを行わない。
-  - 代わりに、後日リブレCSV履歴データを取り込んだ時点（[`SPEC_CSV_IMPORT.md`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/docs/Web_Project/SPEC_CSV_IMPORT.md) / `src/lib/anomalyExtractor.ts` の `bindMealGlucoseFromReadings`）および分析計算時に、履歴データから食前血糖値（`pre_meal_glucose`）と食後ピーク血糖値（`post_meal_glucose`）を自動バインドする。
+- **保存時の局所インデックス検索とCSV取込時の一括バインド（`bindMealGlucoseFromReadings`）**:
+  - 食事記録モーダル保存時（`MealRecordModal.tsx`）には、`bindMealGlucoseFromReadings(currentPatientId, targetMealId)` を呼び出し、7.9万件の全件走査を行わずに対象食事イベントの前後1日のみを `[user_id+timestamp]` 複合インデックスの `.between()` で $O(1)$ 局所検索し、すでに該当日のCGMデータが存在する場合は食前血糖値（`pre_meal_glucose`：直前15分〜直後5分）と食後ピーク血糖値（`post_meal_glucose`：食後60〜180分）を即時紐づけする。
+  - 食事記録時点で当日のCGM履歴データ（CSV）がまだ取り込まれていない場合も、後日リブレCSV履歴データを取り込んだ時点（[`SPEC_CSV_IMPORT.md`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/docs/Web_Project/SPEC_CSV_IMPORT.md) / `CsvImportModal.tsx` の `bindMealGlucoseFromReadings(currentPatientId)`）で日付バケットインデックスにより全食事イベントへ $O(N+M)$ 一括自動バインドされる。
 
-### 3.5 データ永続化 (IndexedDB トランザクション & カスケード論理削除 & クラウド同期)
+### 3.5 データ永続化 (IndexedDB トランザクション & 食事明細UUID再利用 & カスケード論理削除 & クラウド同期)
 1. **新規作成 / 編集更新**:
    - `events` および `meal_details` を Dexie トランザクション内で原子的に保存し、クラウド接続時は `triggerBackgroundCloudSync(currentPatientId)`（`src/lib/syncEngine.ts`）を実行して即時同期する。
+   - 既存食事記録の編集保存時は、全明細を毎回削除して別UUIDで再作成する（論理削除レコードが無制限に増殖する）のを防ぐため、継続する明細行は既存の `id`（`tempId`、または同一食品名の未割当既存レコードUUID）を再利用して `bulkPut` で更新し、編集画面で削除された明細行のみを `is_deleted = true` へ更新する。
 2. **削除（カスケード論理削除）**:
    - `events.is_deleted = true` に更新し、紐づく `meal_details` の全レコードも連動して `is_deleted = true` に更新した上で、`triggerBackgroundCloudSync(currentPatientId)` によりクラウド側へ論理削除を同期する。
 
-### 3.6 ロール制約（家族閲覧ロール）・デモアプリ制御 & モーダル開閉アニメーション
+### 3.6 ロール制約（家族閲覧ロール）・デモアプリ制御 & モーダル開閉アニメーション (`src/lib/useAnimatedModal.ts`)
 - `isReadOnly === true`（家族アカウント・閲覧専用）の場合：
-  - モーダル内の「保存」「削除」「食品追加」ボタンを物理的に非活性化（disabled）または非表示化。
+  - モーダル内の入力フィールド（日時・区分・インスリン量・食品選択・メモ等）および「保存」「削除」「食品追加」ボタンをすべて物理的に非活性化（`disabled`）または非表示化し、`executeSave` / `executeDelete` の先頭でも早期リターンガードを実行する。
 - **デモアプリ（`isPortfolioMode()`）における糖質推定ボタンの非表示化**:
   - デモアプリでは、直接入力モード（「直接入力する」タブ）における「✨糖質推定」ボタンを非表示とする。
-- **モーダル・確認ダイアログの開閉アニメーション**:
-  - `MealRecordModal`、`ActivityRecordModal`、および `ConfirmDialog` はすべて2段階マウント制御により、オープン時は背景のフェードイン＋モーダル本体のズーム＆フェードイン（`cubic-bezier(0.16, 1, 0.3, 1)`）、クローズ時はフェードアウト＆縮小トランジションを実行してからアンマウントする。
+- **モーダル・確認ダイアログの開閉アニメーション (`src/lib/useAnimatedModal.ts`)**:
+  - `MealRecordModal`、`ActivityRecordModal`、および `ConfirmDialog` はすべて共通フック `useAnimatedModal` による2段階マウント制御および `blurActiveElementOnBackdropClick` を用い、オープン時は背景のフェードイン＋モーダル本体のズーム＆フェードイン（`cubic-bezier(0.16, 1, 0.3, 1)`）、クローズ時はフェードアウト＆縮小トランジションを実行してからアンマウントする。
 
 ---
 
@@ -147,7 +148,7 @@
   - デフォルト値機能OFF時はインスリン欄が空欄（`placeholder="0"`）となり、ON時は選択された食事区分（朝・昼・夕・間食）のデフォルト単位数が自動入力され、空欄のまま保存ボタンを押した際は「インスリン投与量が未入力です。0単位として保存しますか？」の確認ダイアログが表示されること。
 - [x] **DoD-3: 未保存変更（`isDirty`）に基づく破棄確認ダイアログ & 開発者用語の完全排除**
   - 初期状態から入力変更がある場合のみキャンセル・閉じる押下時に「入力データが破棄されます。よろしいですか？」の確認が表示され、モーダル内に「マスタ」等の開発者用語が一切表示されないこと。
-- [x] **DoD-4: 食前血糖値バインドのCSV取込時への集約**
+- [x] **DoD-4: 保存時の局所インデックス検索とCSV取込時の一括バインド**
   - 食事記録モーダル保存時には全件走査を行わず、対象食事イベントの前後1日のみを `[user_id+timestamp]` 複合インデックスの `between()` で局所検索して食前・食後ピーク血糖値を即時紐づけし、CSV履歴データ取込完了時には日付バケットインデックスで一括自動バインドされること。
 - [x] **DoD-5: 活動記録のよく使う活動連動 & 初期値プレースホルダー化**
   - 活動記録モーダルの活動名・インスリン欄の初期値が空欄プレースホルダーとなり、よく使う活動を選択すると活動名と標準実施時間（分）が自動セットされて保存できること。

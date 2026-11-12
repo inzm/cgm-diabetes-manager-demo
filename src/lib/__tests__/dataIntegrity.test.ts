@@ -1231,11 +1231,25 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       });
       expect(resNoKey.status).toBe(503);
 
-      // 2. 不正なリクエストボディ時は 400 を返すこと
-      const resBadBody = await onRequestPost({
+      // 2. 認証も同一Originも無いリクエストは 401 を返すこと
+      const resUnauth = await onRequestPost({
         request: new Request('https://example.com/api/gemini', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ foodName: 'カレーライス', amount: 1, unit: '皿' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-test-key' },
+      });
+      expect(resUnauth.status).toBe(401);
+
+      // 3. 同一Originで不正なリクエストボディ時は 400 を返すこと
+      const resBadBody = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+          },
           body: JSON.stringify({ foodName: '', amount: 1, unit: '皿' }),
         }),
         env: { GEMINI_API_KEY: 'dummy-test-key' },
@@ -1680,6 +1694,316 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
         });
         expect(res.errorMessage).toBeUndefined();
       }
+    });
+  });
+
+  describe('13. リファクタリング共通純粋関数 (computeLwwDiff / computeBoundGlucoseForMeal / backupRestore マルチテナント保護)', () => {
+    it('computeLwwDiff がローカル・リモートの LWW 差分・同値削除優先・viewer時 Push 抑止を純粋関数として正確に算出すること', async () => {
+      const { computeLwwDiff, normalizeToWallClockIso } = await import('../syncEngine');
+
+      interface TestEntity {
+        id: string;
+        name: string;
+        updated_at: string;
+        created_at: string;
+        is_deleted?: boolean;
+      }
+
+      const localRows: TestEntity[] = [
+        {
+          id: 'local-only-1',
+          name: 'Local Only',
+          updated_at: '2026-11-11T10:00:00.000Z',
+          created_at: '2026-11-11T10:00:00.000Z',
+          is_deleted: false,
+        },
+        {
+          id: 'local-newer-1',
+          name: 'Local Newer',
+          updated_at: '2026-11-11T12:00:00.000Z',
+          created_at: '2026-11-11T10:00:00.000Z',
+          is_deleted: false,
+        },
+        {
+          id: 'remote-newer-1',
+          name: 'Stale Local',
+          updated_at: '2026-11-11T09:00:00.000Z',
+          created_at: '2026-11-11T08:00:00.000Z',
+          is_deleted: false,
+        },
+        {
+          id: 'tie-deleted-1',
+          name: 'Deleted on Local',
+          updated_at: '2026-11-11T11:00:00.000Z',
+          created_at: '2026-11-11T10:00:00.000Z',
+          is_deleted: true,
+        },
+      ];
+
+      const remoteRows: TestEntity[] = [
+        {
+          id: 'remote-only-1',
+          name: 'Remote Only',
+          updated_at: normalizeToWallClockIso('2026-11-11T10:00:00+00:00'),
+          created_at: normalizeToWallClockIso('2026-11-11T10:00:00+00:00'),
+          is_deleted: false,
+        },
+        {
+          id: 'local-newer-1',
+          name: 'Stale Remote',
+          updated_at: normalizeToWallClockIso('2026-11-11T10:00:00+00:00'),
+          created_at: normalizeToWallClockIso('2026-11-11T10:00:00+00:00'),
+          is_deleted: false,
+        },
+        {
+          id: 'remote-newer-1',
+          name: 'Fresh Remote',
+          updated_at: normalizeToWallClockIso('2026-11-11T13:00:00+00:00'),
+          created_at: normalizeToWallClockIso('2026-11-11T08:00:00+00:00'),
+          is_deleted: false,
+        },
+        {
+          id: 'tie-deleted-1',
+          name: 'Active on Remote',
+          updated_at: '2026-11-11T11:00:00.000Z',
+          created_at: '2026-11-11T10:00:00.000Z',
+          is_deleted: false,
+        },
+      ];
+
+      const editableDiff = computeLwwDiff(localRows, remoteRows, {
+        canEdit: true,
+        preferDeletedOnTie: true,
+      });
+
+      expect(editableDiff.toPush.map((r) => r.id)).toEqual([
+        'local-only-1',
+        'local-newer-1',
+        'tie-deleted-1',
+      ]);
+      expect(editableDiff.toPull.map((r) => r.id)).toEqual([
+        'remote-newer-1',
+        'remote-only-1',
+      ]);
+      expect(editableDiff.toPull[0].updated_at).toBe('2026-11-11T13:00:00.000Z');
+
+      // canEdit: false (viewer) の場合は toPush が空配列になり、リモート正本として全リモート項目が Pull されること
+      const viewerDiff = computeLwwDiff(localRows, remoteRows, {
+        canEdit: false,
+        preferDeletedOnTie: true,
+      });
+      expect(viewerDiff.toPush).toEqual([]);
+      expect(viewerDiff.toPull.map((r) => r.id)).toEqual([
+        'local-newer-1',
+        'remote-newer-1',
+        'tie-deleted-1',
+        'remote-only-1',
+      ]);
+    });
+
+    it('computeBoundGlucoseForMeal が食前 [-15分, +5分] 最寄り値と食後 [+60分, +180分] ピーク値を正確に算出し、bindMealGlucoseFromReadings が測定値0件時も分析キャッシュを破棄すること', async () => {
+      const { computeBoundGlucoseForMeal, bindMealGlucoseFromReadings } = await import(
+        '../anomalyExtractor'
+      );
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { getAnalysisBoundaryCache, setAnalysisBoundaryCache } = await import(
+        '../analysisCalculators'
+      );
+
+      const mealTimeIso = '2026-10-20T12:00:00.000Z';
+      const mealEvent: HealthEvent = {
+        id: 'meal-test-1',
+        user_id: patientId,
+        event_datetime: mealTimeIso,
+        event_type: '食事',
+        timing_category: '昼食',
+        total_carbs: 60,
+        insulin_units: 6,
+        is_deleted: false,
+        created_at: mealTimeIso,
+        updated_at: mealTimeIso,
+      };
+
+      const candidateReadings: LibreReading[] = [
+        // 11:40 (-20m: 食前ウィンドウ外)
+        { id: 'r1', user_id: patientId, timestamp: '2026-10-20T11:40:00.000Z', glucose_value: 88, scan_type: 'Historic', created_at: '' },
+        // 11:48 (-12m: 食前ウィンドウ内、差12分)
+        { id: 'r2', user_id: patientId, timestamp: '2026-10-20T11:48:00.000Z', glucose_value: 96, scan_type: 'Historic', created_at: '' },
+        // 12:03 (+3m: 食前ウィンドウ内、差3分で最寄り)
+        { id: 'r3', user_id: patientId, timestamp: '2026-10-20T12:03:00.000Z', glucose_value: 102, scan_type: 'Historic', created_at: '' },
+        // 12:45 (+45m: 食後ウィンドウ前)
+        { id: 'r4', user_id: patientId, timestamp: '2026-10-20T12:45:00.000Z', glucose_value: 210, scan_type: 'Historic', created_at: '' },
+        // 13:15 (+75m: 食後ウィンドウ内)
+        { id: 'r5', user_id: patientId, timestamp: '2026-10-20T13:15:00.000Z', glucose_value: 168, scan_type: 'Historic', created_at: '' },
+        // 14:30 (+150m: 食後ウィンドウ内ピーク)
+        { id: 'r6', user_id: patientId, timestamp: '2026-10-20T14:30:00.000Z', glucose_value: 184, scan_type: 'Historic', created_at: '' },
+        // 15:15 (+195m: 食後ウィンドウ外)
+        { id: 'r7', user_id: patientId, timestamp: '2026-10-20T15:15:00.000Z', glucose_value: 220, scan_type: 'Historic', created_at: '' },
+      ];
+
+      const bound = computeBoundGlucoseForMeal(mealEvent, candidateReadings);
+      expect(bound.boundPre).toBe(102);
+      expect(bound.boundPost).toBe(184);
+
+      // ウィンドウ内に測定値がない場合は既存の pre_meal_glucose / post_meal_glucose を保持すること
+      const fallbackMeal: HealthEvent = {
+        ...mealEvent,
+        pre_meal_glucose: 110,
+        post_meal_glucose: 155,
+      };
+      const fallbackBound = computeBoundGlucoseForMeal(fallbackMeal, []);
+      expect(fallbackBound.boundPre).toBe(110);
+      expect(fallbackBound.boundPost).toBe(155);
+
+      // 測定値が0件の状態で bindMealGlucoseFromReadings を呼んだ場合でも、分析キャッシュが確実に破棄されること
+      clearInMemoryDemoDatabase();
+      const testPid = '77777777-7777-4777-8777-777777777777';
+      await db.events.put({
+        id: '77777777-7777-4777-8777-000000000001',
+        user_id: testPid,
+        event_datetime: mealTimeIso,
+        event_type: '食事',
+        timing_category: '昼食',
+        total_carbs: 60,
+        insulin_units: 6,
+        is_deleted: false,
+        created_at: mealTimeIso,
+        updated_at: mealTimeIso,
+      });
+      setAnalysisBoundaryCache(testPid, 'sig-stale', '2026-10-20', '2026-10-20', [], []);
+      expect(getAnalysisBoundaryCache(testPid)).not.toBeNull();
+
+      await bindMealGlucoseFromReadings(testPid);
+      expect(getAnalysisBoundaryCache(testPid)).toBeNull();
+
+      // targetMealEventId 指定かつ windowReadings が0件の場合、および対象イベントが論理削除済みの場合も分析キャッシュが破棄されること
+      setAnalysisBoundaryCache(testPid, 'sig-stale-2', '2026-10-20', '2026-10-20', [], []);
+      await bindMealGlucoseFromReadings(testPid, '77777777-7777-4777-8777-000000000001');
+      expect(getAnalysisBoundaryCache(testPid)).toBeNull();
+
+      setAnalysisBoundaryCache(testPid, 'sig-stale-3', '2026-10-20', '2026-10-20', [], []);
+      await bindMealGlucoseFromReadings(testPid, '77777777-7777-4777-8777-999999999999');
+      expect(getAnalysisBoundaryCache(testPid)).toBeNull();
+      clearInMemoryDemoDatabase();
+    });
+
+    it('resetPatientDataAndInvalidateCaches が対象患者のデータのみを初期化し、別患者（家族共有切替先）の7テーブルデータを誤消去しないこと', async () => {
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { resetPatientDataAndInvalidateCaches } = await import('../backupRestore');
+      const { clearPatientManuallyCleared } = await import('../realGlucoseLoader');
+      const { deterministicUuid } = await import('../uuidUtils');
+
+      clearInMemoryDemoDatabase();
+      const patientA = 'aaaaaaaa-1111-4111-8111-111111111111';
+      const patientB = 'bbbbbbbb-2222-4222-8222-222222222222';
+
+      // patientA と patientB の両方に user_settings, libre_readings, events, meal_details を投入
+      for (const pid of [patientA, patientB]) {
+        await db.user_settings.put({
+          user_id: pid,
+          hypo_threshold: pid === patientA ? 65 : 75,
+          hyper_threshold: pid === patientA ? 170 : 190,
+          target_tir_min: 70,
+          target_tir_max: 180,
+          enable_default_insulin: true,
+          default_insulin_breakfast: 8,
+          default_insulin_lunch: 6,
+          default_insulin_dinner: 10,
+          default_insulin_snack: 0,
+          updated_at: '2026-11-11T00:00:00.000Z',
+        });
+        await db.libre_readings.put({
+          id: deterministicUuid(`${pid}_reading_1`),
+          user_id: pid,
+          timestamp: '2026-11-11T08:00:00.000Z',
+          glucose_value: 120,
+          scan_type: 'Historic',
+          created_at: '2026-11-11T08:00:00.000Z',
+        });
+        const evId = deterministicUuid(`${pid}_event_1`);
+        await db.events.put({
+          id: evId,
+          user_id: pid,
+          event_datetime: '2026-11-11T08:00:00.000Z',
+          event_type: '食事',
+          timing_category: '朝食',
+          total_carbs: 50,
+          insulin_units: 5,
+          is_deleted: false,
+          created_at: '2026-11-11T08:00:00.000Z',
+          updated_at: '2026-11-11T08:00:00.000Z',
+        });
+        await db.meal_details.put({
+          id: deterministicUuid(`${pid}_detail_1`),
+          user_id: pid,
+          event_id: evId,
+          food_name: 'ごはん',
+          amount: 1,
+          unit: '杯',
+          carbs: 50,
+          is_deleted: false,
+          created_at: '2026-11-11T08:00:00.000Z',
+          updated_at: '2026-11-11T08:00:00.000Z',
+        });
+      }
+
+      // patientA のみデータ初期化を実行
+      await resetPatientDataAndInvalidateCaches(patientA);
+
+      // patientA の記録・設定は削除されていること
+      expect(await db.user_settings.get(patientA)).toBeUndefined();
+      expect(await db.libre_readings.where('user_id').equals(patientA).count()).toBe(0);
+      expect(await db.events.where('user_id').equals(patientA).count()).toBe(0);
+      expect(await db.meal_details.where('user_id').equals(patientA).count()).toBe(0);
+
+      // patientB の設定・血糖測定値・食事記録・明細は1件も消えずに保護されていること
+      const settingsB = await db.user_settings.get(patientB);
+      expect(settingsB).toBeDefined();
+      expect(settingsB?.hypo_threshold).toBe(75);
+      expect(settingsB?.hyper_threshold).toBe(190);
+      expect(await db.libre_readings.where('user_id').equals(patientB).count()).toBe(1);
+      expect(await db.events.where('user_id').equals(patientB).count()).toBe(1);
+      expect(await db.meal_details.where('user_id').equals(patientB).count()).toBe(1);
+
+      clearPatientManuallyCleared(patientA);
+      clearInMemoryDemoDatabase();
+    });
+
+    it('Cloudflare Pages Functions BFF (/api/gemini) が 20文字を超える unit パラメータを HTTP 400 で拒否し、formatJapaneseDateWithWeekday と getErrorMessage が安全に動作すること', async () => {
+      const { onRequestPost } = await import('../../../functions/api/gemini');
+      const { formatJapaneseDateWithWeekday } = await import('../dateUtils');
+      const { getErrorMessage } = await import('../utils');
+
+      const resLongUnit = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+          },
+          body: JSON.stringify({
+            foodName: 'ごはん',
+            amount: 1,
+            unit: '123456789012345678901', // 21文字 (> 20)
+          }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-test-key' },
+      });
+      expect(resLongUnit.status).toBe(400);
+
+      expect(formatJapaneseDateWithWeekday('2026-08-25')).toEqual({
+        formattedDate: '2026年 8月 25日 (火)',
+        dayOfWeek: 2,
+      });
+      expect(formatJapaneseDateWithWeekday('invalid-date')).toEqual({
+        formattedDate: 'invalid-date',
+        dayOfWeek: -1,
+      });
+
+      expect(getErrorMessage(new Error('DB error'))).toBe('DB error');
+      expect(getErrorMessage('string error')).toBe('string error');
+      expect(getErrorMessage({ message: 'obj error' })).toBe('obj error');
+      expect(getErrorMessage(null, 'デフォルトエラー')).toBe('デフォルトエラー');
     });
   });
 });

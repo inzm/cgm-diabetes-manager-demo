@@ -1,14 +1,220 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   estimateCarbsWithGemini,
   estimateCarbsLocally,
   isGeminiBffEnabled,
+  buildBffRequestHeaders,
 } from '../gemini';
+import { __setSupabaseClientForTest } from '../supabase';
 import { escapeHtml } from '../utils';
+import { onRequestPost, verifyBffRequestAuth } from '../../../functions/api/gemini';
+
+function makeTestJwt(payload: Record<string, unknown>): string {
+  const encode = (obj: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(obj))
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode(payload)}.dummy-sig`;
+}
 
 describe('gemini (方式1: BFFプロキシ連携 & 日本食品標準成分表内蔵辞書)', () => {
+  afterEach(() => {
+    __setSupabaseClientForTest(undefined);
+    vi.restoreAllMocks();
+  });
+
   it('デフォルト環境ではBFFフラグがfalseまたはbooleanであること', () => {
     expect(typeof isGeminiBffEnabled()).toBe('boolean');
+  });
+
+  describe('Cloudflare Pages Functions BFF 認証検証 (案2: 本番モード時の Supabase JWT または同一 Origin 検証)', () => {
+    it('本番モードで JWT も同一 Origin ヘッダーも無い外部リクエストを HTTP 401 で遮断すること', async () => {
+      const res = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-key', APP_MODE: 'personal' },
+      });
+      expect(res.status).toBe(401);
+      const body = await res.json();
+      expect(body.error).toContain('Unauthorized');
+    });
+
+    it('Cross-Origin (Origin不一致 / Sec-Fetch-Site: cross-site / Referer不一致) リクエストを HTTP 403 で即時遮断すること', async () => {
+      const crossOriginRes = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://malicious.example.org',
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-key' },
+      });
+      expect(crossOriginRes.status).toBe(403);
+
+      const crossSiteRes = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Sec-Fetch-Site': 'cross-site',
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-key' },
+      });
+      expect(crossSiteRes.status).toBe(403);
+
+      const badRefererRes = await verifyBffRequestAuth({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            Referer: 'https://evil.example.org/page',
+          },
+        }),
+        env: { GEMINI_API_KEY: 'dummy-key' },
+      });
+      expect(badRefererRes.authorized).toBe(false);
+      expect(badRefererRes.status).toBe(403);
+    });
+
+    it('不正または期限切れの Supabase JWT が送信された場合は同一 Origin であっても HTTP 401 で拒否すること', async () => {
+      const expiredToken = makeTestJwt({
+        sub: '11111111-1111-4111-8111-111111111111',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) - 60,
+      });
+
+      const resExpired = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+            Authorization: `Bearer ${expiredToken}`,
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-key' },
+      });
+      expect(resExpired.status).toBe(401);
+    });
+
+    it('SUPABASE_URL / SUPABASE_ANON_KEY 未設定時に同一 Origin ヘッダー無しで偽造 JWT のみを送った外部リクエストを HTTP 401 で遮断すること', async () => {
+      const forgedToken = makeTestJwt({
+        sub: 'attacker-user-id',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      const resForged = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${forgedToken}`,
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-key', APP_MODE: 'personal' },
+      });
+      expect(resForged.status).toBe(401);
+    });
+
+    it('BFF が 401 (Origin/Referer/Sec-Fetch-Site 欠落・未ログイン) を返した場合、クライアント側で内蔵日本食品標準成分辞書へ安全にフォールバックすること', async () => {
+      vi.stubEnv('VITE_ENABLE_GEMINI_BFF', 'true');
+      try {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
+        );
+        const res = await estimateCarbsWithGemini('白ごはん', 1, '杯');
+        expect(res.carbs_g).toBe(55.2);
+        expect(res.confidence).toBe('high');
+        expect(res.note).toContain('日本食品標準成分表');
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('有効な Supabase JWT または同一 Origin が確認できた場合は認証を通過し、上流Gemini API応答を整形して返すこと', async () => {
+      const validToken = makeTestJwt({
+        sub: '11111111-1111-4111-8111-111111111111',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes('/auth/v1/user')) {
+          return new Response(JSON.stringify({ id: '11111111-1111-4111-8111-111111111111' }), {
+            status: 200,
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        carbs_g: 55.24,
+                        confidence: 'high',
+                        note: 'AI推定: 精白米ご飯1杯',
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      });
+
+      const resJwt = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${validToken}`,
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: {
+          GEMINI_API_KEY: 'dummy-key',
+          SUPABASE_URL: 'https://project.supabase.co',
+          SUPABASE_ANON_KEY: 'anon-key',
+        },
+      });
+      expect(resJwt.status).toBe(200);
+      const data = await resJwt.json();
+      expect(data).toEqual({
+        carbs_g: 55.2,
+        confidence: 'high',
+        note: 'AI推定: 精白米ご飯1杯',
+      });
+    });
+
+    it('buildBffRequestHeaders が Supabase セッション存在時に Authorization: Bearer ヘッダーを自動付与すること', async () => {
+      __setSupabaseClientForTest({
+        auth: {
+          getSession: async () => ({
+            data: { session: { access_token: 'supabase-jwt-token-xyz' } },
+          }),
+        },
+      } as unknown as Parameters<typeof __setSupabaseClientForTest>[0]);
+
+      const headers = await buildBffRequestHeaders();
+      expect(headers['Content-Type']).toBe('application/json');
+      expect(headers['Authorization']).toBe('Bearer supabase-jwt-token-xyz');
+    });
   });
 
   describe('estimateCarbsWithGemini / estimateCarbsLocally (標準食品辞書推定)', () => {

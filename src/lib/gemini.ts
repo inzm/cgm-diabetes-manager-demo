@@ -8,6 +8,7 @@
  */
 
 import { INITIAL_FOODS } from './foodSeed';
+import { getSupabaseClient } from './supabase';
 
 export interface GeminiCarbEstimateResult {
   carbs_g: number;
@@ -23,6 +24,28 @@ export function isGeminiBffEnabled(): boolean {
 }
 
 /**
+ * BFF (`/api/gemini`) 呼び出し用の認証ヘッダー（Supabase JWT が存在する場合は Bearer 付与）を構築する
+ */
+export async function buildBffRequestHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  try {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data?.session?.access_token?.trim();
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+    }
+  } catch {
+    // セッション取得失敗時は同一Originブラウザコンテキストで送信し、失敗時は内蔵辞書へフォールバック
+  }
+  return headers;
+}
+
+/**
  * 食品名・分量・単位から糖質量(g)を自動計算する
  */
 export async function estimateCarbsWithGemini(
@@ -34,9 +57,11 @@ export async function estimateCarbsWithGemini(
 
   if (isGeminiBffEnabled()) {
     try {
+      const headers = await buildBffRequestHeaders();
       const res = await fetch('/api/gemini', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        credentials: 'same-origin',
         body: JSON.stringify({
           foodName: foodName.trim(),
           amount: numericAmount,

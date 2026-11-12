@@ -6,7 +6,7 @@ description: >-
 
 # AIオーケストレーション & ノンストップ自動デプロイスキル (`ai-orchestrator-pipeline`)
 
-このスキルは、本リポジトリにおける開発タスク（コード修正・デザイン検証・仕様書更新・Git Push・Cloudflare Pages デプロイ）を、**マルチエージェント協調（Subagent Orchestration）** と **一気通貫パイプラインスクリプト（[`scripts/orchestrate-pipeline.mjs`](../../scripts/orchestrate-pipeline.mjs)）** によって最高速度かつ無欠陥で完遂するための標準オーケストレーション手順です。
+このスキルは、本リポジトリにおける開発タスク（コード修正・デザイン検証・仕様書更新・Git Push・Cloudflare Pages デプロイ）を、**マルチエージェント協調（Subagent Orchestration）** と **一気通貫パイプラインスクリプト（[`scripts/orchestrate-pipeline.mjs`](../../../scripts/orchestrate-pipeline.mjs)）** によって最高速度かつ無欠陥で完遂するための標準オーケストレーション手順です。
 
 ---
 
@@ -58,12 +58,14 @@ description: >-
 npm run pipeline:verify
 ```
 このコマンド1つで以下が順番に自動実行されます：
-1. `npm run test:docs`: 仕様書同期・セキュリティ・ハリボテ排除・開発者用語ゼロ検証
+1. `npm run test:docs`: 仕様書・図面・DDL同期・セキュリティ・ハリボテ排除・開発者用語ゼロ検証
 2. `npm run typecheck`: TypeScript 厳格型検査
 3. `npm test`: Vitest 臨床計算・データ整合性単体テスト
-4. `npm run build:portfolio`: ポートフォリオ本番バンドルビルド
-5. `npm run test:e2e:regression`: Playwright E2E回帰テスト（E2E-1〜E2E-9）
-6. `npm run test:visual`: デスクトップ＆モバイル全11画面のスクリーンショット撮影＆DOMレイアウト監査
+4. `npm run test:smoke`: Vite 開発サーバー全56エンドポイントのHTTP 200 & エラーオーバーレイゼロ検証
+5. `npm run build:portfolio`: ポートフォリオ本番バンドルビルド
+6. `npm run test:e2e:regression`: Playwright E2E回帰テスト（E2E-1〜E2E-14）
+7. `npm run test:visual`: デスクトップ＆モバイル全11画面のスクリーンショット撮影＆DOMレイアウト監査
+8. `npm run build:personal`: 個人本番バンドルビルド（`target=personal` 時）
 
 実行後、親エージェント（または Visual QA サブエージェント）は `.agents/scratch/screenshots/` 内の対象スクリーンショットを `read_file` で視覚確認します。
 

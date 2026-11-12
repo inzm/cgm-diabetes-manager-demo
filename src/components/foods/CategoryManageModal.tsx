@@ -6,9 +6,10 @@ import { invalidateFoodMasterMemoryCache } from '@/components/foods/FoodMasterVi
 import { deterministicUuid, ensureUuid } from '@/lib/uuidUtils';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { usePatient } from '@/contexts/PatientContext';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import { X, Tag, Plus, Edit3, Trash2, Check } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
-import { cn } from '@/lib/utils';
+import { cn, getErrorMessage } from '@/lib/utils';
 
 /**
  * カテゴリ新規追加（論理削除済み同名カテゴリが存在する場合は新規UUIDを採番せず復活更新）
@@ -50,10 +51,11 @@ export async function addOrReviveCategory(params: {
       updated_at: now,
     };
     await db.categories.put(revived);
-    for (const extra of deletedMatches) {
-      if (extra.id !== normalizedId) {
-        await db.categories.delete(extra.id);
-      }
+    const extraIds = deletedMatches
+      .filter((extra) => extra.id !== normalizedId)
+      .map((extra) => extra.id);
+    if (extraIds.length > 0) {
+      await db.categories.bulkDelete(extraIds);
     }
     return revived;
   }
@@ -95,8 +97,10 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [deleteTargetCategory, setDeleteTargetCategory] = useState<Category | null>(null);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
-  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
+  const { shouldRender, isVisible, blurActiveElementOnBackdropClick } = useAnimatedModal(
+    isOpen,
+    220
+  );
 
   useEffect(() => {
     setNewCategoryName('');
@@ -106,24 +110,6 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
     setDeleteTargetCategory(null);
     setShowDiscardConfirm(false);
   }, [isOpen, targetType]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      const rafId = window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setIsVisible(true);
-        });
-      });
-      return () => window.cancelAnimationFrame(rafId);
-    } else {
-      setIsVisible(false);
-      const timerId = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 220);
-      return () => window.clearTimeout(timerId);
-    }
-  }, [isOpen]);
 
   if (!shouldRender) return null;
 
@@ -138,8 +124,8 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
+    if (e.target === e.currentTarget) {
+      blurActiveElementOnBackdropClick();
     }
   };
 
@@ -169,14 +155,14 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
         categoryName: trimmed,
         displayOrder: maxOrder + 1,
       });
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'カテゴリの追加に失敗しました。');
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, 'カテゴリの追加に失敗しました。'));
       return;
     }
 
     setNewCategoryName('');
     invalidateFoodMasterMemoryCache(currentPatientId);
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(currentPatientId);
     triggerBackgroundCloudSync(currentPatientId);
     onChanged();
   };
@@ -218,7 +204,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
     setEditingId(null);
     setEditingName('');
     invalidateFoodMasterMemoryCache(currentPatientId);
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(currentPatientId);
     triggerBackgroundCloudSync(currentPatientId);
     onChanged();
   };
@@ -266,8 +252,10 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
           .equals(currentPatientId)
           .filter((f) => f.category_id === targetId)
           .toArray();
-        for (const f of affectedFoods) {
-          await db.food_master.update(f.id, { category_id: fallbackCatId, updated_at: now });
+        if (affectedFoods.length > 0) {
+          await db.food_master.bulkPut(
+            affectedFoods.map((f) => ({ ...f, category_id: fallbackCatId, updated_at: now }))
+          );
         }
       } else {
         const affectedEvents = await db.event_master
@@ -275,8 +263,10 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
           .equals(currentPatientId)
           .filter((ev) => ev.category_id === targetId)
           .toArray();
-        for (const ev of affectedEvents) {
-          await db.event_master.update(ev.id, { category_id: fallbackCatId, updated_at: now });
+        if (affectedEvents.length > 0) {
+          await db.event_master.bulkPut(
+            affectedEvents.map((ev) => ({ ...ev, category_id: fallbackCatId, updated_at: now }))
+          );
         }
       }
 
@@ -287,7 +277,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
     });
 
     invalidateFoodMasterMemoryCache(currentPatientId);
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(currentPatientId);
     triggerBackgroundCloudSync(currentPatientId);
     onChanged();
   };

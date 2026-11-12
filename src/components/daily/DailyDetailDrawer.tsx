@@ -12,6 +12,8 @@ import {
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
+import { formatJapaneseDateWithWeekday } from '@/lib/dateUtils';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import {
   X,
   ChevronLeft,
@@ -63,8 +65,7 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
   const { currentPatientId, isReadOnly } = usePatient();
 
   // ドロワーの滑らかなスライドイン・スライドアウト用2段階マウント状態
-  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
+  const { shouldRender, isVisible } = useAnimatedModal(isOpen, 280);
 
   const [isMealModalOpen, setIsMealModalOpen] = useState<boolean>(false);
   const [hasOpenedMealModal, setHasOpenedMealModal] = useState<boolean>(false);
@@ -84,25 +85,6 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
   const drawerPanelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const headerAreaRef = useRef<HTMLDivElement>(null);
-
-  // 開閉時のスライドイン/アウトアニメーション制御
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      const rafId = window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setIsVisible(true);
-        });
-      });
-      return () => window.cancelAnimationFrame(rafId);
-    } else {
-      setIsVisible(false);
-      const timerId = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 280);
-      return () => window.clearTimeout(timerId);
-    }
-  }, [isOpen]);
 
   // モバイル実機で下スワイプ時にブラウザ標準の Pull-to-Refresh（引っ張ってリロード）が発動しないよう
   // ドロワー表示中は body のオーバースクロールをロックし、non-passive touchmove で下方向オーバースクロールを即座に抑止する
@@ -258,12 +240,7 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
 
   if (!shouldRender) return null;
 
-  const dateObj = new Date(`${targetDate}T00:00:00`);
-  const weekdayNames = ['日', '月', '火', '水', '木', '金', '土'];
-  const dayOfWeek = !isNaN(dateObj.getTime()) ? dateObj.getDay() : -1;
-  const formattedDate = !isNaN(dateObj.getTime())
-    ? `${dateObj.getFullYear()}年 ${dateObj.getMonth() + 1}月 ${dateObj.getDate()}日 (${weekdayNames[dayOfWeek]})`
-    : targetDate;
+  const { formattedDate, dayOfWeek } = formatJapaneseDateWithWeekday(targetDate);
 
   // 当日のイベントを「食事情報」と「イベント情報（高血糖・低血糖・活動・単体インスリン）」に分離
   const dayAllEvents = events
@@ -308,13 +285,15 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
         await db.events.update(event.id, { is_deleted: true, updated_at: nowIso });
         if (event.event_type === '食事') {
           const details = await db.meal_details.where('event_id').equals(event.id).toArray();
-          for (const d of details) {
-            await db.meal_details.update(d.id, { is_deleted: true, updated_at: nowIso });
+          if (details.length > 0) {
+            await db.meal_details.bulkPut(
+              details.map((d) => ({ ...d, is_deleted: true, updated_at: nowIso }))
+            );
           }
         }
       });
       invalidateInMemoryRecentCache(currentPatientId);
-      invalidateAnalysisDatasetCache();
+      invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
       if (onReloadData) onReloadData();
     } catch (err) {

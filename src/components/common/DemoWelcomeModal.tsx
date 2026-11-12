@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { isDemoCsvImportDisabled } from '@/lib/realGlucoseLoader';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
+import { cn } from '@/lib/utils';
 
 export function shouldShowDemoWelcomeModal(): boolean {
   if (!isDemoCsvImportDisabled()) return false;
@@ -17,6 +19,7 @@ export interface DemoWelcomeModalProps {
 }
 
 export const DemoWelcomeModal: React.FC<DemoWelcomeModalProps> = ({ isOpen, onClose }) => {
+  const { shouldRender, isVisible } = useAnimatedModal(isOpen, 220);
   const dialogCardRef = useRef<HTMLDivElement>(null);
   const startButtonRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
@@ -60,11 +63,14 @@ export const DemoWelcomeModal: React.FC<DemoWelcomeModalProps> = ({ isOpen, onCl
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  if (!shouldRender) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-[2px]"
+      className={cn(
+        'fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/45 backdrop-blur-[2px] transition-opacity duration-200 ease-out',
+        isVisible ? 'opacity-100' : 'opacity-0'
+      )}
       role="dialog"
       aria-modal="true"
       aria-labelledby="demo-welcome-modal-title"
@@ -78,7 +84,10 @@ export const DemoWelcomeModal: React.FC<DemoWelcomeModalProps> = ({ isOpen, onCl
       />
       <div
         ref={dialogCardRef}
-        className="relative z-10 w-full max-w-sm sm:max-w-[400px] max-h-[calc(100dvh-2rem)] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-slate-200/90"
+        className={cn(
+          'relative z-10 w-full max-w-sm sm:max-w-[400px] max-h-[calc(100dvh-2rem)] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-slate-200/90 transition-all duration-220 ease-[cubic-bezier(0.16,1,0.3,1)]',
+          isVisible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'
+        )}
       >
         <div className="p-4 sm:p-5 space-y-3.5">
           {/* ヘッダー */}

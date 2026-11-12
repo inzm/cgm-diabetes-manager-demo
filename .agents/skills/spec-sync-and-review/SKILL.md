@@ -40,11 +40,11 @@ description: デザイン・仕様の意図検証（ユーザーレビュー）�
 | `src/components/daily/*` | `docs/Web_Project/SPEC_CALENDAR.md` または `docs/Web_Project/SPEC_MEAL_RECORD.md` |
 | `src/components/common/OfflineBanner.tsx`<br>`src/lib/pwa.ts` | `docs/Web_Project/SPEC_PWA.md`（および必要に応じ `SPEC_SETTINGS.md`） |
 | `src/components/analysis/*`<br>`src/lib/analysisCalculators.ts` | `docs/Web_Project/SPEC_ANALYSIS.md`（および必要に応じ `USER_GUIDE.md`） |
-| `src/components/foods/*`<br>`src/lib/foodSeed.ts`<br>`src/lib/gemini.ts` | `docs/Web_Project/SPEC_FOOD_MASTER.md`（および必要に応じ `USER_GUIDE.md`） |
-| `src/components/import/*`<br>`src/workers/csvParser.worker.ts`<br>`src/lib/anomalyExtractor.ts` | `docs/Web_Project/SPEC_CSV_IMPORT.md`（および必要に応じ `USER_GUIDE.md`） |
+| `src/components/foods/*`<br>`src/lib/foodSeed.ts`<br>`src/lib/gemini.ts`<br>`functions/api/gemini.ts` | `docs/Web_Project/SPEC_FOOD_MASTER.md` / `SPEC_SETTINGS.md` / `ARCHITECTURE.md` / `diagrams/system_architecture.drawio`（および必要に応じ `USER_GUIDE.md`） |
+| `src/components/import/*`<br>`src/workers/csvParser.worker.ts`<br>`src/lib/anomalyExtractor.ts` | `docs/Web_Project/SPEC_CSV_IMPORT.md` / `diagrams/CSV_IMPORT_AND_ANOMALY_FLOW.md` / `diagrams/SEQUENCE_AND_ERD.md`（および必要に応じ `USER_GUIDE.md`） |
 | `src/components/records/*` | `docs/Web_Project/SPEC_MEAL_RECORD.md`（および必要に応じ `USER_GUIDE.md`） |
-| `src/components/settings/*`<br>`src/contexts/PatientContext.tsx`<br>`src/lib/syncEngine.ts`<br>`supabase/migrations/*` | `docs/Web_Project/SPEC_SETTINGS.md` / `ARCHITECTURE.md` / `USER_GUIDE.md` |
-| `src/lib/db.ts`<br>`src/types/database.ts` | `docs/Web_Project/ARCHITECTURE.md` |
+| `src/components/settings/*`<br>`src/contexts/PatientContext.tsx`<br>`src/lib/syncEngine.ts`<br>`src/lib/supabase.ts`<br>`supabase/migrations/*` | `docs/Web_Project/SPEC_SETTINGS.md` / `ARCHITECTURE.md` / `USER_GUIDE.md` / `diagrams/SEQUENCE_AND_ERD.md` / `diagrams/system_architecture.drawio` |
+| `src/lib/db.ts`<br>`src/types/database.ts`<br>`src/lib/uuidUtils.ts`<br>`src/lib/backupRestore.ts` | `docs/Web_Project/ARCHITECTURE.md` / `SPEC_SETTINGS.md` / `diagrams/SEQUENCE_AND_ERD.md` |
 | 新規仕様書の追加・名称変更時 | `docs/Web_Project/README.md` |
 
 ---
@@ -52,8 +52,7 @@ description: デザイン・仕様の意図検証（ユーザーレビュー）�
 ## 3. デザイン・仕様変更の実行ステップ
 
 1. **Step 1: 4軸自律評価 & ユーザー相談（問題・選択肢がある場合）**
-2. **Step 2: Issue 起票 & トピックブランチ作成**
-3. **Step 3: 仕様書 (`docs/Web_Project/SPEC_*.md` および操作・招待手順変更時は `USER_GUIDE.md`) の先行更新**
-4. **Step 4: コード実装 & 単体/統合テスト追加**
-5. **Step 5: 5大品質ゲート + ドキュメント同期検証の実行 (`npm run verify:all; npm run test:smoke`)**
-6. **Step 6: アトミックコミット & PR マージ**
+2. **Step 2: 仕様書 (`docs/Web_Project/SPEC_*.md`、図面 `diagrams/*`、および操作・招待手順変更時は `USER_GUIDE.md`) の先行・同時更新**
+3. **Step 3: コード実装 & 単体/統合テスト追加**
+4. **Step 4: 品質ゲート + ドキュメント・DDL・図面同期検証の実行 (`npm run verify:all` または `npm run pipeline:verify`)**
+5. **Step 5: アトミックコミット & 出荷パイプライン実行 (`npm run pipeline:ship:personal` / `npm run pipeline:ship:demo`)**

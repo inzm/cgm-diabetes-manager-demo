@@ -5,9 +5,11 @@ import { FoodMaster, Category } from '@/types/database';
 import { estimateCarbsWithGemini } from '@/lib/gemini';
 import { invalidateAnalysisDatasetCache, isPortfolioMode } from '@/lib/realGlucoseLoader';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import { X, Sparkles, Loader2, Check, AlertCircle, Trash2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, getErrorMessage } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
+import { invalidateFoodMasterMemoryCache } from './FoodMasterView';
 
 interface FoodEditModalProps {
   isOpen: boolean;
@@ -26,7 +28,7 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
   onSaveSuccess,
   onRequestDelete,
 }) => {
-  const { currentPatientId } = usePatient();
+  const { currentPatientId, isReadOnly } = usePatient();
 
   const [foodName, setFoodName] = useState('');
   const [baseAmount, setBaseAmount] = useState('1');
@@ -68,26 +70,10 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
     }
   }, [isOpen, foodToEdit, categoryId, categories]);
 
-  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      const rafId = window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setIsVisible(true);
-        });
-      });
-      return () => window.cancelAnimationFrame(rafId);
-    } else {
-      setIsVisible(false);
-      const timerId = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 220);
-      return () => window.clearTimeout(timerId);
-    }
-  }, [isOpen]);
+  const { shouldRender, isVisible, blurActiveElementOnBackdropClick } = useAnimatedModal(
+    isOpen,
+    220
+  );
 
   if (!shouldRender) return null;
 
@@ -113,13 +99,14 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
+    if (e.target === e.currentTarget) {
+      blurActiveElementOnBackdropClick();
     }
   };
 
   // 糖質量を自動推定するハンドラ
   const handleEstimateCarbs = async () => {
+    if (isReadOnly) return;
     if (!foodName.trim()) {
       setErrorMsg('糖質を推定するには食品名を入力してください。');
       return;
@@ -137,8 +124,8 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
       );
       setCarbs(String(result.carbs_g));
       setEstimateNote(result.note);
-    } catch (err: any) {
-      setErrorMsg(`糖質推定エラー: ${err.message || err}`);
+    } catch (err: unknown) {
+      setErrorMsg(`糖質推定エラー: ${getErrorMessage(err)}`);
     } finally {
       setIsEstimating(false);
     }
@@ -146,6 +133,7 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isReadOnly) return;
 
     if (!foodName.trim()) {
       setErrorMsg('食品名を入力してください。');
@@ -179,12 +167,13 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
 
     try {
       await db.food_master.put(record);
-      invalidateAnalysisDatasetCache();
+      invalidateFoodMasterMemoryCache(currentPatientId);
+      invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
       onSaveSuccess();
       onClose();
-    } catch (err: any) {
-      setErrorMsg(`保存エラー: ${err.message || err}`);
+    } catch (err: unknown) {
+      setErrorMsg(`保存エラー: ${getErrorMessage(err)}`);
     }
   };
 
@@ -242,10 +231,11 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
             <input
               type="text"
               required
+              disabled={isReadOnly}
               value={foodName}
               onChange={(e) => setFoodName(e.target.value)}
               placeholder="例: 白米、食パン、りんご、カレーライス"
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all"
+              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all disabled:opacity-50"
             />
           </div>
 
@@ -259,10 +249,11 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
                 type="number"
                 step="any"
                 required
+                disabled={isReadOnly}
                 value={baseAmount}
                 onChange={(e) => setBaseAmount(e.target.value)}
                 placeholder="1"
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all"
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all disabled:opacity-50"
               />
             </div>
             <div>
@@ -272,11 +263,12 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
               <input
                 type="text"
                 required
+                disabled={isReadOnly}
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
                 list="unit-presets"
                 placeholder="杯, g, 個"
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all"
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all disabled:opacity-50"
               />
               <datalist id="unit-presets">
                 {unitPresets.map((u) => (
@@ -292,9 +284,10 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
               カテゴリ分類
             </label>
             <select
+              disabled={isReadOnly}
               value={categoryId}
               onChange={(e) => setCategoryId(e.target.value)}
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all bg-white"
+              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all bg-white disabled:opacity-50"
             >
               {categories.map((cat) => (
                 <option key={cat.id} value={cat.id}>
@@ -316,7 +309,7 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
                 <button
                   type="button"
                   onClick={handleEstimateCarbs}
-                  disabled={isEstimating || !foodName.trim()}
+                  disabled={isReadOnly || isEstimating || !foodName.trim()}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-linear-to-r from-amber-500 to-sky-500 text-white hover:opacity-90 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
                 >
                   {isEstimating ? (
@@ -339,10 +332,11 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
                 type="number"
                 step="0.1"
                 required
+                disabled={isReadOnly}
                 value={carbs}
                 onChange={(e) => setCarbs(e.target.value)}
                 placeholder="例: 36.8"
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all pr-10"
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all pr-10 disabled:opacity-50"
               />
               <span className="absolute right-3.5 top-2.5 text-xs text-slate-400 font-bold">
                 g
@@ -359,7 +353,7 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
 
           {/* アクションボタン */}
           <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100">
-            {foodToEdit && onRequestDelete ? (
+            {foodToEdit && onRequestDelete && !isReadOnly ? (
               <button
                 type="button"
                 onClick={() => {
@@ -386,7 +380,8 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold cursor-pointer transition-colors shadow-xs"
+                disabled={isReadOnly}
+                className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold cursor-pointer transition-colors shadow-xs disabled:opacity-50"
               >
                 保存する
               </button>

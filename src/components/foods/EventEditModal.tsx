@@ -3,10 +3,12 @@ import { EventMaster, Category } from '@/types/database';
 import { db } from '@/lib/db';
 import { invalidateAnalysisDatasetCache } from '@/lib/realGlucoseLoader';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import { usePatient } from '@/contexts/PatientContext';
 import { X, Footprints, Check, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
+import { invalidateFoodMasterMemoryCache } from './FoodMasterView';
 
 interface EventEditModalProps {
   isOpen: boolean;
@@ -58,26 +60,10 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
     }
   }, [isOpen, editItem, categoryId, categories]);
 
-  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      const rafId = window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setIsVisible(true);
-        });
-      });
-      return () => window.cancelAnimationFrame(rafId);
-    } else {
-      setIsVisible(false);
-      const timerId = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 220);
-      return () => window.clearTimeout(timerId);
-    }
-  }, [isOpen]);
+  const { shouldRender, isVisible, blurActiveElementOnBackdropClick } = useAnimatedModal(
+    isOpen,
+    220
+  );
 
   if (!shouldRender) return null;
 
@@ -101,8 +87,8 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
+    if (e.target === e.currentTarget) {
+      blurActiveElementOnBackdropClick();
     }
   };
 
@@ -148,7 +134,8 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
         await db.event_master.add(newEvent);
       }
 
-      invalidateAnalysisDatasetCache();
+      invalidateFoodMasterMemoryCache(currentPatientId);
+      invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
       onSaved();
       onClose();
@@ -207,9 +194,10 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
             <input
               type="text"
               value={eventName}
+              disabled={isReadOnly}
               onChange={(e) => setEventName(e.target.value)}
               placeholder="例: ウォーキング, 入浴, ブドウ糖補食"
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
               required
             />
           </div>
@@ -222,8 +210,9 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
               </label>
               <select
                 value={categoryId}
+                disabled={isReadOnly}
                 onChange={(e) => setCategoryId(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
               >
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -242,8 +231,9 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
                 min="0"
                 step="5"
                 value={defaultDuration}
+                disabled={isReadOnly}
                 onChange={(e) => setDefaultDuration(e.target.value)}
-                className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
               />
             </div>
           </div>
@@ -256,9 +246,10 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
             <input
               type="text"
               value={memo}
+              disabled={isReadOnly}
               onChange={(e) => setMemo(e.target.value)}
               placeholder="例: 食後の有酸素運動（目安30分）"
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
             />
           </div>
 

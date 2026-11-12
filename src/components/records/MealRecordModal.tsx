@@ -18,6 +18,7 @@ import {
 import { bindMealGlucoseFromReadings } from '@/lib/anomalyExtractor';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { estimateCarbsWithGemini } from '@/lib/gemini';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import {
   buildWallClockIso,
   extractDateStr,
@@ -37,7 +38,7 @@ import {
   Loader2,
   Lock,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, getErrorMessage } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 
 interface MealRecordModalProps {
@@ -419,6 +420,7 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
 
   // 直接入力モードでの糖質自動推定
   const handleEstimateCarbs = async () => {
+    if (isReadOnly) return;
     if (!newFoodName.trim()) {
       setErrorMsg('食品名を入力してください');
       return;
@@ -429,8 +431,8 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
       const amt = parseFloat(newAmount) || 1;
       const res = await estimateCarbsWithGemini(newFoodName.trim(), amt, newUnit.trim() || '人前');
       setNewCarbs(String(Math.round(res.carbs_g * 10) / 10));
-    } catch (err: any) {
-      setErrorMsg(err.message || '糖質の自動計算に失敗しました');
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, '糖質の自動計算に失敗しました'));
     } finally {
       setIsEstimating(false);
     }
@@ -538,8 +540,8 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
+    if (e.target === e.currentTarget) {
+      blurActiveElementOnBackdropClick();
     }
   };
 
@@ -590,13 +592,27 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
             .where('event_id')
             .equals(editEventId)
             .toArray();
-          for (const d of existingDetails) {
-            await db.meal_details.update(d.id, { is_deleted: true, updated_at: nowIso });
+          const existingById = new Map(existingDetails.map((d) => [d.id, d]));
+          const claimedIds = new Set<string>();
+          for (const item of mealItems) {
+            if (existingById.has(item.tempId)) {
+              claimedIds.add(item.tempId);
+            }
           }
 
-          for (const item of mealItems) {
-            await db.meal_details.add({
-              id: crypto.randomUUID(),
+          const upsertedDetails = mealItems.map((item) => {
+            let matched = existingById.get(item.tempId);
+            if (!matched) {
+              matched = existingDetails.find(
+                (d) => !claimedIds.has(d.id) && d.food_name === item.foodName
+              );
+              if (matched) {
+                claimedIds.add(matched.id);
+              }
+            }
+            const resolvedId = matched ? matched.id : item.tempId;
+            return {
+              id: resolvedId,
               user_id: currentPatientId,
               event_id: editEventId,
               food_name: item.foodName,
@@ -604,9 +620,22 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
               unit: item.unit,
               carbs: item.carbs,
               is_deleted: false,
-              created_at: nowIso,
+              created_at: matched?.created_at ?? nowIso,
               updated_at: nowIso,
-            });
+            };
+          });
+
+          const deletedDetails = existingDetails
+            .filter((d) => !claimedIds.has(d.id) && !d.is_deleted)
+            .map((d) => ({
+              ...d,
+              is_deleted: true,
+              updated_at: nowIso,
+            }));
+
+          const allToPut = [...deletedDetails, ...upsertedDetails];
+          if (allToPut.length > 0) {
+            await db.meal_details.bulkPut(allToPut);
           }
         });
       } else {
@@ -626,19 +655,21 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
             updated_at: nowIso,
           });
 
-          for (const item of mealItems) {
-            await db.meal_details.add({
-              id: crypto.randomUUID(),
-              user_id: currentPatientId,
-              event_id: newEventId,
-              food_name: item.foodName,
-              amount: item.amount,
-              unit: item.unit,
-              carbs: item.carbs,
-              is_deleted: false,
-              created_at: nowIso,
-              updated_at: nowIso,
-            });
+          if (mealItems.length > 0) {
+            await db.meal_details.bulkPut(
+              mealItems.map((item) => ({
+                id: item.tempId,
+                user_id: currentPatientId,
+                event_id: newEventId,
+                food_name: item.foodName,
+                amount: item.amount,
+                unit: item.unit,
+                carbs: item.carbs,
+                is_deleted: false,
+                created_at: nowIso,
+                updated_at: nowIso,
+              }))
+            );
           }
         });
       }
@@ -650,9 +681,9 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
 
       onSuccess();
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[MealRecordModal] Failed to save meal event:', err);
-      setErrorMsg(err.message || '保存に失敗しました');
+      setErrorMsg(getErrorMessage(err, '保存に失敗しました'));
     } finally {
       setIsSaving(false);
     }
@@ -671,16 +702,18 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
       await db.transaction('rw', [db.events, db.meal_details], async () => {
         await db.events.update(editEventId, { is_deleted: true, updated_at: nowIso });
         const details = await db.meal_details.where('event_id').equals(editEventId).toArray();
-        for (const d of details) {
-          await db.meal_details.update(d.id, { is_deleted: true, updated_at: nowIso });
+        if (details.length > 0) {
+          await db.meal_details.bulkPut(
+            details.map((d) => ({ ...d, is_deleted: true, updated_at: nowIso }))
+          );
         }
       });
       invalidateInMemoryRecentCache(currentPatientId);
-      invalidateAnalysisDatasetCache();
+      invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
       onSuccess();
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[MealRecordModal] Failed to delete event:', err);
       setErrorMsg('削除に失敗しました');
     } finally {
@@ -688,26 +721,10 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
     }
   };
 
-  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      const rafId = window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setIsVisible(true);
-        });
-      });
-      return () => window.cancelAnimationFrame(rafId);
-    } else {
-      setIsVisible(false);
-      const timerId = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 220);
-      return () => window.clearTimeout(timerId);
-    }
-  }, [isOpen]);
+  const { shouldRender, isVisible, blurActiveElementOnBackdropClick } = useAnimatedModal(
+    isOpen,
+    220
+  );
 
   if (!shouldRender) return null;
 
@@ -765,15 +782,17 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
                 <div className="flex items-center space-x-2">
                   <input
                     type="date"
+                    disabled={isReadOnly}
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
-                    className="min-h-[38px] px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="min-h-[38px] px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
                   />
                   <input
                     type="time"
+                    disabled={isReadOnly}
                     value={time}
                     onChange={(e) => setTime(e.target.value)}
-                    className="min-h-[38px] px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="min-h-[38px] px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
                   />
                 </div>
               </div>
@@ -789,12 +808,13 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
                     step="0.5"
                     min="0"
                     placeholder="0"
+                    disabled={isReadOnly}
                     value={insulinUnits}
                     onChange={(e) => {
                       setInsulinUnits(e.target.value);
                       setIsInsulinManuallyEdited(true);
                     }}
-                    className="w-24 min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-sky-700 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    className="w-24 min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-sky-700 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50"
                   />
                   <span className="text-xs text-slate-500 font-semibold">単位 (U)</span>
                 </div>
@@ -808,9 +828,10 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
                   <button
                     key={cat}
                     type="button"
+                    disabled={isReadOnly}
                     onClick={() => handleSelectTimingCategory(cat)}
                     className={cn(
-                      'min-h-[38px] py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer',
+                      'min-h-[38px] py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50',
                       timingCategory === cat
                         ? 'bg-amber-600 text-white shadow-2xs'
                         : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
@@ -1099,10 +1120,11 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
             </label>
             <input
               type="text"
+              disabled={isReadOnly}
               placeholder="例: 外食定食、野菜から摂取"
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
             />
           </div>
         </div>

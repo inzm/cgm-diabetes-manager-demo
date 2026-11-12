@@ -113,3 +113,36 @@ export function parseWallClockMs(iso: string): number {
   return Date.UTC(year, month, day, hour, min, sec);
 }
 
+/**
+ * AGENTS.md §8.3 準拠の標準エイリアス関数群
+ */
+export const buildLocalDateTimeString = buildWallClockIso;
+export const extractLocalDateStr = extractDateStr;
+export const extractLocalTimeStr = extractTimeStr;
+
+const JAPANESE_WEEKDAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'] as const;
+
+/**
+ * YYYY-MM-DD 文字列から「YYYY年M月D日 (曜)」形式の日本語表記と曜日番号 (0〜6) を返す
+ */
+export function formatJapaneseDateWithWeekday(dateStr: string): {
+  formattedDate: string;
+  dayOfWeek: number;
+} {
+  const clean = dateStr.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    return { formattedDate: dateStr, dayOfWeek: -1 };
+  }
+  const [y, m, d] = clean.split('-');
+  const yearNum = parseInt(y, 10);
+  const monthNum = parseInt(m, 10);
+  const dayNum = parseInt(d, 10);
+  const utcMs = Date.UTC(yearNum, monthNum - 1, dayNum);
+  if (isNaN(utcMs)) {
+    return { formattedDate: dateStr, dayOfWeek: -1 };
+  }
+  const dayOfWeek = new Date(utcMs).getUTCDay();
+  const formattedDate = `${yearNum}年 ${monthNum}月 ${dayNum}日 (${JAPANESE_WEEKDAY_NAMES[dayOfWeek]})`;
+  return { formattedDate, dayOfWeek };
+}
+

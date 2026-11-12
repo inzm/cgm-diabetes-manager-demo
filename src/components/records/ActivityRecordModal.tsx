@@ -10,6 +10,7 @@ import {
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import {
   buildWallClockIso,
   extractDateStr,
@@ -28,7 +29,7 @@ import {
   Loader2,
   Lock,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, getErrorMessage } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 
 interface ActivityRecordModalProps {
@@ -289,8 +290,8 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
+    if (e.target === e.currentTarget) {
+      blurActiveElementOnBackdropClick();
     }
   };
 
@@ -344,13 +345,13 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       }
 
       invalidateInMemoryRecentCache(currentPatientId);
-      invalidateAnalysisDatasetCache();
+      invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
       onSuccess();
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[ActivityRecordModal] Failed to save activity event:', err);
-      setErrorMsg(err.message || '保存に失敗しました');
+      setErrorMsg(getErrorMessage(err, '保存に失敗しました'));
     } finally {
       setIsSaving(false);
     }
@@ -368,11 +369,11 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       const nowIso = new Date().toISOString();
       await db.events.update(editEventId, { is_deleted: true, updated_at: nowIso });
       invalidateInMemoryRecentCache(currentPatientId);
-      invalidateAnalysisDatasetCache();
+      invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
       onSuccess();
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[ActivityRecordModal] Failed to delete event:', err);
       setErrorMsg('削除に失敗しました');
     } finally {
@@ -380,26 +381,10 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
     }
   };
 
-  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      const rafId = window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setIsVisible(true);
-        });
-      });
-      return () => window.cancelAnimationFrame(rafId);
-    } else {
-      setIsVisible(false);
-      const timerId = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 220);
-      return () => window.clearTimeout(timerId);
-    }
-  }, [isOpen]);
+  const { shouldRender, isVisible, blurActiveElementOnBackdropClick } = useAnimatedModal(
+    isOpen,
+    220
+  );
 
   if (!shouldRender) return null;
 
@@ -453,14 +438,16 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
                 <input
                   type="date"
                   value={date}
+                  disabled={isReadOnly}
                   onChange={(e) => setDate(e.target.value)}
-                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
                 />
                 <input
                   type="time"
                   value={time}
+                  disabled={isReadOnly}
                   onChange={(e) => setTime(e.target.value)}
-                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
                 />
               </div>
             </div>
@@ -481,8 +468,9 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
               <select
                 aria-label="カテゴリで絞り込む"
                 value={selectedCategoryId}
+                disabled={isReadOnly}
                 onChange={(e) => handleSelectCategoryById(e.target.value)}
-                className="w-full min-h-[42px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                className="w-full min-h-[42px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
               >
                 <option value="ALL">すべてのカテゴリ</option>
                 {eventCategories.map((cat) => (
@@ -495,8 +483,9 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
               <select
                 aria-label="よく使う活動から選ぶ"
                 value={selectedMasterId}
+                disabled={isReadOnly}
                 onChange={(e) => handleSelectEventMaster(e.target.value)}
-                className="w-full min-h-[42px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                className="w-full min-h-[42px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
               >
                 <option value="">活動を選ぶ（時間を自動入力）...</option>
                 {selectedCategoryId === 'ALL' && groupedEventMasters.length > 0
@@ -531,8 +520,9 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
               type="text"
               placeholder="例: ウォーキング、ジョギング、入浴、持効型インスリン投与"
               value={eventName}
+              disabled={isReadOnly}
               onChange={(e) => setEventName(e.target.value)}
-              className="w-full min-h-[40px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm font-bold text-slate-800 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full min-h-[40px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm font-bold text-slate-800 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
             />
           </div>
 
@@ -548,8 +538,9 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
                 step="5"
                 min="0"
                 value={durationMinutes}
+                disabled={isReadOnly}
                 onChange={(e) => setDurationMinutes(e.target.value)}
-                className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
               />
             </div>
 
@@ -565,8 +556,9 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
                   min="0"
                   placeholder="0"
                   value={insulinUnits}
+                  disabled={isReadOnly}
                   onChange={(e) => setInsulinUnits(e.target.value)}
-                  className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-sky-700 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-sky-700 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50"
                 />
                 <span className="text-xs text-slate-400 font-semibold">U</span>
               </div>
@@ -582,8 +574,9 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
               type="text"
               placeholder="例: 食後ウォーキング、軽く汗ばむ程度"
               value={memoNote}
+              disabled={isReadOnly}
               onChange={(e) => setMemoNote(e.target.value)}
-              className="w-full min-h-[40px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full min-h-[40px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
             />
           </div>
         </div>

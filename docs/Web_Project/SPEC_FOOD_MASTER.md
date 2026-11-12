@@ -64,16 +64,17 @@
    - 一覧表示、新規カテゴリ追加、カテゴリ名称変更、および**カテゴリ削除（受け皿である「未分類」`is_protected === true` を除くすべてのカテゴリが削除可能）**を実行。
    - **カテゴリ削除時の「未分類」自動移動（孤児データ防止）**: いずれかのカテゴリを削除した際、そのカテゴリに所属していた食品（`db.food_master`）または活動（`db.event_master`）は削除せず、同一トランザクション内で自動的に「未分類」カテゴリ（`deterministicUuid(`${currentPatientId}_cat_${targetType}_uncategorized`)`）へ付け替える。
    - **論理削除済み同名カテゴリの自動復活（UNIQUE制約衝突防止: `addOrReviveCategory`）**: `src/components/foods/CategoryManageModal.tsx` でカテゴリを新規追加する際、同じ `user_id`・`target_type`・`category_name` を持つ論理削除済み（`is_deleted: true`）のレコードが既に存在する場合は、新規UUIDで追加するのではなく既存レコードを `is_deleted: false` に復活・更新する（PostgreSQL の UNIQUE 制約との衝突を防止）。
-4. **削除操作時のカスタム確認ダイアログ (`src/components/common/ConfirmDialog.tsx`) & モーダル開閉アニメーション**:
-   - 単体削除・一括削除・カテゴリ削除時は、ブラウザ標準の `window.confirm()` を使わず、共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認を行う（カテゴリ削除時は所属項目が「未分類」へ移動する旨を明記）。
-   - `FoodEditModal`、`EventEditModal`、`CategoryManageModal`、および `ConfirmDialog` は2段階マウント制御により、開閉時に背景フェードとモーダル本体の滑らかなズーム＆フェードイン/アウトアニメーションを実行する。
+4. **削除操作時のカスタム確認ダイアログ (`src/components/common/ConfirmDialog.tsx`) & 共通モーダル開閉アニメーション (`src/lib/useAnimatedModal.ts`)**:
+   - 単体削除・一括削除・カテゴリ削除時は、ブラウザ標準の `window.confirm()` を使わず、共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認を行う（カテゴリ削除時は所属項目が「未分類」へ移動する旨を明記し、`bulkPut` で一括付け替えを行う）。
+   - `FoodEditModal`、`EventEditModal`、`CategoryManageModal`、および `ConfirmDialog` は共通フック `useAnimatedModal`（`src/lib/useAnimatedModal.ts`）による2段階マウント制御により、開閉時に背景フェードとモーダル本体の滑らかなズーム＆フェードイン/アウトアニメーションを実行し、保存・削除時には `invalidateFoodMasterMemoryCache(currentPatientId)` を呼び出してオンメモリキャッシュを即時更新する。また、`FoodEditModal` でも `EventEditModal` と同様に `isReadOnly` 時の保存・削除・糖質推定の早期リターンガードおよびボタンの `disabled` 制御を徹底する。
 
 ---
 
-## 3. 糖質量自動推定プロトコル (`src/lib/gemini.ts`, `functions/api/gemini.ts` — 方式1)
+## 3. 糖質量自動推定プロトコル (`src/lib/gemini.ts`, `functions/api/gemini.ts` — 方式1 + 案2認証検証)
 
 - 食品名、分量、単位から日本食品標準成分表に基づいて糖質量（`carbs_g`）を自動推定します。
 - セキュリティ保護のため、フロントエンド（`localStorage`）にはAPIキーを一切保持せず、サーバーサイドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効な場合はプロキシ経由、未接続時やオフライン時は内蔵の日本食品標準成分表辞書（`estimateCarbsLocally`）で安全かつ即座に推定値を返します。
+- **BFF認証検証（案2）**: クライアント（`src/lib/gemini.ts`）は Supabase セッションが存在する場合に `Authorization: Bearer <access_token>` を自動付与し、`credentials: 'same-origin'` で送信します。BFF（`functions/api/gemini.ts`）は本番モード時に **「有効な Supabase JWT または同一 Origin（`Origin` / `Sec-Fetch-Site: same-origin` / `Referer`）」** のいずれかを必須化し、Cross-Origin / Cross-Site リクエスト（`HTTP 403`）および無効・期限切れ JWT（`HTTP 401`）を遮断して Gemini API クォータの不正利用を防止します。
 
 ---
 

@@ -83,9 +83,9 @@
 - オフライン時、画面上部（ヘッダー直下）に控えめで安心感のあるバナーを表示（オンライン時は非表示）：
   > 📴 **オフライン動作中**: 端末内の保存データで動作しています。食事の記録やグラフ閲覧はそのまま行えます。
 
-### 4.2 PWAインストール促進機能 (`src/lib/pwa.ts` / `src/components/settings/SettingsView.tsx`)
+### 4.2 PWAインストール促進機能 (`src/lib/pwa.ts` / `src/components/settings/SettingsView.tsx` / `src/components/settings/VerificationPwaSection.tsx`)
 - ブラウザの `beforeinstallprompt` イベントを `usePwaInstallPrompt()` フック（`src/lib/pwa.ts`）で捕捉。
-- 日常のヘッダー領域を圧迫しないよう、ヘッダー上には配置せず、**設定画面（`SettingsView.tsx` の「5. 動作検証・アプリ追加」）内に「ホーム画面にアプリを追加」ボタン**として配置（`isInstallable === true` の場合のみ表示）。
+- 日常のヘッダー領域を圧迫しないよう、ヘッダー上には配置せず、**設定画面（`SettingsView.tsx` / `VerificationPwaSection.tsx` の「5. 動作検証・アプリ追加」）内に「ホーム画面にアプリを追加」ボタン**として配置（`isInstallable === true` の場合のみ表示）。
 
 ---
 

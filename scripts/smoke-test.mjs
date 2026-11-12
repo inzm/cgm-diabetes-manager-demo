@@ -11,8 +11,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createServer } from 'vite';
 
-const DEV_SERVER_URL = process.env.DEV_SERVER_URL || 'http://localhost:3000';
+const DEFAULT_DEV_SERVER_URL = process.env.DEV_SERVER_URL || 'http://localhost:3000';
 const ROOT_DIR = process.cwd();
 
 export const ENDPOINTS_TO_CHECK = [
@@ -25,6 +26,7 @@ export const ENDPOINTS_TO_CHECK = [
   '/src/components/common/ConfirmDialog.tsx',
   '/src/components/common/DemoWelcomeModal.tsx',
   '/src/components/common/AuthGateScreen.tsx',
+  '/src/components/common/PasswordStrengthChecklist.tsx',
   '/src/components/calendar/CalendarView.tsx',
   '/src/components/calendar/CalendarGrid.tsx',
   '/src/components/calendar/CalendarDayCell.tsx',
@@ -46,10 +48,31 @@ export const ENDPOINTS_TO_CHECK = [
   '/src/components/records/ActivityRecordModal.tsx',
   '/src/components/import/CsvImportModal.tsx',
   '/src/components/settings/SettingsView.tsx',
-  '/src/lib/uuidUtils.ts',
+  '/src/components/settings/TargetRangeSection.tsx',
+  '/src/components/settings/DefaultInsulinSection.tsx',
+  '/src/components/settings/DataBackupSection.tsx',
+  '/src/components/settings/CloudSyncFamilySection.tsx',
+  '/src/components/settings/VerificationPwaSection.tsx',
+  '/src/contexts/PatientContext.tsx',
+  '/src/lib/aggregates.ts',
+  '/src/lib/analysisCalculators.ts',
+  '/src/lib/anomalyExtractor.ts',
+  '/src/lib/backupRestore.ts',
+  '/src/lib/dateUtils.ts',
+  '/src/lib/db.ts',
+  '/src/lib/demoMealGenerator.ts',
+  '/src/lib/echartsCore.ts',
+  '/src/lib/foodSeed.ts',
+  '/src/lib/gemini.ts',
+  '/src/lib/pwa.ts',
   '/src/lib/realGlucoseLoader.ts',
   '/src/lib/supabase.ts',
   '/src/lib/syncEngine.ts',
+  '/src/lib/useAnimatedModal.ts',
+  '/src/lib/utils.ts',
+  '/src/lib/uuidUtils.ts',
+  '/src/types/database.ts',
+  '/src/workers/csvParser.worker.ts',
 ];
 
 const ERROR_PATTERNS = [
@@ -61,79 +84,115 @@ const ERROR_PATTERNS = [
   'Cannot find module',
 ];
 
-async function runSmokeTest() {
-  console.log(`\n======================================================`);
-  console.log(`🚀 Starting Runtime Smoke Test on ${DEV_SERVER_URL}`);
-  console.log(`======================================================\n`);
-
-  let hasError = false;
-  const results = [];
-
-  for (const endpoint of ENDPOINTS_TO_CHECK) {
-    // 1. 実ファイル存在確認 ('/' 以外)
-    if (endpoint !== '/') {
-      const localPath = path.join(ROOT_DIR, endpoint.replace(/^\//, ''));
-      if (!fs.existsSync(localPath)) {
-        console.error(`❌ [FAIL] ${endpoint} does NOT exist on disk (${localPath})`);
-        hasError = true;
-        results.push({ endpoint, status: 'MISSING_FILE' });
-        continue;
-      }
-    }
-
-    const targetUrl = `${DEV_SERVER_URL}${endpoint}`;
-    try {
-      const response = await fetch(targetUrl);
-      const text = await response.text();
-
-      if (response.status !== 200) {
-        console.error(`❌ [FAIL] ${endpoint} returned HTTP ${response.status}`);
-        console.error(`   Error Snippet: ${text.slice(0, 300)}...`);
-        hasError = true;
-        results.push({ endpoint, status: 'FAIL', code: response.status });
-        continue;
-      }
-
-      // 2. Vite SPA フォールバック検知 ('/' 以外のモジュールリクエストに <!DOCTYPE html> が返った場合は404相当)
-      if (endpoint !== '/' && text.trimStart().toLowerCase().startsWith('<!doctype html>')) {
-        console.error(`❌ [FAIL] ${endpoint} returned HTML fallback instead of transformed JS module`);
-        hasError = true;
-        results.push({ endpoint, status: 'SPA_FALLBACK_ERR' });
-        continue;
-      }
-
-      // 3. エラーパターンの検出
-      const foundError = ERROR_PATTERNS.find((pattern) => text.includes(pattern));
-      if (foundError) {
-        console.error(`❌ [FAIL] ${endpoint} contains error pattern: "${foundError}"`);
-        console.error(`   Error Snippet: ${text.slice(0, 300)}...`);
-        hasError = true;
-        results.push({ endpoint, status: 'FAIL', pattern: foundError });
-        continue;
-      }
-
-      console.log(`✅ [PASS] ${endpoint} (HTTP 200, clean module response)`);
-      results.push({ endpoint, status: 'PASS', code: 200 });
-    } catch (err) {
-      console.error(`❌ [ERROR] Could not connect to ${targetUrl}:`, err.message);
-      hasError = true;
-      results.push({ endpoint, status: 'CONN_ERR', message: err.message });
-    }
+async function isServerListening(baseUrl) {
+  try {
+    const res = await fetch(`${baseUrl}/`, { signal: AbortSignal.timeout(1500) });
+    return res.status === 200;
+  } catch {
+    return false;
   }
+}
 
-  console.log(`\n======================================================`);
-  console.log(`📊 Smoke Test Summary:`);
-  console.log(`   Total Endpoints: ${ENDPOINTS_TO_CHECK.length}`);
-  console.log(`   Passed: ${results.filter((r) => r.status === 'PASS').length}`);
-  console.log(`   Failed: ${results.filter((r) => r.status !== 'PASS').length}`);
-  console.log(`======================================================\n`);
+async function runSmokeTest() {
+  let activeBaseUrl = DEFAULT_DEV_SERVER_URL;
+  let ephemeralServer = null;
 
-  if (hasError) {
-    console.error(`💥 Runtime Smoke Test FAILED! Fix module resolution or restart Vite dev server before proceeding.`);
-    process.exit(1);
-  } else {
-    console.log(`🎉 All runtime endpoints passed with ZERO errors! Dev server is fully healthy.\n`);
-    process.exit(0);
+  try {
+    const alreadyRunning = await isServerListening(activeBaseUrl);
+    if (!alreadyRunning) {
+      ephemeralServer = await createServer({
+        root: ROOT_DIR,
+        mode: 'personal',
+        logLevel: 'error',
+        server: {
+          host: '127.0.0.1',
+          port: 0,
+          strictPort: false,
+        },
+      });
+      await ephemeralServer.listen();
+      const address = ephemeralServer.httpServer?.address();
+      const port = typeof address === 'object' && address ? address.port : 3000;
+      activeBaseUrl = `http://127.0.0.1:${port}`;
+    }
+
+    console.log(`\n======================================================`);
+    console.log(`🚀 Starting Runtime Smoke Test on ${activeBaseUrl} (${ephemeralServer ? 'ephemeral Vite dev server' : 'existing dev server'})`);
+    console.log(`======================================================\n`);
+
+    let hasError = false;
+    const results = [];
+
+    for (const endpoint of ENDPOINTS_TO_CHECK) {
+      // 1. 実ファイル存在確認 ('/' 以外)
+      if (endpoint !== '/') {
+        const localPath = path.join(ROOT_DIR, endpoint.replace(/^\//, ''));
+        if (!fs.existsSync(localPath)) {
+          console.error(`❌ [FAIL] ${endpoint} does NOT exist on disk (${localPath})`);
+          hasError = true;
+          results.push({ endpoint, status: 'MISSING_FILE' });
+          continue;
+        }
+      }
+
+      const targetUrl = `${activeBaseUrl}${endpoint}`;
+      try {
+        const response = await fetch(targetUrl);
+        const text = await response.text();
+
+        if (response.status !== 200) {
+          console.error(`❌ [FAIL] ${endpoint} returned HTTP ${response.status}`);
+          console.error(`   Error Snippet: ${text.slice(0, 300)}...`);
+          hasError = true;
+          results.push({ endpoint, status: 'FAIL', code: response.status });
+          continue;
+        }
+
+        // 2. Vite SPA フォールバック検知 ('/' 以外のモジュールリクエストに <!DOCTYPE html> が返った場合は404相当)
+        if (endpoint !== '/' && text.trimStart().toLowerCase().startsWith('<!doctype html>')) {
+          console.error(`❌ [FAIL] ${endpoint} returned HTML fallback instead of transformed JS module`);
+          hasError = true;
+          results.push({ endpoint, status: 'SPA_FALLBACK_ERR' });
+          continue;
+        }
+
+        // 3. エラーパターンの検出
+        const foundError = ERROR_PATTERNS.find((pattern) => text.includes(pattern));
+        if (foundError) {
+          console.error(`❌ [FAIL] ${endpoint} contains error pattern: "${foundError}"`);
+          console.error(`   Error Snippet: ${text.slice(0, 300)}...`);
+          hasError = true;
+          results.push({ endpoint, status: 'FAIL', pattern: foundError });
+          continue;
+        }
+
+        console.log(`✅ [PASS] ${endpoint} (HTTP 200, clean module response)`);
+        results.push({ endpoint, status: 'PASS', code: 200 });
+      } catch (err) {
+        console.error(`❌ [ERROR] Could not connect to ${targetUrl}:`, err.message);
+        hasError = true;
+        results.push({ endpoint, status: 'CONN_ERR', message: err.message });
+      }
+    }
+
+    console.log(`\n======================================================`);
+    console.log(`📊 Smoke Test Summary:`);
+    console.log(`   Total Endpoints: ${ENDPOINTS_TO_CHECK.length}`);
+    console.log(`   Passed: ${results.filter((r) => r.status === 'PASS').length}`);
+    console.log(`   Failed: ${results.filter((r) => r.status !== 'PASS').length}`);
+    console.log(`======================================================\n`);
+
+    if (hasError) {
+      console.error(`💥 Runtime Smoke Test FAILED! Fix module resolution or restart Vite dev server before proceeding.`);
+      process.exitCode = 1;
+    } else {
+      console.log(`🎉 All runtime endpoints passed with ZERO errors! Dev server is fully healthy.\n`);
+      process.exitCode = 0;
+    }
+  } finally {
+    if (ephemeralServer) {
+      await ephemeralServer.close();
+    }
   }
 }
 

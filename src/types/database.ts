@@ -110,6 +110,16 @@ export interface UserSettings {
 }
 
 /**
+ * 臨床血糖閾値のデフォルト値および設定許容範囲定数 (Single Source of Truth)
+ */
+export const DEFAULT_HYPO_THRESHOLD = 70;
+export const DEFAULT_HYPER_THRESHOLD = 180;
+export const CLINICAL_THRESHOLD_BOUNDS = {
+  hypo: { min: 54, max: 90 },
+  hyper: { min: 130, max: 250 },
+} as const;
+
+/**
  * ユーザー設定と食事区分からインスリン投与量入力欄の初期文字列を解決する
  * - enable_default_insulin が true かつ該当区分のデフォルト値が設定されている場合はその数値文字列を返す
  * - それ以外（OFF または未設定）の場合は空文字 '' を返す

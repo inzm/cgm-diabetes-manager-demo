@@ -296,22 +296,24 @@ export const FoodMasterView: React.FC = () => {
 
     if (sectionTab === 'food') {
       await db.transaction('rw', db.food_master, async () => {
-        for (const id of ids) {
-          await db.food_master.update(id, { category_id: targetCatId, updated_at: now });
-        }
+        await Promise.all(
+          ids.map((id) => db.food_master.update(id, { category_id: targetCatId, updated_at: now }))
+        );
       });
     } else {
       await db.transaction('rw', db.event_master, async () => {
-        for (const id of ids) {
-          await db.event_master.update(id, { category_id: targetCatId, updated_at: now });
-        }
+        await Promise.all(
+          ids.map((id) =>
+            db.event_master.update(id, { category_id: targetCatId, updated_at: now })
+          )
+        );
       });
     }
 
     setBulkCategoryId('');
     setSelectedIds(new Set());
     invalidateFoodMasterMemoryCache(currentPatientId);
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(currentPatientId);
     triggerBackgroundCloudSync(currentPatientId);
     loadData();
   };
@@ -325,21 +327,21 @@ export const FoodMasterView: React.FC = () => {
 
     if (sectionTab === 'food') {
       await db.transaction('rw', db.food_master, async () => {
-        for (const id of ids) {
-          await db.food_master.update(id, { is_deleted: true, updated_at: now });
-        }
+        await Promise.all(
+          ids.map((id) => db.food_master.update(id, { is_deleted: true, updated_at: now }))
+        );
       });
     } else {
       await db.transaction('rw', db.event_master, async () => {
-        for (const id of ids) {
-          await db.event_master.update(id, { is_deleted: true, updated_at: now });
-        }
+        await Promise.all(
+          ids.map((id) => db.event_master.update(id, { is_deleted: true, updated_at: now }))
+        );
       });
     }
 
     setSelectedIds(new Set());
     invalidateFoodMasterMemoryCache(currentPatientId);
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(currentPatientId);
     triggerBackgroundCloudSync(currentPatientId);
     loadData();
   };
@@ -356,7 +358,7 @@ export const FoodMasterView: React.FC = () => {
   };
 
   const executeDeleteFood = async () => {
-    if (!deleteFoodId) return;
+    if (isReadOnly || !deleteFoodId) return;
     const id = deleteFoodId;
     setDeleteFoodId(null);
     await db.food_master.update(id, {
@@ -369,7 +371,7 @@ export const FoodMasterView: React.FC = () => {
       return next;
     });
     invalidateFoodMasterMemoryCache(currentPatientId);
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(currentPatientId);
     triggerBackgroundCloudSync(currentPatientId);
     loadData();
   };
@@ -385,7 +387,7 @@ export const FoodMasterView: React.FC = () => {
   };
 
   const executeDeleteEvent = async () => {
-    if (!deleteEventId) return;
+    if (isReadOnly || !deleteEventId) return;
     const id = deleteEventId;
     setDeleteEventId(null);
     await db.event_master.update(id, {
@@ -398,7 +400,7 @@ export const FoodMasterView: React.FC = () => {
       return next;
     });
     invalidateFoodMasterMemoryCache(currentPatientId);
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(currentPatientId);
     triggerBackgroundCloudSync(currentPatientId);
     loadData();
   };

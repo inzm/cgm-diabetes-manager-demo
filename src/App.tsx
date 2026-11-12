@@ -7,6 +7,7 @@ import {
   shouldShowDemoWelcomeModal,
 } from '@/components/common/DemoWelcomeModal';
 import { usePatient } from '@/contexts/PatientContext';
+import { DEFAULT_HYPER_THRESHOLD, DEFAULT_HYPO_THRESHOLD } from '@/types/database';
 import { db, requestPersistentStorage } from '@/lib/db';
 import {
   invalidateAnalysisDatasetCache,
@@ -17,7 +18,7 @@ import {
 } from '@/lib/realGlucoseLoader';
 import { CalendarView, clearCalendarMonthlyCache } from '@/components/calendar/CalendarView';
 import { BottomNav, NAV_TAB_ORDER, NavTabType } from '@/components/common/BottomNav';
-import { registerUiCacheInvalidator } from '@/lib/syncEngine';
+import { invalidateAllCachesAfterSync, registerUiCacheInvalidator } from '@/lib/syncEngine';
 import {
   Calendar,
   FolderKanban,
@@ -149,14 +150,8 @@ export const App: React.FC = () => {
       }
       void (async () => {
         await resetDemoDataToInitialState(currentPatientId);
-        updateClinicalThresholds(70, 180);
-        clearCalendarMonthlyCache();
-        try {
-          const foodMod = await import('@/components/foods/FoodMasterView');
-          foodMod.invalidateFoodMasterMemoryCache(currentPatientId);
-        } catch {
-          // Ignore if chunk load fails
-        }
+        updateClinicalThresholds(DEFAULT_HYPO_THRESHOLD, DEFAULT_HYPER_THRESHOLD);
+        invalidateAllCachesAfterSync(currentPatientId);
         setRefreshKey((k) => k + 1);
       })();
     };
@@ -505,7 +500,7 @@ export const App: React.FC = () => {
               <SettingsView
                 onSettingsChanged={() => {
                   clearCalendarMonthlyCache();
-                  invalidateAnalysisDatasetCache();
+                  invalidateAnalysisDatasetCache(currentPatientId);
                   invalidateInMemoryRecentCache(currentPatientId);
                   setRefreshKey((k) => k + 1);
                 }}

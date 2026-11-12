@@ -1,4 +1,9 @@
-import { LibreReading, HealthEvent } from '@/types/database';
+import {
+  DEFAULT_HYPER_THRESHOLD,
+  DEFAULT_HYPO_THRESHOLD,
+  HealthEvent,
+  LibreReading,
+} from '@/types/database';
 import { db } from './db';
 import { parseWallClockMs, shiftLocalDateStr } from './dateUtils';
 import { invalidateAnalysisDatasetCache } from './analysisCalculators';
@@ -20,8 +25,8 @@ import { deterministicUuid } from './uuidUtils';
 export function extractAnomalyEventsFromReadings(
   readings: LibreReading[],
   patientId: string,
-  hypoThreshold = 70,
-  hyperThreshold = 180
+  hypoThreshold = DEFAULT_HYPO_THRESHOLD,
+  hyperThreshold = DEFAULT_HYPER_THRESHOLD
 ): {
   events: HealthEvent[];
   hypoCount: number;
@@ -182,11 +187,15 @@ export async function reevaluatePatientAnomalyEvents(
     }
   });
 
-  invalidateAnalysisDatasetCache();
+  invalidateAnalysisDatasetCache(patientId);
   return { hypoCount, hyperCount };
 }
 
-function computeBoundGlucoseForMeal(
+/**
+ * 単一の食事イベントと近傍のCGM測定値配列から、
+ * 食前血糖値 ([-15分, +5分] の直近値) と食後ピーク血糖値 ([+60分, +180分] の最高値) を算出する (Single Source of Truth)
+ */
+export function computeBoundGlucoseForMeal(
   meal: HealthEvent,
   candidateReadings: LibreReading[]
 ): { boundPre: number | undefined; boundPost: number | undefined } {
@@ -243,6 +252,7 @@ export async function bindMealGlucoseFromReadings(
   if (targetMealEventId) {
     const meal = await db.events.get(targetMealEventId);
     if (!meal || meal.is_deleted || meal.event_type !== '食事') {
+      invalidateAnalysisDatasetCache(patientId);
       return 0;
     }
     const dateStr = meal.event_datetime.slice(0, 10);
@@ -254,7 +264,10 @@ export async function bindMealGlucoseFromReadings(
       .between([patientId, startIso], [patientId, endIso], true, true)
       .toArray();
 
-    if (windowReadings.length === 0) return 0;
+    if (windowReadings.length === 0) {
+      invalidateAnalysisDatasetCache(patientId);
+      return 0;
+    }
 
     const { boundPre, boundPost } = computeBoundGlucoseForMeal(meal, windowReadings);
     if (boundPre !== meal.pre_meal_glucose || boundPost !== meal.post_meal_glucose) {
@@ -263,10 +276,10 @@ export async function bindMealGlucoseFromReadings(
         post_meal_glucose: boundPost,
         updated_at: nowIso,
       });
-      invalidateAnalysisDatasetCache();
+      invalidateAnalysisDatasetCache(patientId);
       return 1;
     }
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(patientId);
     return 0;
   }
 
@@ -281,7 +294,7 @@ export async function bindMealGlucoseFromReadings(
   ]);
 
   if (readings.length === 0 || mealEvents.length === 0) {
-    invalidateAnalysisDatasetCache();
+    invalidateAnalysisDatasetCache(patientId);
     return 0;
   }
 
@@ -327,6 +340,6 @@ export async function bindMealGlucoseFromReadings(
     await db.events.bulkPut(updatedMeals);
   }
 
-  invalidateAnalysisDatasetCache();
+  invalidateAnalysisDatasetCache(patientId);
   return updatedMeals.length;
 }

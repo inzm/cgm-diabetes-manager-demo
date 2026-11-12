@@ -9,27 +9,22 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Format date to YYYY/MM/DD (JST)
+ * Safely extract human-readable error message from unknown error values
  */
-export function formatDate(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toLocaleDateString('ja-JP', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-}
-
-/**
- * Format time to HH:MM (JST)
- */
-export function formatTime(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toLocaleTimeString('ja-JP', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+export function getErrorMessage(err: unknown, fallback = 'エラーが発生しました'): string {
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  if (typeof err === 'string' && err.trim().length > 0) {
+    return err;
+  }
+  if (err && typeof err === 'object' && 'message' in err) {
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === 'string' && msg.trim().length > 0) {
+      return msg;
+    }
+  }
+  return fallback;
 }
 
 /**

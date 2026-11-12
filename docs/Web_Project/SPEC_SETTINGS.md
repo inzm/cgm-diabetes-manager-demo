@@ -17,9 +17,9 @@
 
 ---
 
-## 2. 画面レイアウト & UIコンポーネント構成 (`src/components/settings/SettingsView.tsx`)
+## 2. 画面レイアウト & UIコンポーネント構成 (`src/components/settings/SettingsView.tsx`, `src/components/settings/TargetRangeSection.tsx`, `src/components/settings/DefaultInsulinSection.tsx`, `src/components/settings/DataBackupSection.tsx`, `src/components/settings/CloudSyncFamilySection.tsx`, `src/components/settings/VerificationPwaSection.tsx`)
 
-ヘッダーの「設定」タイトルと重複する画面上部の巨大なタイトルカードや、物理テーブル名（`libre_readings` 等）の露出を引き算し、開いてすぐ設定項目にアクセスできる構成とします。
+ヘッダーの「設定」タイトルと重複する画面上部の巨大なタイトルカードや、物理テーブル名（`libre_readings` 等）の露出を引き算し、開いてすぐ設定項目にアクセスできる構成とします。また、単一責任の原則（SRP）に基づき、親コンテナ `SettingsView.tsx` から5つの独立したセクションコンポーネントへ分割しています。
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -89,32 +89,32 @@
   - 保存時に `PatientContext` の `updateClinicalThresholds(hypo, hyper)` を呼び出し、`reevaluatePatientAnomalyEvents`（`src/lib/anomalyExtractor.ts`）によって `db.libre_readings` から `db.events` の低血糖・高血糖エピソードを再抽出・更新する。またクラウド接続時には `triggerBackgroundCloudSync(currentPatientId, { replaceRemoteAnomalies: true })`（`src/lib/syncEngine.ts`）を実行し、Supabase 側の古い異常値エピソードも確実に更新する。
   - カレンダーのTIR%・平均血糖色分け・スパークライン目標帯・異常値ラベル、日次詳細24H推移グラフの目標緑帯（`DailyGlucoseChart.tsx`）、CSV取込時の基準値（`CsvImportModal.tsx`）、および分析画面（`AnalysisView.tsx` / `TimeAnomalyTab.tsx`）のすべてに即時反映される。
 
-### 3.2 糖質の自動推定 (`src/lib/gemini.ts` / `functions/api/gemini.ts` — 方式1: BFFプロキシ + 内蔵食品辞書)
+### 3.2 糖質の自動推定 (`src/lib/gemini.ts` / `functions/api/gemini.ts` — 方式1: BFFプロキシ + 案2認証検証 + 内蔵食品辞書)
 - **フロントエンド秘密情報保持の禁止**:
   - ブラウザの `localStorage` にAPIキーを保存する機能および入力欄は一切設けない。
   - 「ローカルストレージに安全に保管されます」等の事実と異なるセキュリティ表示を厳禁とする。
-- **推定ロジックと優先順位**:
-  - クラウドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効化（`VITE_ENABLE_GEMINI_BFF === 'true'`）されている場合はサーバー側プロキシ経由で推定し、未接続時やオフライン時は日本食品標準成分表に基づく内蔵食品辞書（`estimateCarbsLocally`）で即座に推定を行う。
+- **推定ロジック・BFF認証検証（案2）と優先順位**:
+  - クラウドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効化（`VITE_ENABLE_GEMINI_BFF === 'true'`）されている場合は、Supabase セッション存在時に `Authorization: Bearer <access_token>` を付与かつ `credentials: 'same-origin'` でサーバー側プロキシへ送信する。BFF側では本番モード時に **Supabase JWT 検証または同一 Origin 検証** を必須化し、Cross-Origin 呼び出し（`403`）や未認証・不正トークン呼び出し（`401`）を遮断する。BFF未接続時やオフライン時は日本食品標準成分表に基づく内蔵食品辞書（`estimateCarbsLocally`）で即座に推定を行う。
   - **デモアプリ（`isPortfolioMode()`）における非表示制御**: デモアプリでは設定画面の「糖質の自動推定」セクションおよび食事記録・食品登録モーダル内の糖質推定ボタンを非表示とする。
 
-### 3.3 データのバックアップ・初期化 (`src/lib/db.ts`, `src/lib/uuidUtils.ts`) & デモ環境のデータ管理 (`src/lib/realGlucoseLoader.ts`, `src/components/common/DemoWelcomeModal.tsx`)
+### 3.3 データのバックアップ・初期化 (`src/lib/backupRestore.ts`, `src/lib/db.ts`, `src/lib/uuidUtils.ts`) & デモ環境のデータ管理 (`src/lib/realGlucoseLoader.ts`, `src/lib/demoMealGenerator.ts`, `src/components/common/DemoWelcomeModal.tsx`)
 - **デモアプリ（`isDemoCsvImportDisabled()`）における案内モーダル表示と「デモ環境のデータ管理」カード表示・通常バックアップセクションの非表示制御**:
   - デモアプリ（オンメモリ動作かつリロード時に初期状態へ自動リセットされるエフェメラル環境）を開いたとき、およびページを再読み込みしたときに**毎回**、コンパクトな案内モーダル（`src/components/common/DemoWelcomeModal.tsx`：`デモ環境について`、フォーカストラップ＆スワイプ抑止付き）を表示し、データが初期状態にリセットされたことの目印として機能させる。
-  - 設定画面では、通常モード用の「データのバックアップ・初期化」セクションを非表示とし、代わりにコンパクトな **「デモ環境のデータ管理」** カードを表示する。
+  - 設定画面では、通常モード用の「データのバックアップ・初期化」セクションを非表示とし、代わりにコンパクトな **「デモ環境のデータ管理」** カード（`src/components/settings/VerificationPwaSection.tsx`）を表示する。
   - カード内にはモーダルと同じく（）書きを含めず「このデモアプリで登録・変更した内容は、お使いのスマートフォンやPCには保存されません。ページを再読み込みするかタブを閉じると、登録・変更した内容は破棄され、初期状態に戻ります。」と明記し、確認ダイアログ付きの **「デモデータを初期状態に戻す」** ボタンを配置する。実行時には `resetDemoDataToInitialState` により食品・活動・カテゴリ・食事記録・目標範囲設定・デフォルトインスリン設定をすべて初期シード状態へ戻し、全4種メモリキャッシュも破棄した上で「デモデータを初期状態に戻しました。」とフィードバックを表示する。
 - **保存データ件数の表示（通常モード・物理テーブル名の非表示化）**:
   - 血糖データ、食事・活動記録、食事明細、登録食品、登録活動、カテゴリの各件数をユーザー目線の名称で表示し、`(libre_readings)` 等の物理テーブル名は表示しない。
 - **バックアップの保存（JSONエクスポート）**:
   - 全7テーブルをまとめたバックアップJSONを `Blob` + `URL.createObjectURL` 方式でダウンロード保存。
-- **バックアップからの復元（JSONインポート: `restorePatientBackupPayload`）**:
+- **バックアップからの復元（JSONインポート: `restorePatientBackupPayload` in `src/lib/backupRestore.ts`）**:
   - ファイル選択時に件数を確認するカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）を表示する。
-  - 承認後、`markPatientManuallyCleared(currentPatientId)` および `cancelBackgroundHydration(currentPatientId)` を実行した上で、トランザクション内で **既存7テーブルの該当患者レコードをクリア（削除）してから** バックアップデータを復元（`bulkPut`）する。
+  - 承認後、`markPatientManuallyCleared(currentPatientId)` および `cancelBackgroundHydration(currentPatientId)` を実行した上で、トランザクション内で **既存7テーブルの該当患者レコードのみ（`user_id === currentPatientId`）をクリア（削除）してから** バックアップデータを復元（`bulkPut`）する。
   - 復元時には `src/lib/uuidUtils.ts` の `ensureUuid` を用いて、旧形式の非UUID文字列ID（`id`, `category_id`, `event_id`）が存在しても100%正規UUIDへ自動マイグレーション変換し、食品・活動・カテゴリが空のバックアップの場合は `seedFoodMasterIfEmpty(currentPatientId)` で初期プリセットを補完する。
   - 続けて目標範囲およびデフォルトインスリン等のフォーム state を即時更新し、**全4種メモリキャッシュ（`invalidateFoodMasterMemoryCache`, `clearCalendarMonthlyCache`, `invalidateAnalysisDatasetCache`, `invalidateInMemoryRecentCache`）を一括破棄（`invalidateAllPatientMemoryCaches`）** し、クラウド接続時は `triggerBackgroundCloudSync` でクラウドへ反映する。
-- **記録データを初期化（全削除: `resetPatientDataAndInvalidateCaches`）**:
-  - 共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認した上で、血糖・食事・活動記録および設定をすべて消去してよく使う食品・活動・カテゴリの初期プリセット（`src/lib/foodSeed.ts`：決定論的UUID）のみを再シードし、クラウド接続時は `clearRemotePatientData` と `syncPatientDataWithCloud` を実行して全4種メモリキャッシュを確実に破棄したクリーンな初期状態に戻す。
+- **記録データを初期化（全削除: `resetPatientDataAndInvalidateCaches` in `src/lib/backupRestore.ts`）**:
+  - 共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認した上で、マルチテナント（家族共有切替）時にも他方の患者データを誤消去しないよう、全7テーブルすべてで `.where('user_id').equals(patientId).delete()` および `db.user_settings.delete(patientId)` によって対象患者の血糖・食事・活動記録および設定のみを消去し、よく使う食品・活動・カテゴリの初期プリセット（`src/lib/foodSeed.ts`：決定論的UUID）のみを再シードし、クラウド接続時は `clearRemotePatientData` と `syncPatientDataWithCloud` を実行して全4種メモリキャッシュを確実に破棄したクリーンな初期状態に戻す。
 
-### 3.4 家族見守り共有・クラウド同期・招待専用ガード (`src/lib/supabase.ts`, `src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`, `src/components/common/AuthGateScreen.tsx`, `src/components/settings/SettingsView.tsx`)
+### 3.4 家族見守り共有・クラウド同期・招待専用ガード (`src/lib/supabase.ts`, `src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`, `src/components/common/AuthGateScreen.tsx`, `src/components/common/PasswordStrengthChecklist.tsx`, `src/components/settings/CloudSyncFamilySection.tsx`)
 - **未ログイン時の「専用ログイン画面（Auth Gate）」強制ロック（本番環境）**:
   - 本番環境（`VITE_APP_MODE=personal` かつ Supabase 環境変数が有効な場合、`isAuthRequired === true`）では、未ログイン時または権限未検証時にアプリ本体の全画面をロックし、フルスクリーンの `src/components/common/AuthGateScreen.tsx` のみを表示する。URLを知っている第三者がアクセスしても、カレンダーや設定画面は一切表示されない。
 - **未招待の第三者による勝手な利用・アクセス遮断ガード（オーナー本人 ＋ 招待済み家族のみ許可）**:

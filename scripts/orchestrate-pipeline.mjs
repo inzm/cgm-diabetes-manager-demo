@@ -80,9 +80,9 @@ function runStep(stepId, title, command, stepLogs) {
       cwd: ROOT_DIR,
       env: {
         ...process.env,
-        GOMAXPROCS: process.env.GOMAXPROCS || '2',
-        GOMEMLIMIT: process.env.GOMEMLIMIT || '150MiB',
-        NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-semi-space-size=2',
+        GOMAXPROCS: process.env.GOMAXPROCS || '1',
+        GOMEMLIMIT: process.env.GOMEMLIMIT || '256MiB',
+        NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-old-space-size=1024',
       },
     });
     const durationMs = Date.now() - start;
@@ -192,6 +192,14 @@ function main() {
     // Phase 3: Clinical & Data Integrity Unit Tests
     runStep('PHASE-3', 'Clinical & Data Integrity Unit Tests', 'npm test', stepLogs);
 
+    // Phase 3B: Runtime Dev Server Smoke Test (All 56 Module Endpoints)
+    runStep(
+      'PHASE-3B',
+      'Vite Dev Server Runtime Smoke Test (56 Endpoints)',
+      'npm run test:smoke',
+      stepLogs
+    );
+
     // Phase 4: Portfolio Bundle Build (for E2E & Visual Regression Suite)
     runStep(
       'PHASE-4A',
@@ -220,6 +228,8 @@ function main() {
 
     // Phase 5C: If target is personal production, build the final personal bundle into dist/
     if (targetEnv === 'personal') {
+      // Allow OS to reclaim Chromium virtual memory commit charge after Playwright finishes
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
       runStep(
         'PHASE-5C',
         'Personal Production Bundle Build (VITE_APP_MODE=personal)',

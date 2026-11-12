@@ -17,15 +17,17 @@
 | :--- | :--- |
 | **[全体アーキテクチャ & 詳細技術仕様書](ARCHITECTURE.md)** | システム全体構成、選定技術スタック、Local-First同期設計、高難度機能の移行設計、ロール管理（家族共有・RLS）、DB物理スキーマ |
 | **[認可・同期シーケンス & ER図](diagrams/SEQUENCE_AND_ERD.md)** | 認証・RLS認可フロー、Local-First差分同期シーケンス、Mermaid ER図 |
+| **[リブレCSV取込 & 異常値抽出フロー図](diagrams/CSV_IMPORT_AND_ANOMALY_FLOW.md)** | Web Worker並列パース、メインスレッド一括保存＆食事血糖バインド、28分継続・45分ギャップステートマシン図 |
+| **[システム全体構成図 (draw.io)](diagrams/system_architecture.drawio)** | クライアント層（React/Dexie/Worker）・エッジ層（Cloudflare Pages/Workers BFF）・クラウド層（Supabase RLS/Realtime）のGUI構成図 |
 | **[カレンダー & 日次詳細仕様書](SPEC_CALENDAR.md)** | 月間カレンダーグリッド、SVGスパークライン、日次詳細ドロワー（食事情報/イベント情報分離）、ECharts 24H血糖推移グラフ、ヘッダー・ボトムナビ仕様 |
 | **[リブレCSV取込 & 異常値抽出仕様書](SPEC_CSV_IMPORT.md)** | Web Worker並列CSVパース、28分継続ルールに基づく低血糖・高血糖エピソード自動抽出ステートマシン |
 | **[食事・インスリン・活動記録仕様書](SPEC_MEAL_RECORD.md)** | 複数食品明細の動的追加・糖質合算、食前血糖値の近傍自動バインド、活動・運動記録、カスケード論理削除 |
-| **[イベント管理（食品・イベントマスタ & カテゴリ管理）仕様書](SPEC_FOOD_MASTER.md)** | 食品データ・食品カテゴリ・イベントデータ・イベントカテゴリの追加/編集/削除、Google Gemini API糖質量自動計算 |
-| **[臨床分析画面仕様書](SPEC_ANALYSIS.md)** | 食品別血糖インパクト（Δ血糖・併食分析）、時間帯別異常値傾向、曜日別傾向、糖質・インスリン推移複合グラフ |
+| **[よく使う食品・活動 & カテゴリ管理仕様書](SPEC_FOOD_MASTER.md)** | よく使う食品・食品カテゴリ・よく使う活動・活動カテゴリの追加/編集/削除/一括整理、Google Gemini API（BFF認証プロキシ＋内蔵日本食品標準成分辞書）による糖質量自動計算 |
+| **[臨床分析画面仕様書](SPEC_ANALYSIS.md)** | 食品別血糖インパクト（Δ血糖・一緒に食べたもの分析）、時間帯別異常値傾向、曜日別傾向、糖質・インスリン推移複合グラフ |
 | **[設定 & 家族見守り共有仕様書](SPEC_SETTINGS.md)** | 臨床目標値カスタマイズ、食事区分別デフォルトインスリン設定、Cloudflare Workers BFF（`/api/gemini`）連携、家族共有権限管理、IndexedDBバックアップ＆UUID正規化復元、ロール切替検証 |
 | **[PWA化 & オフラインキャッシュ仕様書](SPEC_PWA.md)** | Web App Manifest、Service Workerキャッシュ戦略（`cgm-manager-v2`）、オフライン状態バナー |
 | **[患者・ご家族向け ご利用＆家族招待ガイド](USER_GUIDE.md)** | 初回ログイン・Auth Gate、患者本人の日常操作（リブレCSV取込・食事/インスリン/活動記録・分析・設定）、新しいご家族を招待する3ステップ手順と権限（閲覧のみ/記録・編集も可）の違い、ログアウト時の自動キャッシュ消去 |
-| **[品質保証 & テスト計画書](TEST_PLAN.md)** | 臨床計算アルゴリズム単体テスト（Vitest）、仕様同期検証（`test:docs`）、開発サーバー・ランタイムスモークテスト、Playwright E2E（`E2E-1`〜`E2E-12`）仕様 |
+| **[品質保証 & テスト計画書](TEST_PLAN.md)** | 臨床計算アルゴリズム単体テスト（Vitest）、仕様・図面・DDL同期検証（`test:docs`）、開発サーバー・ランタイムスモークテスト（全56エンドポイント）、Playwright E2E（`E2E-1`〜`E2E-14`）仕様 |
 | **[解説動画・ポートフォリオ紹介用 工夫ポイントまとめ](VIDEO_PRESENTATION_HIGHLIGHTS.md)** | リスト型2カラムUI採用理由（視線移動・引き算の法則）、「未分類」受け皿による参照整合性保護、実測CGM連動データとポートフォリオ非永続化設計の要点整理 |
 
 ---
@@ -48,7 +50,7 @@
   │  - Pages (静的配信)   │       │  - Supabase Auth (認証・MFA)│
   │  - Workers (BFF)      │       │  - RLS (患者データ分離 & 家族閲覧)|
   │    └ Gemini APIプロキシ│       │  - Realtime (別端末の即時検知)│
-  │      (APIキーの完全秘匿)│      │  - Storage (CSV原本のバックアップ)│
+  │      (JWT/同一Origin検証)│     │  - Storage (CSV原本保管 ※未実装)│
   └───────────────────────┘       └─────────────────────────────┘
 ```
 
@@ -59,9 +61,9 @@
 | **ローカルデータベース** | **IndexedDB (Dexie.js)** | 8.4万件超のリブレデータをブラウザ内に保持し、ミリ秒描画・オフライン動作を実現 |
 | **バックグラウンド処理** | **Web Worker** | 大容量CSVパースや異常値抽出アルゴリズムをメインスレッドから分離（描画カクつき防止） |
 | **グラフ・可視化** | **Apache ECharts** | 24時間血糖散布図＋垂直ドロップライン・異常マーカーの重畳描画、複合グラフ、マイクロチャート |
-| **ホスティング & BFF** | **Cloudflare Pages + Workers** | エッジ配信（無料帯域無制限）、Google Gemini APIキーの安全な秘匿プロキシ |
-| **クラウドBaaS & DB** | **Supabase (PostgreSQL + Auth)** | Row Level Security (RLS) による医療データ保護、家族権限管理、Realtime同期、Storage |
-| **AI外部連携** | **Google Gemini API** | 食品名からの糖質量自動推定、臨床アドバイス生成（Workers経由で中継） |
+| **ホスティング & BFF** | **Cloudflare Pages + Workers** | エッジ配信（無料帯域無制限）、Google Gemini APIキーの安全な秘匿プロキシ（Supabase JWT / 同一Origin検証付き） |
+| **クラウドBaaS & DB** | **Supabase (PostgreSQL + Auth)** | Row Level Security (RLS) による医療データ保護、家族権限管理、Realtime同期 |
+| **AI外部連携** | **Google Gemini API** | 食品名からの糖質量自動推定（Workers BFF経由で中継、オフライン時は内蔵辞書へ自動フォールバック） |
 
 ---
 
@@ -70,7 +72,7 @@
 | 画面名 | タブ識別子 / 起動方法 | 主な機能・役割 (ユーザー要件定義準拠) | 詳細仕様書 |
 | :--- | :--- | :--- | :--- |
 | **カレンダー画面 & 日次詳細ドロワー** | `calendar` | ・上部にコンパクトな選択日サマリー（平均血糖、糖質、インスリン、異常値回数：▼低=青 / ▲高=赤）<br>・日付セル（日曜=赤、土曜=青）に5行構成で日付・平均血糖・異常値バッジ・糖質/インスリン・24Hスパークライン(SVG)表示<br>・選択日再タップで**日次詳細ボトムシート/サイドパネル**展開（24H垂直ドロップ破線グラフ、朝・昼・夕別の食事情報＆糖質合計、イベント情報一覧） | [SPEC_CALENDAR.md](SPEC_CALENDAR.md) |
-| **イベント管理（食品・イベント・カテゴリ）** | `events` | ・食品データと食品カテゴリの追加・編集・削除（Google Gemini API糖質量自動計算）<br>・イベント（活動）データとイベントカテゴリの追加・編集・削除 | [SPEC_FOOD_MASTER.md](SPEC_FOOD_MASTER.md) |
-| **分析画面** | `analysis` | ・特定食品摂取時の食前・食後血糖値、インスリン量、併食食品・糖質量相関分析<br>・低血糖・高血糖発生日の時間帯別特徴分析<br>・指定期間の糖質摂取量・インスリン量の推移グラフ<br>・曜日別の糖質摂取量・インスリン量平均分析 | [SPEC_ANALYSIS.md](SPEC_ANALYSIS.md) |
+| **よく使う食品・活動（カテゴリ管理）** | `foods` | ・よく使う食品と食品カテゴリの追加・編集・削除・一括整理（糖質量自動推定）<br>・よく使う活動と活動カテゴリの追加・編集・削除・一括整理 | [SPEC_FOOD_MASTER.md](SPEC_FOOD_MASTER.md) |
+| **分析画面** | `analysis` | ・特定食品摂取時の食前・食後血糖値、インスリン量、一緒に食べたもの・糖質量相関分析<br>・低血糖・高血糖発生日の時間帯別特徴分析<br>・指定期間の糖質摂取量・インスリン量の推移グラフ<br>・曜日別の平均血糖値・摂取糖質量分析 | [SPEC_ANALYSIS.md](SPEC_ANALYSIS.md) |
 | **設定・共有画面 & PWA** | `settings` | ・臨床閾値（低血糖/高血糖/TIR目標）設定、食事区分別デフォルトインスリン設定、Cloudflare Workers BFF連携<br>・**家族招待・権限管理（見守り閲覧共有）**、ロール切替検証、PWAホーム画面追加 | [SPEC_SETTINGS.md](SPEC_SETTINGS.md)<br>[SPEC_PWA.md](SPEC_PWA.md) |
 | **食事・活動記録 & CSV取込モーダル** | モーダル | ・食事明細（複数食品）・インスリン投与量・食前血糖自動バインドの手動記録と編集<br>・運動・入浴等の活動記録<br>・**リブレCSVから自動で低血糖・高血糖イベントを抽出・登録**（異常値ステートマシン） | [SPEC_MEAL_RECORD.md](SPEC_MEAL_RECORD.md)<br>[SPEC_CSV_IMPORT.md](SPEC_CSV_IMPORT.md) |

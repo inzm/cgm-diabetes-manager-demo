@@ -24,9 +24,24 @@ function readStdin() {
   }
 }
 
+function hasRelevantGitDirtyFiles() {
+  try {
+    const out = execSync('git status --porcelain', { cwd: REPO_ROOT, encoding: 'utf8' });
+    return out
+      .split(/\r?\n/)
+      .map((l) => l.slice(3).trim())
+      .filter(Boolean)
+      .some((f) =>
+        /^(?:src|functions|supabase|scripts|e2e|docs\/Web_Project|\.agents)\//.test(f)
+      );
+  } catch {
+    return false;
+  }
+}
+
 function didCurrentTurnModifySrc(transcriptPath) {
   if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-    return false;
+    return hasRelevantGitDirtyFiles();
   }
   try {
     const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split(/\r?\n/);
@@ -49,9 +64,25 @@ function didCurrentTurnModifySrc(transcriptPath) {
         const toolCalls = Array.isArray(step.tool_calls) ? step.tool_calls : [];
         for (const tc of toolCalls) {
           const name = tc.name || tc.tool_name || '';
-          if (name.includes('edit_file') || name.includes('write_file')) {
+          if (name.includes('edit_file') || name.includes('write_file') || name.includes('replace_file_content')) {
             const argsStr = JSON.stringify(tc.args || tc.arguments || {});
-            if (argsStr.includes('/src/') || argsStr.includes('\\\\src\\\\')) {
+            const watchedDirs = [
+              'src',
+              'functions',
+              'supabase',
+              'scripts',
+              'e2e',
+              '.agents',
+              'docs/Web_Project',
+              'docs\\\\Web_Project',
+            ];
+            if (
+              watchedDirs.some(
+                (dir) =>
+                  argsStr.includes(`/${dir}/`) ||
+                  argsStr.includes(`\\\\${dir}\\\\`)
+              )
+            ) {
               return true;
             }
           }
@@ -62,7 +93,7 @@ function didCurrentTurnModifySrc(transcriptPath) {
     }
     return false;
   } catch {
-    return false;
+    return hasRelevantGitDirtyFiles();
   }
 }
 

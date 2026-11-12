@@ -1,4 +1,9 @@
-import { LibreReading, HealthEvent } from '@/types/database';
+import {
+  DEFAULT_HYPER_THRESHOLD,
+  DEFAULT_HYPO_THRESHOLD,
+  HealthEvent,
+  LibreReading,
+} from '@/types/database';
 import { extractDateStr, extractHour, getTodayLocalDateStr } from './dateUtils';
 import { extractAnomalyEventsFromReadings } from './anomalyExtractor';
 
@@ -131,8 +136,8 @@ export function aggregateMonthlyData(
   gridDays: { date: string; dayNumber: number; isCurrentMonth: boolean; isToday: boolean }[],
   readings: LibreReading[],
   events: HealthEvent[],
-  hypoThreshold = 70,
-  hyperThreshold = 180
+  hypoThreshold = DEFAULT_HYPO_THRESHOLD,
+  hyperThreshold = DEFAULT_HYPER_THRESHOLD
 ): Map<string, DailyAggregatedData> {
   const map = new Map<string, DailyAggregatedData>();
 
@@ -305,8 +310,8 @@ export function calculateMonthlyOverallKpi(
   year: number,
   month: number,
   readings: LibreReading[],
-  hypoThreshold = 70,
-  hyperThreshold = 180
+  hypoThreshold = DEFAULT_HYPO_THRESHOLD,
+  hyperThreshold = DEFAULT_HYPER_THRESHOLD
 ): MonthlyOverallKpi {
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
   const monthRecords = readings.filter((r) => r.timestamp.startsWith(monthPrefix));

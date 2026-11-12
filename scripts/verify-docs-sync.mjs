@@ -9,11 +9,13 @@
  * 機械的に検出し、コミットおよびPR前に100%ブロックする。
  *
  * 検査項目:
- * 1. [Index & Stale Check] docs/Web_Project/README.md に全 SPEC_*.md が掲載され、「策定予定」等の放置記述がないか
- * 2. [Path Existence Check] 仕様書内に記載された src/... や public/... のファイルパスが実在するか
- * 3. [Component Coverage Check] src/components/ 配下の全 .tsx コンポーネントが仕様書マッピングと smoke-test.mjs の両方に登録されているか
- * 4. [Git Diff Sync Gate] ソースコード変更時に、対応する仕様書（SPEC_*.md / ARCHITECTURE.md）が同一変更セット内で更新されているか
- * 5. [Security, Anti-Stub & User-Centric UX Gate] localStorage への APIキー保存、虚偽のセキュリティ表記、架空人物ハードコード、window.confirm()、およびUIコンポーネントにおける開発者用語（「マスタ」「IndexedDB」「Web Worker」等）が含まれていないか
+ * 1. [Index & Stale Check] docs/Web_Project/README.md に全 SPEC_*.md & USER_GUIDE.md が掲載され、「策定予定」等の放置記述がないか
+ * 2. [Path & Link Existence Check] 仕様書・スキル・AGENTS.md 内に記載されたファイルパス（src/, public/, functions/, supabase/, scripts/, e2e/, .github/, .agents/）および Markdown 相対リンクが実在するか
+ * 3. [Full Module Coverage Check] src/components, src/contexts, src/lib, src/types, src/workers, functions 配下の全モジュールが仕様書マッピングと smoke-test.mjs の両方に100%登録されているか
+ * 4. [Git Diff Sync Gate] ソースコード・マイグレーション・BFF変更時に、対応する仕様書・図面が同一変更セット内で更新されているか
+ * 5. [Security, Anti-Stub & User-Centric UX Gate] src/ および functions/ 内に localStorage への APIキー保存、虚偽のセキュリティ表記、架空人物ハードコード、window.confirm()、およびUIコンポーネントにおける開発者用語が含まれていないか
+ * 6. [DDL & First-Class Diagram Parity Gate] supabase/migrations/0001_initial_schema.sql と ARCHITECTURE.md Section 5 の SQL が100%完全一致しているか、および第一級図面（SEQUENCE_AND_ERD.md, system_architecture.drawio）の必須スキーマ要素が同期しているか
+ * 7. [E2E Suite Count & Hook Script Integrity Gate] e2e/app.spec.ts の実スイート数（E2E-1〜E2E-N）とドキュメント記述が一致しているか、および .agents/hooks.json のスクリプトパスが実在するか
  */
 
 import fs from 'node:fs';
@@ -81,6 +83,20 @@ export const SOURCE_TO_SPEC_RULES = [
     description: '本番モード専用ログイン画面 (Auth Gate) & 初回セットアップ案内',
   },
   {
+    prefix: 'src/components/common/PasswordStrengthChecklist.tsx',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/USER_GUIDE.md',
+    ],
+    description: 'パスワード強度5条件リアルタイムチェックリスト共通コンポーネント',
+  },
+  {
+    prefix: 'src/main.tsx',
+    specs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_PWA.md'],
+    description: 'アプリケーションエントリポイント & Service Worker登録',
+  },
+  {
     prefix: 'src/App.tsx',
     specs: [
       'docs/Web_Project/ARCHITECTURE.md',
@@ -111,6 +127,7 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/SPEC_CSV_IMPORT.md',
       'docs/Web_Project/SPEC_CALENDAR.md',
       'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/diagrams/CSV_IMPORT_AND_ANOMALY_FLOW.md',
     ],
     description: '異常値エピソード抽出ステートマシン (SSOT)',
   },
@@ -135,17 +152,31 @@ export const SOURCE_TO_SPEC_RULES = [
   },
   {
     prefix: 'src/lib/gemini.ts',
-    specs: ['docs/Web_Project/SPEC_FOOD_MASTER.md', 'docs/Web_Project/SPEC_SETTINGS.md'],
-    description: '糖質量自動推定エンジン (BFFプロキシ + 標準食品辞書)',
+    specs: [
+      'docs/Web_Project/SPEC_FOOD_MASTER.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/diagrams/system_architecture.drawio',
+    ],
+    description: '糖質量自動推定エンジン (BFFプロキシ + 案2認証ヘッダ + 標準食品辞書)',
   },
   {
     prefix: 'src/components/import/',
-    specs: ['docs/Web_Project/SPEC_CSV_IMPORT.md', 'docs/Web_Project/USER_GUIDE.md'],
+    specs: [
+      'docs/Web_Project/SPEC_CSV_IMPORT.md',
+      'docs/Web_Project/USER_GUIDE.md',
+      'docs/Web_Project/diagrams/CSV_IMPORT_AND_ANOMALY_FLOW.md',
+      'docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md',
+    ],
     description: 'リブレCSV取込モーダル',
   },
   {
     prefix: 'src/workers/csvParser.worker.ts',
-    specs: ['docs/Web_Project/SPEC_CSV_IMPORT.md'],
+    specs: [
+      'docs/Web_Project/SPEC_CSV_IMPORT.md',
+      'docs/Web_Project/diagrams/CSV_IMPORT_AND_ANOMALY_FLOW.md',
+      'docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md',
+    ],
     description: 'CSVパース & 異常値抽出Web Worker',
   },
   {
@@ -178,7 +209,11 @@ export const SOURCE_TO_SPEC_RULES = [
   },
   {
     prefix: 'src/lib/db.ts',
-    specs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_CALENDAR.md'],
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_CALENDAR.md',
+      'docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md',
+    ],
     description: 'IndexedDB (Dexie.js) データベース定義',
   },
   {
@@ -201,8 +236,41 @@ export const SOURCE_TO_SPEC_RULES = [
     description: 'デモデータ遅延ハイドレーション・本番モードデータ保護ローダー',
   },
   {
-    prefix: 'src/types/database.ts',
+    prefix: 'src/lib/demoMealGenerator.ts',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_CALENDAR.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+    ],
+    description: 'デモ用献立テンプレート・血糖連動イベント・インスリン単位生成モジュール',
+  },
+  {
+    prefix: 'src/lib/backupRestore.ts',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/USER_GUIDE.md',
+    ],
+    description: '患者バックアップJSON検証・UUID正規化マイグレーション復元・マルチテナント安全な初期化サービス',
+  },
+  {
+    prefix: 'src/lib/useAnimatedModal.ts',
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_MEAL_RECORD.md',
+      'docs/Web_Project/SPEC_FOOD_MASTER.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+    ],
+    description: 'モーダル・ドロワー共通2段階マウント＆フェードアニメーションフック',
+  },
+  {
+    prefix: 'src/lib/utils.ts',
     specs: ['docs/Web_Project/ARCHITECTURE.md'],
+    description: 'クラス結合 (cn) および型安全なエラーメッセージ抽出ユーティリティ',
+  },
+  {
+    prefix: 'src/types/database.ts',
+    specs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md'],
     description: 'データベース・エンティティ型定義',
   },
   {
@@ -212,7 +280,11 @@ export const SOURCE_TO_SPEC_RULES = [
   },
   {
     prefix: 'src/lib/supabase.ts',
-    specs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_SETTINGS.md'],
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md',
+    ],
     description: 'Supabase クライアント初期化・ローカルフォールバック管理',
   },
   {
@@ -223,6 +295,7 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/SPEC_CALENDAR.md',
       'docs/Web_Project/TEST_PLAN.md',
       'docs/Web_Project/USER_GUIDE.md',
+      'docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md',
     ],
     description: 'Local-First 双方向クラウド同期エンジン & 家族権限解決・ローカルキャッシュ消去',
   },
@@ -232,12 +305,19 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/ARCHITECTURE.md',
       'docs/Web_Project/SPEC_SETTINGS.md',
       'docs/Web_Project/USER_GUIDE.md',
+      'docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md',
+      'docs/Web_Project/diagrams/system_architecture.drawio',
     ],
     description: 'Supabase PostgreSQL 本番DDL & RLS・招待専用ガード関数',
   },
   {
     prefix: 'functions/api/gemini.ts',
-    specs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_FOOD_MASTER.md', 'docs/Web_Project/SPEC_SETTINGS.md'],
+    specs: [
+      'docs/Web_Project/ARCHITECTURE.md',
+      'docs/Web_Project/SPEC_FOOD_MASTER.md',
+      'docs/Web_Project/SPEC_SETTINGS.md',
+      'docs/Web_Project/diagrams/system_architecture.drawio',
+    ],
     description: 'Cloudflare Pages Functions BFF (/api/gemini)',
   },
 ];
@@ -270,7 +350,10 @@ function getChangedFiles() {
     const statusOut = execSync('git status --porcelain', { encoding: 'utf8' });
     const workingFiles = statusOut
       .split(/\r?\n/)
-      .map((line) => line.slice(3).trim())
+      .map((line) => {
+        const entry = line.slice(3).trim();
+        return entry.includes(' -> ') ? entry.split(' -> ').pop().trim() : entry;
+      })
       .filter(Boolean);
 
     let branchFiles = [];
@@ -308,29 +391,46 @@ function runVerification() {
       );
     }
 
-    const specFiles = fs
-      .readdirSync(DOCS_DIR)
-      .filter((name) => (name.startsWith('SPEC_') || name === 'USER_GUIDE.md') && name.endsWith('.md'));
+    const allDocAndDiagramFiles = [
+      ...fs
+        .readdirSync(DOCS_DIR)
+        .filter((name) => name !== 'README.md' && (name.endsWith('.md') || name.endsWith('.drawio'))),
+      ...fs
+        .readdirSync(path.join(DOCS_DIR, 'diagrams'))
+        .filter((name) => name.endsWith('.md') || name.endsWith('.drawio'))
+        .map((name) => `diagrams/${name}`),
+    ];
 
     if (!fs.existsSync(path.join(DOCS_DIR, 'USER_GUIDE.md'))) {
       errors.push(`[Missing User Guide] docs/Web_Project/USER_GUIDE.md does not exist.`);
     }
 
-    for (const specFile of specFiles) {
+    for (const specFile of allDocAndDiagramFiles) {
       if (!readmeContent.includes(specFile)) {
         errors.push(
-          `[Unindexed Spec] docs/Web_Project/${specFile} is not linked in docs/Web_Project/README.md.`
+          `[Unindexed Spec/Diagram] docs/Web_Project/${specFile} is not linked in docs/Web_Project/README.md.`
         );
       }
     }
-    console.log(`✅ [PASS] Check 1: Spec index (README.md) covers all ${specFiles.length} SPEC_*.md & USER_GUIDE.md files with no stale markers.`);
+    console.log(
+      `✅ [PASS] Check 1: Spec index (README.md) covers all ${allDocAndDiagramFiles.length} docs & diagrams in docs/Web_Project/ with no stale markers.`
+    );
   }
 
   // -------------------------------------------------------------------------
-  // 2. Check referenced file paths inside docs/Web_Project/*.md
+  // 2. Check referenced file paths & Markdown links inside docs/Web_Project/*.md & .agents/
   // -------------------------------------------------------------------------
-  const docFiles = walkFiles(DOCS_DIR, '.md');
-  const pathRegex = /`((?:src|public)\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)`/g;
+  const docFiles = [
+    ...walkFiles(DOCS_DIR, '.md'),
+    ...walkFiles(path.join(ROOT_DIR, '.agents', 'skills'), '.md'),
+    path.join(ROOT_DIR, '.agents', 'AGENTS.md'),
+  ].filter((p) => fs.existsSync(p));
+
+  const pathRegex =
+    /`((?:src|public|functions|supabase|scripts|e2e|\.github|\.agents|docs)\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)`/g;
+  const mdLinkRegex =
+    /\]\((?!https?:\/\/|file:\/\/|mailto:|#)([A-Za-z0-9_./-]+\.(?:md|ts|tsx|mjs|json|yml|sql|drawio))(?:#[^)]*)?\)/g;
+  const fileUrlLinkRegex = /\]\(file:\/\/\/([^)#\s]+)(?:#[^)]*)?\)/g;
   let checkedRefCount = 0;
 
   for (const docFile of docFiles) {
@@ -347,29 +447,93 @@ function runVerification() {
         );
       }
     }
+
+    while ((match = mdLinkRegex.exec(content)) !== null) {
+      const linkTarget = match[1];
+      checkedRefCount++;
+      const absTarget = path.resolve(path.dirname(docFile), linkTarget);
+      if (!fs.existsSync(absTarget)) {
+        errors.push(
+          `[Broken Markdown Link] ${relDoc} links to non-existent relative target "(${linkTarget})".`
+        );
+      }
+    }
+
+    while ((match = fileUrlLinkRegex.exec(content)) !== null) {
+      const decodedUrlPath = decodeURIComponent(match[1]);
+      const normalizedFilePath = /^[A-Za-z]:\//.test(decodedUrlPath)
+        ? path.normalize(decodedUrlPath)
+        : path.normalize(`/${decodedUrlPath}`);
+      checkedRefCount++;
+      if (!fs.existsSync(normalizedFilePath)) {
+        errors.push(
+          `[Broken file:// Link] ${relDoc} links to non-existent file URL "file:///${match[1]}".`
+        );
+      }
+    }
+
+    // USER_GUIDE.md においてディレクトリパスなしの .tsx / .ts 単体ファイル名表記を禁止（Check 2 の検査漏れ防止）
+    if (relDoc === 'docs/Web_Project/USER_GUIDE.md') {
+      const bareFileRegex = /`([A-Za-z0-9_]+\.(?:tsx|ts))`/g;
+      let bareMatch;
+      while ((bareMatch = bareFileRegex.exec(content)) !== null) {
+        errors.push(
+          `[Abbreviated File Path] ${relDoc} uses bare filename \`${bareMatch[1]}\` without directory path (use full \`src/.../${bareMatch[1]}\` so existence can be verified).`
+        );
+      }
+    }
   }
-  console.log(`✅ [PASS] Check 2: Verified ${checkedRefCount} source/public file references across ${docFiles.length} markdown specs.`);
+  console.log(`✅ [PASS] Check 2: Verified ${checkedRefCount} file paths & Markdown links across ${docFiles.length} specification/skill documents.`);
 
   // -------------------------------------------------------------------------
-  // 3. Check component coverage (every src/components/**/*.tsx must be mapped & in smoke-test.mjs)
+  // 3. Check full module coverage (src/components, contexts, lib, types, workers, functions)
   // -------------------------------------------------------------------------
   const componentFiles = walkFiles(path.join(ROOT_DIR, 'src', 'components'), '.tsx').map(toPosixRelative);
+  const contextFiles = walkFiles(path.join(ROOT_DIR, 'src', 'contexts'), '.tsx').map(toPosixRelative);
+  const libFiles = walkFiles(path.join(ROOT_DIR, 'src', 'lib'), '.ts')
+    .map(toPosixRelative)
+    .filter((f) => !f.includes('/__tests__/') && !f.endsWith('.test.ts'));
+  const typeFiles = walkFiles(path.join(ROOT_DIR, 'src', 'types'), '.ts').map(toPosixRelative);
+  const workerFiles = walkFiles(path.join(ROOT_DIR, 'src', 'workers'), '.ts').map(toPosixRelative);
+  const functionFiles = walkFiles(path.join(ROOT_DIR, 'functions'), '.ts').map(toPosixRelative);
+
+  const allTrackableModules = [
+    ...componentFiles,
+    ...contextFiles,
+    ...libFiles,
+    ...typeFiles,
+    ...workerFiles,
+    ...functionFiles,
+  ];
+  const allSmokeTestableSrcModules = [
+    'src/main.tsx',
+    'src/App.tsx',
+    ...componentFiles,
+    ...contextFiles,
+    ...libFiles,
+    ...typeFiles,
+    ...workerFiles,
+  ];
+
   const smokeTestContent = fs.readFileSync(path.join(ROOT_DIR, 'scripts', 'smoke-test.mjs'), 'utf8');
 
-  for (const compFile of componentFiles) {
-    const isMapped = SOURCE_TO_SPEC_RULES.some((rule) => compFile.startsWith(rule.prefix));
+  for (const modFile of allTrackableModules) {
+    const isMapped = SOURCE_TO_SPEC_RULES.some((rule) => modFile.startsWith(rule.prefix));
     if (!isMapped) {
       errors.push(
-        `[Unmapped Component] ${compFile} is not covered by SOURCE_TO_SPEC_RULES in scripts/verify-docs-sync.mjs.`
-      );
-    }
-    if (!smokeTestContent.includes(`/${compFile}`)) {
-      errors.push(
-        `[Missing Smoke Test Endpoint] /${compFile} is not registered in scripts/smoke-test.mjs.`
+        `[Unmapped Module] ${modFile} is not covered by SOURCE_TO_SPEC_RULES in scripts/verify-docs-sync.mjs.`
       );
     }
   }
-  console.log(`✅ [PASS] Check 3: All ${componentFiles.length} UI components are mapped to SSOT specs and registered in smoke-test.mjs.`);
+
+  for (const srcMod of allSmokeTestableSrcModules) {
+    if (!smokeTestContent.includes(`'/${srcMod}'`)) {
+      errors.push(
+        `[Missing Smoke Test Endpoint] /${srcMod} is not registered in ENDPOINTS_TO_CHECK in scripts/smoke-test.mjs.`
+      );
+    }
+  }
+  console.log(`✅ [PASS] Check 3: All ${allTrackableModules.length} source/BFF modules are mapped to SSOT specs and all ${allSmokeTestableSrcModules.length} client modules are registered in smoke-test.mjs.`);
 
   // -------------------------------------------------------------------------
   // 4. Git Diff Sync Gate (Code change requires corresponding Spec update)
@@ -397,11 +561,12 @@ function runVerification() {
   console.log(`✅ [PASS] Check 4: Git diff sync gate evaluated (${changedFiles.length} changed files inspected).`);
 
   // -------------------------------------------------------------------------
-  // 5. Security, Anti-Stub & User-Centric UX Gate
+  // 5. Security, Anti-Stub & User-Centric UX Gate (src/ + functions/)
   // -------------------------------------------------------------------------
   const allSrcFiles = [
     ...walkFiles(path.join(ROOT_DIR, 'src'), '.ts'),
     ...walkFiles(path.join(ROOT_DIR, 'src'), '.tsx'),
+    ...walkFiles(path.join(ROOT_DIR, 'functions'), '.ts'),
   ];
 
   const forbiddenPatterns = [
@@ -461,7 +626,141 @@ function runVerification() {
       }
     }
   }
-  console.log(`✅ [PASS] Check 5: Security, Anti-Stub & User-Centric UX Gate verified across ${allSrcFiles.length} source files.`);
+  console.log(`✅ [PASS] Check 5: Security, Anti-Stub & User-Centric UX Gate verified across ${allSrcFiles.length} source & BFF files.`);
+
+  // -------------------------------------------------------------------------
+  // 6. DDL & First-Class Diagram Parity Gate
+  // -------------------------------------------------------------------------
+  const migrationPath = path.join(ROOT_DIR, 'supabase', 'migrations', '0001_initial_schema.sql');
+  const archPath = path.join(DOCS_DIR, 'ARCHITECTURE.md');
+  if (fs.existsSync(migrationPath) && fs.existsSync(archPath)) {
+    const migrationSql = fs.readFileSync(migrationPath, 'utf8').replace(/\r\n/g, '\n').trim();
+    const archContent = fs.readFileSync(archPath, 'utf8').replace(/\r\n/g, '\n');
+    const sec5Idx = archContent.indexOf('## 5. データベース物理スキーマ');
+    const sec5BlockMatch =
+      sec5Idx >= 0 ? archContent.slice(sec5Idx).match(/```sql\n([\s\S]*?)\n```/) : null;
+
+    if (!sec5BlockMatch) {
+      errors.push(
+        `[DDL Parity Gate] Could not find \`\`\`sql block under Section 5 in docs/Web_Project/ARCHITECTURE.md.`
+      );
+    } else {
+      const archSql = sec5BlockMatch[1].trim();
+      if (archSql !== migrationSql) {
+        const migLines = migrationSql.split('\n');
+        const archLines = archSql.split('\n');
+        let firstDiffLine = 1;
+        for (let i = 0; i < Math.max(migLines.length, archLines.length); i++) {
+          if (migLines[i] !== archLines[i]) {
+            firstDiffLine = i + 1;
+            break;
+          }
+        }
+        errors.push(
+          `[DDL Parity Violation] docs/Web_Project/ARCHITECTURE.md Section 5 SQL diverges from supabase/migrations/0001_initial_schema.sql at SQL line ${firstDiffLine} (migration: ${migLines.length} lines vs ARCHITECTURE.md: ${archLines.length} lines). Keep Section 5 100% identical to 0001_initial_schema.sql.`
+        );
+      }
+    }
+  }
+
+  const seqErdPath = path.join(DOCS_DIR, 'diagrams', 'SEQUENCE_AND_ERD.md');
+  const csvFlowPath = path.join(DOCS_DIR, 'diagrams', 'CSV_IMPORT_AND_ANOMALY_FLOW.md');
+  const drawioPath = path.join(DOCS_DIR, 'diagrams', 'system_architecture.drawio');
+  if (fs.existsSync(seqErdPath)) {
+    const seqErd = fs.readFileSync(seqErdPath, 'utf8');
+    if (!seqErd.includes('family_email') || !seqErd.includes('bindMealGlucoseFromReadings')) {
+      errors.push(
+        `[Diagram Sync Violation] docs/Web_Project/diagrams/SEQUENCE_AND_ERD.md is missing "family_email" in ER diagram or "bindMealGlucoseFromReadings" in CSV sequence diagram.`
+      );
+    }
+  }
+  if (fs.existsSync(csvFlowPath)) {
+    const csvFlow = fs.readFileSync(csvFlowPath, 'utf8');
+    if (
+      !csvFlow.includes('bindMealGlucoseFromReadings') ||
+      !csvFlow.includes('28分') ||
+      !csvFlow.includes('45分') ||
+      !csvFlow.includes('hypoThreshold')
+    ) {
+      errors.push(
+        `[Diagram Sync Violation] docs/Web_Project/diagrams/CSV_IMPORT_AND_ANOMALY_FLOW.md is missing required pipeline/state-machine elements (bindMealGlucoseFromReadings, 28分, 45分, hypoThreshold).`
+      );
+    }
+  }
+  if (fs.existsSync(drawioPath)) {
+    const drawio = fs.readFileSync(drawioPath, 'utf8');
+    if (!drawio.includes('family_email') || !drawio.includes('Supabase Storage（未実装）')) {
+      errors.push(
+        `[Diagram Sync Violation] docs/Web_Project/diagrams/system_architecture.drawio is missing "family_email" or "Supabase Storage（未実装）" marker.`
+      );
+    }
+  }
+  console.log(`✅ [PASS] Check 6: DDL & First-Class Diagram Parity Gate verified (0001_initial_schema.sql === ARCHITECTURE.md Section 5 + 3 diagrams).`);
+
+  // -------------------------------------------------------------------------
+  // 7. E2E Suite Count & Lifecycle Hook Script Integrity Gate
+  // -------------------------------------------------------------------------
+  const e2eSpecPath = path.join(ROOT_DIR, 'e2e', 'app.spec.ts');
+  if (fs.existsSync(e2eSpecPath)) {
+    const e2eContent = fs.readFileSync(e2eSpecPath, 'utf8');
+    const e2eMatches = e2eContent.match(/test\(['"`]E2E-\d+:/g) || [];
+    const e2eCount = e2eMatches.length;
+
+    const e2eRangeRegex = /E2E-1[`'"]?\s*[〜~]\s*[`'"]?E2E-(\d+)\b/g;
+    const totalSuitesRegex = /全(\d+)スイート/g;
+    const smokeEndpointsRegex = /全(\d+)(?:モジュール)?エンドポイント/g;
+    const expectedSmokeEndpoints = allSmokeTestableSrcModules.length + 1;
+
+    for (const docFile of docFiles) {
+      const relDoc = toPosixRelative(docFile);
+      const content = fs.readFileSync(docFile, 'utf8');
+      let m;
+      while ((m = e2eRangeRegex.exec(content)) !== null) {
+        const mentionedEnd = parseInt(m[1], 10);
+        if (mentionedEnd !== e2eCount) {
+          errors.push(
+            `[Stale E2E Suite Count] ${relDoc} contains "${m[0]}" (expected E2E-1〜E2E-${e2eCount}).`
+          );
+        }
+      }
+      while ((m = totalSuitesRegex.exec(content)) !== null) {
+        const mentionedTotal = parseInt(m[1], 10);
+        if (mentionedTotal !== e2eCount) {
+          errors.push(
+            `[Stale E2E Suite Count] ${relDoc} contains "${m[0]}" (expected 全${e2eCount}スイート).`
+          );
+        }
+      }
+      while ((m = smokeEndpointsRegex.exec(content)) !== null) {
+        const mentionedEndpoints = parseInt(m[1], 10);
+        if (mentionedEndpoints !== expectedSmokeEndpoints) {
+          errors.push(
+            `[Stale Smoke Endpoint Count] ${relDoc} contains "${m[0]}" (expected 全${expectedSmokeEndpoints}エンドポイント).`
+          );
+        }
+      }
+    }
+  }
+
+  const hooksJsonPath = path.join(ROOT_DIR, '.agents', 'hooks.json');
+  if (fs.existsSync(hooksJsonPath)) {
+    const hooksConfig = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+    for (const [hookGroup, groupDef] of Object.entries(hooksConfig)) {
+      const stopHooks = Array.isArray(groupDef?.Stop) ? groupDef.Stop : [];
+      for (const hook of stopHooks) {
+        if (typeof hook.command === 'string' && hook.command.startsWith('node ')) {
+          const scriptRel = hook.command.replace(/^node\s+/, '').trim();
+          const scriptAbs = path.join(ROOT_DIR, scriptRel);
+          if (!fs.existsSync(scriptAbs)) {
+            errors.push(
+              `[Broken Hook Script Path] .agents/hooks.json (${hookGroup}) references non-existent script "${scriptRel}".`
+            );
+          }
+        }
+      }
+    }
+  }
+  console.log(`✅ [PASS] Check 7: E2E suite count parity & .agents/hooks.json script existence verified.`);
 
   // -------------------------------------------------------------------------
   // Final Verdict

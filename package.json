@@ -19,7 +19,7 @@
     "test:e2e": "playwright test",
     "test:e2e:regression": "playwright test --grep @regression",
     "test:visual": "playwright test e2e/visual-design.spec.ts",
-    "verify:all": "npm run test:docs && npm run typecheck && npm test && npm run build",
+    "verify:all": "npm run test:docs && npm run typecheck && npm test && npm run test:smoke && npm run build",
     "pipeline:verify": "node scripts/orchestrate-pipeline.mjs",
     "pipeline:ship": "node scripts/orchestrate-pipeline.mjs --ship",
     "pipeline:ship:personal": "node scripts/orchestrate-pipeline.mjs --ship --target=personal",

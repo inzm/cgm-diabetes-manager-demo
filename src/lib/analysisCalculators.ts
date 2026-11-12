@@ -1,4 +1,13 @@
-import { LibreReading, HealthEvent, MealDetail, FoodMaster, Category } from '@/types/database';
+import {
+  Category,
+  DEFAULT_HYPER_THRESHOLD,
+  DEFAULT_HYPO_THRESHOLD,
+  FoodMaster,
+  HealthEvent,
+  LibreReading,
+  MealDetail,
+} from '@/types/database';
+import { computeBoundGlucoseForMeal } from './anomalyExtractor';
 import {
   extractDateStr,
   extractHour,
@@ -327,9 +336,13 @@ export function getAnalysisDatasetCache(
 /**
  * 食事・活動の追加/編集/削除や閾値変更時にキャッシュを明示クリアする
  */
-export function invalidateAnalysisDatasetCache(): void {
-  activeDatasetCache = null;
-  activeBoundaryCache = null;
+export function invalidateAnalysisDatasetCache(patientId?: string): void {
+  if (!patientId || activeDatasetCache?.patientId === patientId) {
+    activeDatasetCache = null;
+  }
+  if (!patientId || activeBoundaryCache?.patientId === patientId) {
+    activeBoundaryCache = null;
+  }
 }
 
 /**
@@ -615,7 +628,6 @@ export function calculateFoodImpact(
 
   for (let i = 0; i < matchedMealCandidates.length; i++) {
     const { event, details, matchedDetail } = matchedMealCandidates[i];
-    const eventTime = parseWallClockMs(event.event_datetime);
     const eventDateStr = extractDateStr(event.event_datetime);
     const nextDateStr = shiftLocalDateStr(eventDateStr, 1);
     const prevDateStr = shiftLocalDateStr(eventDateStr, -1);
@@ -629,40 +641,9 @@ export function calculateFoodImpact(
     if (rCurr) candidateReadings.push(...rCurr);
     if (rNext) candidateReadings.push(...rNext);
 
-    const preMinTime = eventTime - 15 * 60 * 1000;
-    const preMaxTime = eventTime + 5 * 60 * 1000;
-    const postMinTime = eventTime + 60 * 60 * 1000;
-    const postMaxTime = eventTime + 180 * 60 * 1000;
-
-    let closestPreDiff = Infinity;
-    let preGlucose: number | null = null;
-    let peakGlucose: number | null = null;
-
-    for (let rIdx = 0; rIdx < candidateReadings.length; rIdx++) {
-      const r = candidateReadings[rIdx];
-      const t = parseWallClockMs(r.timestamp);
-
-      if (t >= preMinTime && t <= preMaxTime) {
-        const diff = Math.abs(t - eventTime);
-        if (diff < closestPreDiff) {
-          closestPreDiff = diff;
-          preGlucose = r.glucose_value;
-        }
-      }
-
-      if (t >= postMinTime && t <= postMaxTime) {
-        if (peakGlucose === null || r.glucose_value > peakGlucose) {
-          peakGlucose = r.glucose_value;
-        }
-      }
-    }
-
-    if (preGlucose === null && event.pre_meal_glucose != null) {
-      preGlucose = event.pre_meal_glucose;
-    }
-    if (peakGlucose === null && event.post_meal_glucose != null) {
-      peakGlucose = event.post_meal_glucose;
-    }
+    const { boundPre, boundPost } = computeBoundGlucoseForMeal(event, candidateReadings);
+    const preGlucose: number | null = boundPre ?? null;
+    const peakGlucose: number | null = boundPost ?? null;
 
     const delta = preGlucose != null && peakGlucose != null ? peakGlucose - preGlucose : null;
 
@@ -744,8 +725,8 @@ export function calculateFoodImpact(
 export function calculateTimeAnomalyPatterns(
   events: HealthEvent[],
   readings?: LibreReading[],
-  hypoThreshold = 70,
-  hyperThreshold = 180
+  hypoThreshold = DEFAULT_HYPO_THRESHOLD,
+  hyperThreshold = DEFAULT_HYPER_THRESHOLD
 ): TimePeriodAnomaly[] {
   const periods: {
     periodName: '朝' | '昼' | '夕・夜' | '夜間・未明';

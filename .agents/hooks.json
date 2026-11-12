@@ -4,7 +4,7 @@
     "Stop": [
       {
         "type": "command",
-        "command": "node hooks/stop-guard.mjs",
+        "command": "node .agents/hooks/stop-guard.mjs",
         "timeout": 15
       }
     ]

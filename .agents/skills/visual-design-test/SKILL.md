@@ -12,7 +12,7 @@ description: >-
 
 ## 1. 撮影される画面一覧（Desktop `1280x800` & Mobile `375x812`）
 
-`npm run test:visual` を実行すると、[`e2e/visual-design.spec.ts`](../../e2e/visual-design.spec.ts) がポートフォリオビルドに対して以下の11枚のスクリーンショットを `.agents/scratch/screenshots/` に出力し、同時に `visual-audit-report.json` を生成します：
+`npm run test:visual` を実行すると、[`e2e/visual-design.spec.ts`](../../../e2e/visual-design.spec.ts) がポートフォリオビルドに対して以下の11枚のスクリーンショットを `.agents/scratch/screenshots/` に出力し、同時に `visual-audit-report.json` を生成します：
 
 | ファイル名 | 画面・状態 | ビューポート |
 | :--- | :--- | :--- |

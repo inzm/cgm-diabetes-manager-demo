@@ -1,7 +1,7 @@
 # Web版 シーケンス図 & データベースER図 (SEQUENCE_AND_ERD.md)
 
-本ドキュメントは、システム内の重要処理フロー（家族共有認可、Local-First同期、CSVインポート）およびデータベースのエンティティ関係（ER図）をMermaid記法で可視化した仕様書です。
-（※Phase 1 時点では IndexedDB (Dexie.js) ＋ 決定論的UUID (`src/lib/uuidUtils.ts`) ＋ Web Worker CSV取込 ＋ JSONバックアップ/復元が稼働中であり、Supabase Auth・PostgreSQL RLS・Delta Sync はクラウド接続フェーズで有効化されるターゲットシーケンスです。）
+本ドキュメントは、システム内の重要処理フロー（家族共有認可、Local-First同期、CSVインポート）およびデータベースのエンティティ関係（ER図）をMermaid記法で可視化した仕様書（SSOT）です。
+（※IndexedDB (Dexie.js) ＋ 決定論的UUID (`src/lib/uuidUtils.ts`) ＋ Web Worker CSV取込 ＋ JSONバックアップ/復元 ＋ Supabase Auth Gate (`src/components/common/AuthGateScreen.tsx`)・招待専用RLS (`supabase/migrations/0001_initial_schema.sql`)・7テーブル双方向LWW差分同期＆Realtime購読 (`src/lib/syncEngine.ts`) が実装・稼働中であり、CSV原本の Supabase Storage 保管のみ将来実装予定（未実装）です。）
 
 ---
 
@@ -34,8 +34,11 @@ erDiagram
     family_permissions {
         uuid id PK
         uuid patient_id FK "患者ID"
-        uuid family_user_id FK "家族ID"
+        uuid family_user_id FK "家族ID (承認前はNULL可)"
+        string family_email "招待メールアドレス"
         string role "viewer / editor"
+        timestamptz invited_at "招待日時"
+        timestamptz accepted_at "承認日時"
         timestamptz created_at
     }
 
@@ -172,37 +175,38 @@ sequenceDiagram
 
 ## 3. Local-First マルチデバイス同期 ＆ CSV取込シーケンス
 
-PCでリブレCSVを取り込み、スマホへリアルタイム同期されるまでのバックグラウンド並列処理フローです。
+PCでリブレCSVを取り込み、スマホへリアルタイム同期されるまでのバックグラウンド並列処理フロー（`src/components/import/CsvImportModal.tsx`, `src/workers/csvParser.worker.ts`, `src/lib/anomalyExtractor.ts`, `src/lib/syncEngine.ts`）です。
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Patient as 患者本人 (PC)
-    participant UI_PC as React UI (PC)
+    participant UI_PC as React UI (CsvImportModal.tsx)
     participant Worker as Web Worker (csvParser.worker.ts)
-    participant LocalDB_PC as IndexedDB (PC)
-    participant Supabase as Supabase (PostgreSQL / Storage / Realtime)
+    participant LocalDB_PC as IndexedDB (Dexie.js)
+    participant Supabase as Supabase (PostgreSQL / Realtime)
     participant UI_Mobile as React UI (スマホ)
     participant LocalDB_Mobile as IndexedDB (スマホ)
 
     Patient->>UI_PC: 1. リブレCSVファイル選択 (8.4万行)
-    UI_PC->>Worker: 2. ファイルバッファ転送 (メインスレッド分離)
+    UI_PC->>Worker: 2. ファイルテキスト & 設定閾値 (hypo/hyper) 送信 (START_IMPORT)
     Note over UI_PC: プログレスバー表示 (UIは軽快に操作可能)
 
-    Note over Worker: 3. 独自ストリームCSVパーサー + deterministicUuid (uuidUtils.ts)<br/>4. ステートマシン実行 (異常値エピソード抽出)<br/>5. 食前(-15〜+5分)・食後(60〜180分ピーク)血糖の探索バインド
+    Note over Worker: 3. 独自ストリームCSVパーサー + deterministicUuid (uuidUtils.ts)<br/>4. ステートマシン実行 (28分継続復帰・45分ギャップルールで異常値抽出)
 
-    Worker->>LocalDB_PC: 6. 生データ & 異常値イベントを一括保存 (bulkPut)
-    LocalDB_PC-->>UI_PC: 完了通知 (カレンダー・日次グラフ即時更新)
+    Worker-->>UI_PC: 5. パース済み測定値 & 異常値イベント返却 (COMPLETE)
+    UI_PC->>LocalDB_PC: 6. 対象期間の旧異常値置換 + libre_readings / events を一括保存 (bulkPut)
+    UI_PC->>LocalDB_PC: 7. 既存食事記録へ食前(-15〜+5分)・食後ピーク(+60〜180分)血糖を自動紐づけ (bindMealGlucoseFromReadings)
+    LocalDB_PC-->>UI_PC: 完了通知 (カレンダー・日次グラフ・分析キャッシュ即時更新)
 
-    Worker->>Supabase: 7. CSV原本を Supabase Storage にアップロード
-    Worker->>Supabase: 8. 抽出済みエピソード & 生データをバッチ同期 (2,000件/chunk)
-    Supabase-->>Worker: 同期完了
+    UI_PC->>Supabase: 8. triggerBackgroundCloudSync (replaceRemoteAnomalies: true, 1,000件/chunk)<br/>※CSV原本の Supabase Storage 保管は将来実装予定（未実装）
+    Supabase-->>UI_PC: 同期完了
 
-    Note over Supabase: 9. Supabase Realtime イベント発火 (events / libre_readings)
-    Supabase-->>UI_Mobile: 10. WebSocket更新通知を受信
-    UI_Mobile->>Supabase: 11. 差分データ取得 (Delta Fetch)
-    Supabase-->>UI_Mobile: 差分JSON返却
-    UI_Mobile->>LocalDB_Mobile: 12. IndexedDB更新
+    Note over Supabase: 9. Supabase Realtime イベント発火 (postgres_changes: events / libre_readings)
+    Supabase-->>UI_Mobile: 10. WebSocket更新通知を受信 (subscribeToPatientRealtime)
+    UI_Mobile->>Supabase: 11. 双方向差分同期 (syncPatientDataWithCloud)
+    Supabase-->>UI_Mobile: 差分レコード返却 (normalizeToWallClockIso)
+    UI_Mobile->>LocalDB_Mobile: 12. IndexedDB更新 & 全4種メモリキャッシュ破棄
     UI_Mobile-->>Patient: スマホ側の画面も自動で最新化！
 ```
 

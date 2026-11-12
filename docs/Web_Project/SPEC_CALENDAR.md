@@ -172,7 +172,7 @@
 - **記録削除時のカスタム確認ダイアログ (`src/components/common/ConfirmDialog.tsx`)**:
   - ドロワー内の食事・活動イベント削除時は、ブラウザ標準の `window.confirm()` を使わず、共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）を表示して誤削除を防止する。
 - **ドロワー開閉 & 下スワイプ収納 & 日付切替アニメーション**:
-  - オープン・クローズ時は2段階マウント制御により、背景オーバーレイのフェードイン/アウトおよびパネル本体のスライドイン/アウトを 300ms のイージングで滑らかに実行する。
+  - オープン・クローズ時は共通アニメーションフック `useAnimatedModal(isOpen, 280)`（`src/lib/useAnimatedModal.ts`）による2段階マウント制御で、背景オーバーレイのフェードイン/アウトおよびパネル本体のスライドイン/アウトを 300ms のイージングで滑らかに実行する。日付見出しは `formatJapaneseDateWithWeekday`（`src/lib/dateUtils.ts`）で統一フォーマットし、食事イベント削除時の `meal_details` 論理削除は `bulkPut` で一括実行する。
   - **下スワイプでドロワーを閉じる操作 & ブラウザリロード（Pull-to-Refresh）完全抑止**: ドロワー上部のドラッグバー・ヘッダー領域を下スワイプした際、またはドロワー内スクロール領域が最上部（`scrollTop <= 5`）にある状態で下スワイプ（`deltaY > 55` かつ `Math.abs(deltaY) > Math.abs(deltaX) * 1.2`）した際に、滑らかにドロワーを閉じる（`onClose()`）。この際、モバイル実機のOS/ブラウザ標準の Pull-to-Refresh（引っ張ってリロード）が発動してページがリロードされないよう、`html, body` への `overscroll-behavior-y: none` 適用、ドロワーおよび内部スクロール領域の `overscroll-contain` / `overscroll-y-contain`、ヘッダー領域の `touch-pan-x`、および non-passive（`{ passive: false }`）な `touchmove` イベントリスナーでの `e.preventDefault()` 制御を行う。
   - ドロワー内で「前日」「翌日」へ切り替えた際は、`shiftLocalDateStr`（`src/lib/dateUtils.ts`）によりタイムゾーンズレなく日付を移動し、内部コンテンツがフェード＆スライド遷移する。
 - **24時間血糖値推移グラフ (`DailyGlucoseChart.tsx`)**:

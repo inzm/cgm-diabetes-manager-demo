@@ -80,8 +80,8 @@ AI（および全サブエージェント）は、設計・実装・レビュー
    - **Release & Deploy Agent**: 全品質ゲート通過後のアトミックコミット、Git Push、および Cloudflare Pages への自動デプロイ実行（`ai-orchestrator-pipeline` スキル準拠）。
 2. **一気通貫ノンストップ・オーケストレーションパイプライン (`scripts/orchestrate-pipeline.mjs`)**:
    - 検証＋スクリーンショット撮影を一括実行する場合は `npm run pipeline:verify` を使用する。
-   - コード修正からテスト・仕様書更新・コミット・Git Push・Cloudflare Pagesデプロイまでをノンストップで完全自動実行する場合は `npm run pipeline:ship -- --message "<commit message>"` を使用する。
-   - エージェントのターン終了時には `.agents/hooks.json`（`hooks/stop-guard.mjs`）が自動発動し、仕様書の更新漏れやUX/セキュリティ違反が残っている場合は停止をブロックして自律修正を継続させる。
+   - コード修正からテスト・仕様書更新・コミット・Git Push・Cloudflare Pagesデプロイまでをノンストップで完全自動実行する場合は `npm run pipeline:ship:personal -- --message "<commit message>"`（本番）または `npm run pipeline:ship:demo -- --message "<commit message>"`（公開デモ）を使用する。
+   - エージェントのターン終了時には `.agents/hooks.json`（`.agents/hooks/stop-guard.mjs`）が自動発動し、仕様書の更新漏れやUX/セキュリティ違反が残っている場合は停止をブロックして自律修正を継続させる。
 3. **過去資産（`legacy_vba/`）の参照限定ルール**:
    - `legacy_vba/` 配下のファイル（`main.xlsm`, `data.csv`, `vba_exported/` 等）は、**「臨床計算アルゴリズムの正解ロジックやUX動線を確認するための参照専用」** とする。
    - Webプロジェクトの仕様書（`docs/Web_Project/*.md`）やWeb版DB設計とVBA側のデータ構造が異なる場合は、**常にWebプロジェクトの設計を優先する**。
@@ -151,32 +151,23 @@ AI（および全サブエージェント）は、設計・実装・レビュー
 
 ---
 
-## 7. GitHub Issue駆動 & ブランチ・PR運用規約
+## 7. 2系統ブランチ & オーケストレーション出荷運用規約 (`main` / `demo-public`)
 
-本プロジェクトでは、タスクの進捗可視化とスコープ制限のために **GitHub Issue & ブランチ運用** をドキュメント駆動開発（DDD）と完全に連動させます。
+本プロジェクトでは、**「患者・家族向け本番環境（Private リポジトリ `origin` / `main` ブランチ）」** と **「採用・ポートフォリオ向け公開デモ環境（Public リポジトリ `public-demo` / `demo-public` ブランチ）」** の2系統を安全かつ高速に運用するため、ドキュメント駆動開発（DDD）と一気通貫パイプライン（`scripts/orchestrate-pipeline.mjs`）を連動させます。
 
-### 7.1 Issue起票とタスク境界の原則
-1. **1機能/1課題 = 1 Issue**:
-   - 新機能の実装、仕様変更、バグ修正は必ず事前にGitHub Issueを作成してから着手する。
-2. **仕様書（SSOT）への必須リンク**:
-   - Issue本文には、必ず関連する仕様書（例: `docs/Web_Project/SPEC_CALENDAR.md`）と受け入れ条件（DoD）を明記する。
-   - サブエージェントは、**指定されたIssueのスコープ外のファイルを勝手に修正してはならない**。
-
-### 7.2 ブランチ命名規則
-`main`（または `master`）ブランチへの直接プッシュは禁止し、必ずトピックブランチを作成して作業します。
-
-| 種別 | プレフィックスと命名形式 | 例 |
+### 7.1 2系統ブランチの役割と隔離原則
+| ブランチ名 | リモート / デプロイ先 | 用途とセキュリティ制約 |
 | :--- | :--- | :--- |
-| **新機能実装** | `feature/issue-<番号>-<短い英語名>` | `feature/issue-1-calendar-view` |
-| **バグ修正** | `fix/issue-<番号>-<短い英語名>` | `fix/issue-2-glucose-chart-overlap` |
-| **仕様書・図面更新** | `docs/issue-<番号>-<短い英語名>` | `docs/issue-3-update-architecture-drawio` |
-| **リファクタリング** | `refactor/issue-<番号>-<短い英語名>` | `refactor/issue-4-dexie-schema` |
+| **`main`** | Private: `origin/main`<br>Cloudflare Pages: `cgm-diabetes-manager-personal` | **日常の開発・検証・個人本番運用の主軸ブランチ**。仕様書・図面・テスト・実装コードを同一コミットで管理し、`npm run pipeline:ship:personal` で全品質ゲート（`test:docs`, `typecheck`, `test`, `test:smoke`, `test:e2e:regression`, `test:visual`）通過後に直接コミット・Push・本番デプロイを行う。 |
+| **`demo-public`** | Public: `public-demo/main`<br>Cloudflare Pages: `cgm-diabetes-manager-demo` | **公開ポートフォリオ専用のクリーンブランチ**。`legacy_vba/` 配下の旧資産ファイルをGitインデックスから完全除外し、`main` で検証済みのコミットを `git cherry-pick` で取り込んだ上で `npm run pipeline:ship:demo`（`PHASE-0-GUARD` 付き）により出荷する。 |
+| **`feature/*`, `fix/*`, `docs/*`, `refactor/*`** | 任意（大規模改修・並行実験時） | 複数機能を並行開発する場合やPRレビューを挟む場合に任意で作成するトピックブランチ。 |
 
-### 7.3 コミット & プルリクエスト（PR）連携
-1. **トレーサビリティの確保**:
-   - コミットメッセージには必ず関連するIssue番号を含めること（例: `feat(calendar): implement monthly grid sync Closes #1`）。
-2. **PRによる品質ゲート**:
-   - PRの説明文で「仕様書の受け入れ条件（DoD）をすべて満たしたか」をチェックリスト形式で確認し、マージによってIssueを自動クローズ（`Closes #1`）する。
+### 7.2 コミット & 出荷ゲート規約
+1. **アトミックコミット（Spec + Code + Test 同時記録）**:
+   - 実装コード（`src/`, `functions/`, `supabase/`）、仕様書・図面（`docs/Web_Project/`）、およびテストコードを必ず同一のGitコミットにまとめ、コミットメッセージには変更種別を明記する（例: `feat(personal): enforce BFF JWT/Same-Origin auth and DDL parity gate`）。
+   - サブエージェントは、**親エージェントから指定されたタスクのスコープ外のファイルを勝手に修正してはならない**。
+2. **全品質ゲート通過による自動出荷保証**:
+   - `git commit` 時は `.git/hooks/pre-commit`（`npm run test:docs` + `npm run typecheck`）が自動実行され、出荷時は `npm run pipeline:verify` / `npm run pipeline:ship:personal` / `npm run pipeline:ship:demo` によって単体テスト・Viteスモークテスト・Playwright E2E 全14スイート・11画面ビジュアル監査が100% PASS した状態でのみリモートPushおよびデプロイが行われる。
 
 ---
 
@@ -186,7 +177,7 @@ AI（および全サブエージェント）は、設計・実装・レビュー
 
 ### 8.1 開発サーバー・ランタイムスモークテストの義務化 (`npm run test:smoke`)
 - 静的バンドルが成功しても、Vite開発サーバーのメモリ内キャッシュやHMRにより `Failed to resolve import` や `Internal server error` が発生するケースがある。
-- AIエージェントは、機能実装・共通コンポーネント追加・リファクタリング完了時、**PR作成前に必ず `npm run test:smoke` を実行し、全エンドポイントが HTTP 200 かつエラーパターンなし（clean response）であることを機械的に検証しなければならない**。
+- AIエージェントは、機能実装・共通コンポーネント追加・リファクタリング完了時、**`npm run test:smoke`（`npm run verify:all` および `npm run pipeline:verify` に統合済み）を実行し、全56エンドポイントが HTTP 200 かつエラーパターンなし（clean response）であることを機械的に検証しなければならない**。
 
 ### 8.2 臨床計算アルゴリズム & 画面間データ整合性の単体・統合テスト必須化 (`npm test`)
 - 医療・臨床データ（血糖上昇幅Δ、ステートマシン異常値判定、時間帯4区分、糖質合算等）の計算ロジックおよびマスタ・設定・記録・分析間のデータ連携を変更・追加する場合、必ず [`docs/Web_Project/TEST_PLAN.md`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/docs/Web_Project/TEST_PLAN.md) に基づき `src/lib/__tests__/` 配下に単体・統合テストを作成すること。
@@ -195,5 +186,5 @@ AI（および全サブエージェント）は、設計・実装・レビュー
 - 日時・期間集計やカレンダー日付生成・前後日移動・イベント保存において、`toISOString()` による日付切り出しや時刻保存は UTC 変換による9時間ズレを引き起こすため厳禁とする。
 - 必ず `src/lib/dateUtils.ts` のローカルタイムゾーン安全関数（`formatLocalDate`, `buildLocalDateTimeString`, `extractLocalDateStr`, `extractLocalTimeStr`）を使用すること。
 
-### 8.4 ドキュメント同期 & セキュリティ・ハリボテ・開発者用語防止強制ゲート (`npm run test:docs`)
-- ソースコード（`src/components/*`, `src/lib/*`, `src/workers/*`, `supabase/migrations/*`）を変更した際、対応する仕様書（`docs/Web_Project/SPEC_*.md`, `ARCHITECTURE.md`, または `USER_GUIDE.md`）が同一変更セット内で更新されていること、ブラウザの `localStorage` にAPIキーを保存する危険なコードや虚偽の「安全保管」文言が存在しないこと、およびUIコンポーネント内に「マスタ」「IndexedDB」「Dexie.js」「Web Worker」等の開発者用語が露出していないことを [`scripts/verify-docs-sync.mjs`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/scripts/verify-docs-sync.mjs) により機械的に検証する。
+### 8.4 ドキュメント・図面・DDL同期 & セキュリティ・ハリボテ・開発者用語防止強制ゲート (`npm run test:docs`)
+- ソースコード（`src/components/*`, `src/contexts/*`, `src/lib/*`, `src/types/*`, `src/workers/*`, `functions/*`, `supabase/migrations/*`）を変更した際、対応する仕様書・図面（`docs/Web_Project/SPEC_*.md`, `ARCHITECTURE.md`, `USER_GUIDE.md`, `docs/Web_Project/diagrams/*`）が同一変更セット内で更新されていること、`supabase/migrations/0001_initial_schema.sql` と `ARCHITECTURE.md` Section 5 のDDLが100%一致していること、全モジュールがマッピング＆スモークテスト登録されていること、ブラウザの `localStorage` にAPIキーを保存する危険なコードや虚偽の「安全保管」文言が存在しないこと、およびUIコンポーネント内に「マスタ」「IndexedDB」「Dexie.js」「Web Worker」等の開発者用語が露出していないことを [`scripts/verify-docs-sync.mjs`](file:///c:/Users/PC05/Documents/VBA/課題/anti_test/scripts/verify-docs-sync.mjs) により機械的に検証する。

@@ -20,7 +20,8 @@ import {
   Activity,
   Calendar,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, getErrorMessage } from '@/lib/utils';
+import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import type {
   CsvImportProgressMessage,
   CsvImportCompleteMessage,
@@ -38,34 +39,23 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   onClose,
   onImportSuccess,
 }) => {
-  const { currentPatientId, hypoThreshold, hyperThreshold } = usePatient();
+  const { currentPatientId, hypoThreshold, hyperThreshold, isReadOnly } = usePatient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeWorkerRef = useRef<Worker | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<CsvImportProgressMessage | null>(null);
   const [completeStats, setCompleteStats] = useState<CsvImportCompleteMessage['stats'] | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
+  const { shouldRender, isVisible } = useAnimatedModal(isOpen, 220);
 
   useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      const rafId = window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setIsVisible(true);
-        });
-      });
-      return () => window.cancelAnimationFrame(rafId);
-    } else {
-      setIsVisible(false);
-      const timerId = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 220);
-      return () => window.clearTimeout(timerId);
-    }
-  }, [isOpen]);
+    return () => {
+      activeWorkerRef.current?.terminate();
+      activeWorkerRef.current = null;
+    };
+  }, []);
 
   if (!shouldRender) return null;
 
@@ -93,6 +83,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   };
 
   const processFile = async (file: File) => {
+    if (isReadOnly) return;
     if (isDemoCsvImportDisabled()) {
       setErrorMsg('デモアプリでは利用できません');
       return;
@@ -118,10 +109,12 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
     try {
       const text = await file.text();
 
+      activeWorkerRef.current?.terminate();
       const worker = new Worker(
         new URL('../../workers/csvParser.worker.ts', import.meta.url),
         { type: 'module' }
       );
+      activeWorkerRef.current = worker;
 
       worker.onmessage = async (
         e: MessageEvent<
@@ -163,7 +156,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           // 先行して登録されていた食事記録に対し、取り込まれた履歴から食前・食後血糖値を自動紐づけ
           await bindMealGlucoseFromReadings(currentPatientId);
           clearCalendarMonthlyCache();
-          invalidateAnalysisDatasetCache();
+          invalidateAnalysisDatasetCache(currentPatientId);
           invalidateInMemoryRecentCache(currentPatientId);
           triggerBackgroundCloudSync(currentPatientId, {
             replaceRemoteAnomalies: true,
@@ -173,6 +166,9 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           setCompleteStats(data.stats);
           setIsProcessing(false);
           worker.terminate();
+          if (activeWorkerRef.current === worker) {
+            activeWorkerRef.current = null;
+          }
 
           if (onImportSuccess) {
             onImportSuccess(data.stats.endDate);
@@ -181,6 +177,9 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
           setErrorMsg(data.error);
           setIsProcessing(false);
           worker.terminate();
+          if (activeWorkerRef.current === worker) {
+            activeWorkerRef.current = null;
+          }
         }
       };
 
@@ -188,6 +187,9 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
         setErrorMsg(`読み込みエラー: ${err.message}`);
         setIsProcessing(false);
         worker.terminate();
+        if (activeWorkerRef.current === worker) {
+          activeWorkerRef.current = null;
+        }
       };
 
       worker.postMessage({
@@ -197,8 +199,8 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
         hypoThreshold,
         hyperThreshold,
       });
-    } catch (err: any) {
-      setErrorMsg(`ファイル読込エラー: ${err.message || err}`);
+    } catch (err: unknown) {
+      setErrorMsg(`ファイル読込エラー: ${getErrorMessage(err)}`);
       setIsProcessing(false);
     }
   };
@@ -280,6 +282,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                   ref={fileInputRef}
                   type="file"
                   accept=".csv,.txt"
+                  disabled={isReadOnly}
                   onChange={handleFileChange}
                   className="hidden"
                 />

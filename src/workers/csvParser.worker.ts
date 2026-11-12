@@ -1,5 +1,11 @@
-import { LibreReading, HealthEvent } from '@/types/database';
+import {
+  DEFAULT_HYPER_THRESHOLD,
+  DEFAULT_HYPO_THRESHOLD,
+  HealthEvent,
+  LibreReading,
+} from '@/types/database';
 import { extractAnomalyEventsFromReadings } from '@/lib/anomalyExtractor';
+import { getErrorMessage } from '@/lib/utils';
 import { deterministicUuid } from '@/lib/uuidUtils';
 
 export interface CsvImportStartMessage {
@@ -43,7 +49,12 @@ self.onmessage = (e: MessageEvent<CsvImportStartMessage>) => {
   if (e.data.type !== 'START_IMPORT') return;
 
   const startTime = Date.now();
-  const { fileText, patientId, hypoThreshold = 70, hyperThreshold = 180 } = e.data;
+  const {
+    fileText,
+    patientId,
+    hypoThreshold = DEFAULT_HYPO_THRESHOLD,
+    hyperThreshold = DEFAULT_HYPER_THRESHOLD,
+  } = e.data;
 
   try {
     const lines = fileText.split(/\r?\n/);
@@ -211,10 +222,10 @@ self.onmessage = (e: MessageEvent<CsvImportStartMessage>) => {
         durationMs,
       },
     } as CsvImportCompleteMessage);
-  } catch (err: any) {
+  } catch (err: unknown) {
     self.postMessage({
       type: 'ERROR',
-      error: err?.message || 'CSVのパース処理中に予期せぬエラーが発生しました',
+      error: getErrorMessage(err, 'CSVのパース処理中に予期せぬエラーが発生しました'),
     } as CsvImportErrorMessage);
   }
 };
