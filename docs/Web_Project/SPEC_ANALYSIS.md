@@ -13,7 +13,7 @@
 ### 1.1 コア分析機能（旧VBA完全整合 4大分析）
 1. **食品別 血糖上昇インパクト分析 (`src/components/analysis/FoodImpactTab.tsx`) [上段・左カラム配置]**:
    - **カテゴリ連動セレクトボックス**: 左側のセレクトボックスで食品カテゴリ（すべてのカテゴリ / 主食 / 主菜 / 副菜 / 間食・スイーツ 等、`categories` テーブルの `target_type = 'food'` に動的連動）を選択して食品候補を絞り込み、右側のセレクトボックスから対象食品（例: 「ごはん」「うどん」「カレーライス」等）を素早く選択する。
-   - **4大サマリー＆食事履歴全件表示**: 選択した食品の **「食べた回数」「平均インスリン」「食前→ピーク平均」「平均上昇幅（Δ血糖値）」**、および **「一緒に食べたもの（行クリックで開閉）」** を全件一覧・相関分析する。
+   - **4大サマリー＆食事履歴全件表示**: 選択した食品の **「食べた回数」「平均インスリン」「食前→ピーク平均」「平均上昇幅（Δ血糖値）」**、および **「一緒に食べたもの（行クリックで開閉）」** を全件一覧・相関分析する（食後3時間以内に次の食事や持効型以外の追加インスリン投与があった記録は一覧に `参考値` バッジを付して表示し、後続記録の影響が混ざるのを防ぐため「食前→ピーク平均」および「平均上昇幅（Δ血糖値）」の集計対象からは除外する）。
    - **モバイル（スマートフォン）横スクロール完全ゼロ設計 ＆ 高視認性アコーディオン**:
      - 左端の「日時」列は1行目に「日付＋1文字区分バッジ（`朝` / `昼` / `夕` / `間`、例: `8/25 [夕]`）」、2行目に「時刻（例: `19:15`）」を改行表示して列幅を最小化する。
      - 2列目の見出しを「**量・糖質**」に短縮し、1行目に「食べた量＋糖質量（例: `1杯 (55.2g)`）」、2行目に「`＋他3品 ▾`」バッジを配置することで、スマートフォン（幅360px〜）でも横スクロールを発生させずに全5列（`日時` / `量・糖質` / `インスリン` / `食前→ピーク` / `Δ上昇幅`）を1画面幅内に完全収容する。
@@ -81,14 +81,15 @@
 ### 3.2 複合インデックスによる期間局所取得 & オンメモリキャッシュ設計 (`src/lib/analysisCalculators.ts`, `src/lib/echartsCore.ts`)
 - **全件取得（`toArray`）の排除と複合インデックス `between()` による期間ピンポイント取得**:
   - 初回表示時は `[user_id+timestamp]` および `[user_id+event_datetime]` の先頭・末尾レコード（`.first()` / `.last()`）のみから `earliestDateStr`（最古記録日）と `referenceDateStr`（最新記録日）の境界メタデータ（`AnalysisBoundaryMetadata`）を高速特定する。また、`src/lib/realGlucoseLoader.ts` の Phase 2 バックグラウンド過去データ同期完了イベント（`cgm-background-hydration-complete`）を受信した際は、最古記録日（`2024-09-16`）および月別セレクトボックス候補（`availableMonths`）を自動更新する。
-  - 選択された期間（`7d`, `14d`, `30d`, `90d`, `month:YYYY-MM`, `all`）に対し、`db.libre_readings.where('[user_id+timestamp]').between(...)`（食前・食後探索用の前後1日余白含む）、`db.events.where('[user_id+event_datetime]').between(...)`、および `db.meal_details.where('event_id').anyOf(mealEventIds)` で必要期間のデータのみを局所取得し、`PeriodAnalysisSlice` としてメモリキャッシュ（`periodSlices` Map）に保持する。一度表示した期間は再計算・再クエリなしで0msで即時再利用する。
+  - 選択された期間（`7d`, `14d`, `30d`, `90d`, `month:YYYY-MM`, `all`）に対し、`db.libre_readings.where('[user_id+timestamp]').between(...)`（食前・食後探索用の前後1日余白含む）、`db.events.where('[user_id+event_datetime]').between(...)`（期間末日の夜間食事に対する翌日未明の後続干渉判定用に `+1日` 余白を取得し、集計自体は選択期間内に厳密フィルタ）、および `db.meal_details.where('event_id').anyOf(mealEventIds)` で必要期間のデータのみを局所取得し、`PeriodAnalysisSlice` としてメモリキャッシュ（`periodSlices` Map）に保持する。一度表示した期間は再計算・再クエリなしで0msで即時再利用する。
 - **全期間（`all`）・月別（`month:YYYY-MM`）および期間スライスの正確な境界決定**:
   - 「全期間（`all`）」選択時は、固定の過去日（2020年等）ではなく `earliestDateStr` から `referenceDateStr` までの実データ記録期間を対象とする。
   - 「月別セレクトボックス（`month:YYYY-MM`）」選択時は、指定された年月の初日（`YYYY-MM-01`）から末日までを集計対象とし、データセットの `earliestDateStr`〜`referenceDateStr` の範囲にクランプすることで、月途中の最新月や最古月でも正確な対象日数・平均値を算出する。
 
 ### 3.3 機能 1: 食品別 血糖上昇インパクト分析 (旧VBA `AnalyzeSelectedFood` / `computeBoundGlucoseForMeal`)
-- **食前・食後ピーク血糖値補完の単一真実源化 (`computeBoundGlucoseForMeal` in `src/lib/anomalyExtractor.ts`)**:
-   - 食事イベントに `pre_meal_glucose` または `post_meal_glucose` が未設定の場合の近傍探索は、`src/lib/anomalyExtractor.ts` の `computeBoundGlucoseForMeal` を共通呼び出しし、食事記録保存時・CSV取込時と100%同一のウィンドウ（食前 $[-15\text{分}, +5\text{分}]$ 最寄り値、食後 $[+60\text{分}, +180\text{分}]$ 最大値）で算出する。また、`invalidateAnalysisDatasetCache(patientId?)` は対象患者単位でのキャッシュ破棄をサポートする。
+- **食前・食後ピーク血糖値補完と後続干渉打ち切り・参考値除外の単一真実源化 (`computeBoundGlucoseForMeal` in `src/lib/anomalyExtractor.ts`)**:
+   - 食前血糖値・食後ピーク血糖値の算出および後続イベント干渉判定は、`src/lib/anomalyExtractor.ts` の `computeBoundGlucoseForMeal` を共通呼び出しし、食事記録保存時・CSV取込時・日次詳細表示時と100%同一のウィンドウ（食前 $[-15\text{分}, +5\text{分}]$ 最寄り値、食後 $[+60\text{分}, +180\text{分}]$ 最大値）で算出する。
+   - 食事時刻 $T$ から $(T,\ T + 180\text{分}]$ 内に次の食事記録または持効型を除く追加インスリン投与（`isPostMealInterferingEvent`）が存在する場合は、最初の後続イベント時刻直前 $[T + 60\text{分},\ T_{\text{int}})$ に窓を打ち切ってピーク値を算出し、履歴行（`FoodImpactItem.isPostMealReference = true`）のセル2段目にコンパクトな `参考値` バッジを表示した上で、上部サマリーカードの「食前→ピーク平均（ピーク側）」および「平均上昇幅（Δ）」の平均計算母集団からは除外する（「食べた回数」「平均インスリン」「食前平均」は全該当食事を対象とする）。また、`invalidateAnalysisDatasetCache(patientId?)` は対象患者単位でのキャッシュ破棄をサポートする。
 - **カテゴリ連動による食品選択**:
    - カテゴリセレクトボックス（`すべてのカテゴリ` または登録済み食品カテゴリ）を選択すると、該当カテゴリに属する食品のみに対象食品セレクトボックスの選択肢を絞り込む。カテゴリ変更時に現在の選択食品が絞り込み後の候補に含まれない場合は、候補先頭の食品を自動選択して即座に分析結果を更新する。
 - **スマートフォンでも横スクロール・文字崩れゼロの5列構成テーブル**:

@@ -157,7 +157,7 @@ sequenceDiagram
     Note over SupaAuth: サインアップ時は BEFORE INSERT トリガーで<br/>オーナーまたは family_permissions 招待済みを検証
     SupaAuth-->>Context: JWT セッション返却 (auth.uid, email)
 
-    Context->>SupaDB: 3. 家族連携照会 (family_permissions) & verify_user_authorization()
+    Context->>SupaDB: 3. 家族連携照会 (family_permissions) & verify_user_authorization() [authenticated限定RPC / anon遮断]
     alt 未招待の第三者アカウントの場合
         SupaDB-->>Context: authorized = false
         Context->>SupaAuth: 即座に強制 signOut()
@@ -207,7 +207,7 @@ sequenceDiagram
 
     Worker-->>UI_PC: 5. パース済み測定値 & 異常値イベント返却 (COMPLETE)
     UI_PC->>LocalDB_PC: 6. 対象期間の旧異常値置換 + libre_readings / events を一括保存 (bulkPut)
-    UI_PC->>LocalDB_PC: 7. 既存食事記録へ食前(-15〜+5分)・食後ピーク(+60〜180分)血糖を自動紐づけ (bindMealGlucoseFromReadings)
+    UI_PC->>LocalDB_PC: 7. 既存食事記録へ食前(-15〜+5分)・食後ピーク(+60〜180分/後続記録直前打ち切り)血糖を自動紐づけ (bindMealGlucoseFromReadings)
     LocalDB_PC-->>UI_PC: 完了通知 (カレンダー・日次グラフ・分析キャッシュ即時更新)
 
     UI_PC->>Supabase: 8. triggerBackgroundCloudSync (replaceRemoteAnomalies: true, 1,000件/chunk)<br/>※CSV原本の Supabase Storage 保管は将来実装予定（未実装）

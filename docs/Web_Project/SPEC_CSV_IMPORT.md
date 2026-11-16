@@ -109,9 +109,9 @@ CSV取込Worker（`src/workers/csvParser.worker.ts`）では、各測定値レ�
 
 ### 4.3 既存食事イベントへの食前・食後血糖値一括自動紐づけ (`bindMealGlucoseFromReadings`)
 - 食事記録は食事の都度リアルタイムに行われ、CGM履歴データ（CSV）は後からまとめて取り込まれるため、CSV取込完了時に `bindMealGlucoseFromReadings(patientId)` を実行する。
-- 対象患者の全食事イベント（`event_type === '食事' && !is_deleted`）を走査し、食事日時（$T$）に対して：
+- 対象患者の全未削除イベント（食事および活動）を参照して全食事イベント（`event_type === '食事' && !is_deleted`）を走査し、食事日時（$T$）に対して：
   1. **食前血糖値 (`pre_meal_glucose`)**: $T - 15\text{分} \le t \le T + 5\text{分}$ の範囲で最も時刻が近い測定値をセット。
-  2. **食後ピーク血糖値 (`post_meal_glucose`)**: $T + 60\text{分} \le t \le T + 180\text{分}$（食後1〜3時間）の範囲の最大測定値をセット。
+  2. **食後ピーク血糖値 (`post_meal_glucose`)**: 通常は $T + 60\text{分} \le t \le T + 180\text{分}$（食後1〜3時間）の範囲の最大測定値をセット。ただし $(T,\ T + 180\text{分}]$ 内に次の食事または持効型を除く追加インスリン投与（`isPostMealInterferingEvent`）が存在する場合は、最初の後続イベント時刻直前 $[T + 60\text{分},\ T_{\text{int}})$ に窓を打ち切って算出し、有効窓内に測定値がない場合は未設定（`undefined`）とする。
 
 ---
 

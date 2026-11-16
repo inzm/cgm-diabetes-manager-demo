@@ -75,7 +75,7 @@
 
 - 食品名、分量、単位から日本食品標準成分表に基づいて糖質量（`carbs_g`）を自動推定します。
 - セキュリティ保護のため、フロントエンド（`localStorage`）にはAPIキーを一切保持せず、サーバーサイドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効な場合はプロキシ経由、未接続時やオフライン時は内蔵の日本食品標準成分表辞書（`estimateCarbsLocally`）で安全かつ即座に推定値を返します。
-- **BFF認証検証（案2）とレート制限**: クライアント（`src/lib/gemini.ts`）は Supabase セッションが存在する場合に `Authorization: Bearer <access_token>` を自動付与し、`credentials: 'same-origin'` で送信します。BFF（`functions/api/gemini.ts`）は本番モード時に **「検証済みの有効な Supabase JWT」** を必須化し（同一 Origin 検証は Cross-Origin 遮断用の補助であり、単独では通さない）、Workers メモリ内スライディングウィンドウ（`checkBffUserRateLimit`、環境変数 `BFF_RATE_LIMIT_MAX` / `BFF_RATE_LIMIT_WINDOW_SEC` 対応）によるユーザー単位のレート制限（超過時 `HTTP 429`）を行い、Cross-Origin / Cross-Site リクエスト（`HTTP 403`）および未送信・無効・期限切れ JWT（`HTTP 401`）を遮断して Gemini API クォータの不正利用を防止します（詳細は `ARCHITECTURE.md` §4.5）。
+- **BFF認証検証（案2）とレート制限**: クライアント（`src/lib/gemini.ts`）は Supabase セッションが存在する場合に `Authorization: Bearer <access_token>` を自動付与し、`credentials: 'same-origin'` で送信します。BFF（`functions/api/gemini.ts`）は `GEMINI_API_KEY` の有無を判定する前の最先頭で Cross-Origin / Cross-Site リクエスト遮断（`HTTP 403`）および本番モード時の **「検証済みの有効な Supabase JWT」** 必須検証（同一 Origin 検証は補助であり単独では通さず、未送信・無効・期限切れ JWT は常に `HTTP 401`）を実行し、続いて Workers メモリ内スライディングウィンドウ（`checkBffUserRateLimit`、環境変数 `BFF_RATE_LIMIT_MAX` / `BFF_RATE_LIMIT_WINDOW_SEC` 対応）によるユーザー単位のレート制限（超過時 `HTTP 429`）を行って Gemini API クォータの不正利用を防止します（詳細は `ARCHITECTURE.md` §4.5）。
 
 ---
 

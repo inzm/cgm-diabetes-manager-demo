@@ -53,7 +53,7 @@
   - 日付をタップすると上部のサマリーバーが切り替わり、**選択中の日付をもう一度タップ（または上部サマリーバーをタップ）** すると **「日次詳細パネル（`src/components/daily/DailyDetailDrawer.tsx`）」** が開きます。
 - **日次詳細パネル**：
   - **24時間血糖推移グラフ（`src/components/daily/DailyGlucoseChart.tsx`）**：0:00〜24:00の血糖曲線に、目標範囲（緑帯）、食事タイミング（橙●）、運動・活動（緑◆）、高血糖ピーク（赤▲）、低血糖ボトム（青▼）が重ねて表示されます。
-  - **食事情報**：朝食・昼食・夕食・間食ごとの品目明細、インスリン単位、および **「食前血糖値 ➔ 食後ピーク血糖値（＋上昇幅Δ）」** が表示されます。
+  - **食事情報**：朝食・昼食・夕食・間食ごとの品目明細、インスリン単位、および **「食前血糖値 ➔ 食後ピーク血糖値（＋上昇幅Δ）」** が表示されます（食後3時間以内に次の食事や追加インスリン記録がある場合は、次の記録の直前までの最高値を算出し **「参考値」** と表示します）。
   - **イベント情報**：高血糖・低血糖の継続時間や最高/最低値、運動・入浴などの活動記録が時系列で表示されます。
 
 ### 3.3 食事・インスリン・活動の記録
@@ -80,7 +80,7 @@
 
 ### 3.5 血糖傾向の振り返り（「分析」タブ）
 - **「分析」** タブ（`src/components/analysis/AnalysisView.tsx`）では、期間（7日間・14日間・30日間・90日間・月別・全期間）を切り替えて4つの視点で分析できます：
-  1. **食品別血糖インパクト（`src/components/analysis/FoodImpactTab.tsx`）**：特定の食品を食べたときの食前→食後ピーク血糖上昇幅（Δ）と、その時一緒に食べた品目・インスリン量を確認できます。
+  1. **食品別血糖インパクト（`src/components/analysis/FoodImpactTab.tsx`）**：特定の食品を食べたときの食前→食後ピーク血糖上昇幅（Δ）と、その時一緒に食べた品目・インスリン量を確認できます（食後3時間以内に次の食事や追加インスリンがあった回は一覧に「参考値」と表示され、後続の影響が混ざらないよう上部の平均ピーク・平均上昇幅からは除外されます）。
   2. **時間帯別アラート傾向（`src/components/analysis/TimeAnomalyTab.tsx`）**：朝・昼・夕夜・夜間未明の4時間帯で、いつ低血糖や高血糖が起きやすいかを可視化します。
   3. **曜日別傾向（`src/components/analysis/WeekdayTrendsTab.tsx`）**：月曜〜日曜の曜日ごとの平均血糖値と平均摂取糖質量の違いを比較できます（※医療安全上、過剰投与による低血糖リスクを防ぐため曜日別の平均インスリン量は表示しません）。
   4. **糖質・インスリン推移（`src/components/analysis/CarbInsulinTrendTab.tsx`）**：日々の摂取糖質量とインスリン単位数の推移を複合グラフで確認できます。
@@ -130,10 +130,10 @@
 
 ### 4.4 （管理者向け補足）Supabase 側の認証設定ポイント
 ご家族を新しく招待する際、Supabase Dashboard（`Authentication` ➔ `Providers` ➔ `Email`）の設定は以下の通りにしておきます：
-- **Allow new users to sign up（新規サインアップ許可）**：**ON（有効）** にしておいて問題ありません。
-  - 本システムのデータベースには **未招待サインアップ遮断トリガー（`trg_enforce_invited_or_owner_signup`）** および **認可検証関数（`is_authorized_system_user`）** が組み込まれているため、Supabase 側でサインアップが ON になっていても、`family_permissions` テーブルに事前招待されていない第三者のサインアップはデータベース層で100%拒否されます。
+- **Allow new users to sign up（新規サインアップ許可）**：**ON（有効）** にします（これが招待家族の自己登録を可能にする正式な運用設定です）。
+  - 本システムのデータベースには **未招待サインアップ遮断トリガー（`trg_enforce_invited_or_owner_signup`）** および匿名呼び出しを遮断した **認可検証関数（`is_authorized_system_user` / `verify_user_authorization`）** が組み込まれているため、オーナー登録後に `family_permissions` テーブルへ事前招待されていない第三者がサインアップを試みてもデータベース層で即座に拒否されます。
 - **Minimum password length（最小パスワード文字数）**：**`8`**（8文字以上）に設定します。
-- **Password Requirements（パスワード要件）**：**`Lowercase, uppercase letters, digits and symbols`**（英小文字・英大文字・数字・記号の4種類すべて必須）を選択します。アプリ側の検証ロジック（`validateStrongPassword`：`src/lib/supabase.ts`）とクラウド認証基盤の双方で同一の強固なパスワードポリシーを強制します。
+- **Password Requirements（パスワード要件）**：**`Lowercase, uppercase letters, digits and symbols`**（英小文字・英大文字・数字・記号の4種類すべて必須）を選択します。アプリ側の検証ロジック（`validateStrongPassword`：`src/lib/supabase.ts`）とクラウド認証基盤の双方で同一の強固なパスワードポリシーを強制します（あわせて `Prevent use of leaked passwords` も有効化を推奨します）。
 - **Confirm email（メール確認）**：
   - ON の場合は、ご家族が新規登録した際に確認メールが届き、リンクをクリックするとログイン可能になります。
   - ご家族にメール確認の手間をかけず即座にパスワード登録だけでログインさせたい場合は、Supabase Dashboard の `Confirm email` を OFF にすることで、登録ボタンを押した瞬間にログインが完了します。

@@ -119,8 +119,8 @@
 - **タイムゾーンズレの完全防止**:
   - 入力された日付（`YYYY-MM-DD`）と時刻（`HH:mm`）は、`new Date(...).toISOString()`（UTC変換による -9時間ズレが発生する）を使わず、必ず `buildWallClockIso(date, time)`（`src/lib/dateUtils.ts`）を用いて `"YYYY-MM-DDTHH:mm:00.000Z"` 形式で保存・検索する。
   - 編集時の日時復元も `extractDateStr(event.event_datetime)` および `extractTimeStr(event.event_datetime)` を用い、入力した時刻と1分の狂いもなく一致させる。
-- **保存時の局所インデックス検索とCSV取込時の一括バインド（`bindMealGlucoseFromReadings`）**:
-  - 食事記録モーダル保存時（`MealRecordModal.tsx`）には、`bindMealGlucoseFromReadings(currentPatientId, targetMealId)` を呼び出し、7.9万件の全件走査を行わずに対象食事イベントの前後1日のみを `[user_id+timestamp]` 複合インデックスの `.between()` で $O(1)$ 局所検索し、すでに該当日のCGMデータが存在する場合は食前血糖値（`pre_meal_glucose`：直前15分〜直後5分）と食後ピーク血糖値（`post_meal_glucose`：食後60〜180分）を即時紐づけする。
+- **保存・編集・削除時の局所インデックス検索とCSV取込時の一括バインド（`bindMealGlucoseFromReadings`）**:
+  - 食事記録モーダル保存・削除時（`MealRecordModal.tsx`）、活動・インスリン記録モーダル保存・削除時（`ActivityRecordModal.tsx`）、日次詳細ドロワーでの記録削除時（`DailyDetailDrawer.tsx`）、および重複食事統合時（`mergeDuplicateMealsInSlot`）には、`bindMealGlucoseFromReadings(currentPatientId, targetEventIdOrDate)` を呼び出し、7.9万件の全件走査を行わずに対象日の前後1日のみを `[user_id+timestamp]` および `[user_id+event_datetime]` 複合インデックスの `.between()` で $O(1)$ 局所検索し、対象日近傍の食事イベントに対して食前血糖値（`pre_meal_glucose`：直前15分〜直後5分）と食後ピーク血糖値（`post_meal_glucose`：食後60〜180分、後続の食事・追加インスリンがある場合はその直前で打ち切り）を即時再紐づけする。
   - 食事記録時点で当日のCGM履歴データ（CSV）がまだ取り込まれていない場合も、後日リブレCSV履歴データを取り込んだ時点（[`SPEC_CSV_IMPORT.md`](SPEC_CSV_IMPORT.md) / `CsvImportModal.tsx` の `bindMealGlucoseFromReadings(currentPatientId)`）で日付バケットインデックスにより全食事イベントへ $O(N+M)$ 一括自動バインドされる。
 
 ### 3.5 データ永続化 (IndexedDB トランザクション & 食事明細UUID再利用 & カスケード論理削除 & クラウド同期)

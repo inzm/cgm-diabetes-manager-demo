@@ -36,7 +36,7 @@ flowchart TD
 
     subgraph Local_Storage ["【ローカルデータベース & 食事血糖バインド】"]
         G & K -->|COMPLETE メッセージ返却| L1["対象期間の旧異常値置換 +\nlibre_readings / events.bulkPut()"]:::db
-        L1 --> L2["bindMealGlucoseFromReadings()\n食前[-15〜+5分]・食後ピーク[+60〜180分]自動紐づけ"]:::db
+        L1 --> L2["bindMealGlucoseFromReadings()\n食前[-15〜+5分]・食後ピーク[+60〜180分/後続記録直前打ち切り]紐づけ"]:::db
         L2 --> N
     end
 

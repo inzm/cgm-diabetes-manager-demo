@@ -178,13 +178,17 @@ Excel固有の仕様や大量データ処理など、Web化において技術的
   - 手動登録イベント（食事・活動）を残し、自動抽出イベント（低血糖・高血糖）のみを正規UUID（`deterministicUuid`）で差し替え。
   - Supabase（`src/lib/syncEngine.ts` の `replaceRemoteAnomalies: true` 同期時）へは、新しい異常値イベントを先にチャンク単位で `upsert`（`upsertRowsInChunks`）し、登録がすべて成功した後でのみ新しい集合に含まれない旧自動抽出イベント（低血糖・高血糖）の ID 群をチャンク削除（`deleteRowsByIdsInChunks`）する（登録→削除の順）。UUIDは決定論的なので `upsert` は冪等であり、途中で通信エラー等により失敗しても旧データは失われずに残り、再実行で確実に最新集合へ収束する。
 
-### 3.5 食前・食後ピーク血糖値の近傍探索ロジック (`src/lib/anomalyExtractor.ts`)
-- 課題: 食事開始時刻 $T$ に対する食前血糖値、および食後ピーク血糖値を実測CGMデータから高速かつ正確に探索・補完する。
+### 3.5 食前・食後ピーク血糖値の近傍探索 ＆ 後続記録干渉打ち切りロジック (`src/lib/anomalyExtractor.ts`)
+- 課題: 食事開始時刻 $T$ に対する食前血糖値、および食後ピーク血糖値を実測CGMデータから高速かつ正確に探索・補完し、食後3時間以内に次の食事や追加インスリンがある場合の混入を防ぐ。
 - 解決方針:
-  - ローカル側 (`computeBoundGlucoseForMeal` & `bindMealGlucoseFromReadings` in `src/lib/anomalyExtractor.ts` / `src/lib/analysisCalculators.ts` / `src/components/records/MealRecordModal.tsx`):
-    - 単一真実源（SSOT）関数 `computeBoundGlucoseForMeal(mealMs, candidateReadings)` により、保存時・CSV取込時・食品インパクト分析時の全箇所で同一の近傍探索ロジックを共通利用する：
+  - ローカル側 (`computeBoundGlucoseForMeal` / `isPostMealInterferingEvent` / `bindMealGlucoseFromReadings` in `src/lib/anomalyExtractor.ts` / `src/lib/analysisCalculators.ts` / `src/components/records/MealRecordModal.tsx`):
+    - 単一真実源（SSOT）関数 `computeBoundGlucoseForMeal` により、保存時・削除時・CSV取込時・日次詳細表示時・食品インパクト分析時の全箇所で同一の近傍探索および後続干渉判定ロジックを共通利用する：
     - 食前血糖値 (`pre_meal_glucose`): $[T - 15\text{分},\ T + 5\text{分}]$ の範囲内で、食事時刻 $T$ との時間差の絶対値が最小となる測定値を採用。
-    - 食後ピーク血糖値 (`post_meal_glucose`): $[T + 60\text{分},\ T + 180\text{分}]$（食後1〜3時間）の範囲内における最高血糖値（Max）を採用（当該窓内に後続の食事やインスリン記録がある場合も区別せず最大値を採用する）。
+    - 食後ピーク血糖値 (`post_meal_glucose`) と干渉打ち切り判定 (`isPostMealReference`):
+      - 通常時は $[T + 60\text{分},\ T + 180\text{分}]$（食後1〜3時間）の範囲内における最高血糖値（Max）を採用する。
+      - ただし $(T,\ T + 180\text{分}]$ の範囲内に後続の「食事記録（`event_type === '食事'`）」または「持効型を除く追加インスリン投与（`insulin_units > 0`）」が存在する場合は、`isPostMealReference = true`（参考値）と判定し、最初の後続イベント時刻 $T_{\text{int}}$ の直前 $[T + 60\text{分},\ T_{\text{int}})$ で探索窓を打ち切って最大値を算出する（$T_{\text{int}} \le T + 60\text{分}$ 等で有効窓内に測定値がない場合はピーク値を未設定 `undefined` とする）。
+      - 参考値（`isPostMealReference === true`）となった記録は日次詳細および食品別履歴一覧に「参考値」と明示し、食品別インパクト分析の平均ピーク値・平均上昇幅（Δ）の母集団からは除外する。
+    - 食事・活動（インスリン含む）の保存・編集・統合・論理削除時には、対象日の前後1日の食事イベント群に対して `bindMealGlucoseFromReadings` を局所実行し、先行する食事への干渉有無の変化も即座に再反映する。
   - クラウド同期との責務分担:
     食前・食後ピーク血糖値の探索・補完は Local-First 原則に基づきクライアント側（`bindMealGlucoseFromReadings`）で一元実行し、算出済みの `pre_meal_glucose` / `post_meal_glucose` を含む `events` レコードを `syncPatientDataWithCloud`（`src/lib/syncEngine.ts`）で Supabase へ双方向同期する（サーバーサイドでの重複バッチSQLは実行しない）。
 
@@ -229,12 +233,18 @@ CREATE INDEX IF NOT EXISTS idx_family_email_lookup ON family_permissions (LOWER(
 ```
 
 ### 4.3 Supabase RLS (Row Level Security) & 招待専用アクセスガード設計 (`supabase/migrations/0001_initial_schema.sql`)
-データベース層で不正アクセスや未招待第三者のサインアップ・利用を遮断するため、PostgreSQLの `SECURITY DEFINER SET search_path = public, auth` 関数、`auth.users` トリガー、およびRLSを活用します。
+データベース層で不正アクセスや未招待第三者のサインアップ・利用・招待メール推測を遮断し、かつ 8.4万行の `libre_readings` 取得時にも高速に応答させるため、PostgreSQLの `STABLE SECURITY DEFINER SET search_path = public, auth` 関数、最小権限 `REVOKE`/`GRANT`、`auth.users` トリガー、および InitPlan 最適化された RLS を活用します。
 
-- 招待専用アクセス判定関数 (`public.is_authorized_system_user` & `public.verify_user_authorization`):
+- 招待専用アクセス判定と公開サインアップ運用 (`public.is_authorized_system_user`, `public.verify_user_authorization`, `trg_enforce_invited_or_owner_signup`):
   - システムを操作・閲覧できるのは ①オーナー（最初に登録された患者本人、または既に全7業務テーブルのいずれかにレコードを有する患者本人） と、②そのオーナーが `family_permissions` テーブルに招待登録した家族（`family_user_id` または `LOWER(family_email)` が一致するユーザー） のみに厳格制限する。
-  - `auth.users` に対する `BEFORE INSERT` トリガー（`trg_enforce_invited_or_owner_signup`）により、既にオーナーが存在する状態で `family_permissions` に招待されていないメールアドレスがサインアップを試みた場合は PostgreSQL レベルで即座に拒否する。
+  - Supabase Auth のメールサインアップ設定自体は招待家族の自己登録導線を維持するため有効（メール確認必須）とした上で、`auth.users` に対する `BEFORE INSERT` トリガー（`trg_enforce_invited_or_owner_signup`）により、既にオーナーが存在する状態で `family_permissions` に招待されていないメールアドレスがサインアップを試みた場合は PostgreSQL レベルで即座にロールバック遮断する。
   - クライアント側でもログイン・セッション復元時に `verifyUserAccessWithCloud`（`src/lib/syncEngine.ts`）を実行し、未招待の第三者アカウントであった場合は同期やローカルデータ移行を一切行わず即座に `signOut()` してローカルキャッシュを全消去する。
+- RPC 実行権限の最小化（匿名ユーザーからの探索完全遮断）:
+  - `public` スキーマ上の全セキュリティ関数から `PUBLIC` および `anon` ロールの `EXECUTE` 権限を明示的に剥奪（`REVOKE ALL ON FUNCTION ... FROM PUBLIC, anon`）し、未ログインの匿名キーから `/rest/v1/rpc/*` 経由で招待済みメールアドレス等を探索できない構造とする。
+  - フロントエンド（ログイン後の Auth Gate）から直接呼び出す `public.verify_user_authorization()` および RLS 評価で参照される判定関数は `authenticated` ロールのみに `EXECUTE` を許可し、さらに `is_system_owner` / `is_authorized_system_user` 内では呼び出し元 `auth.uid()` と異なる任意の他者 UID 指定を即時 `FALSE` として拒否する。`enforce_invited_or_owner_signup()` トリガー関数は `authenticated` からも `REVOKE` し、認証基盤ロールのみに限定する。
+- 大量データ（8.4万行）に対する `STABLE` 宣言 ＆ RLS InitPlan 最適化:
+  - 認可判定関数群（`is_system_owner`, `is_authorized_system_user`, `verify_user_authorization`, `can_view_patient_data`, `can_edit_patient_data`）をすべて `STABLE` として宣言し、`can_view_patient_data` / `can_edit_patient_data` 内の重複 `is_system_owner` 呼び出しを単一評価に統合する。
+  - 各業務テーブルの RLS ポリシーは `TO authenticated` に限定した上で、`((user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner())) OR public.can_view_patient_data(user_id))` 形式（および `family_permissions` での `(SELECT auth.uid())` / `(SELECT auth.jwt())` ラップと単一アクションポリシー統合、`food_master(category_id)` / `event_master(category_id)` 外部キーインデックス付与）を採用することで、患者オーナー本人の 8.4万行取得時に認可関数をクエリあたり1回の初期評価計画（InitPlan）に抑え、複合インデックス（`idx_libre_user_time`）を直接利用させる。
 
 ```sql
 -- 1. 閲覧権限チェック用セキュリティ関数 (未招待第三者は FALSE)
@@ -332,7 +342,8 @@ USING (can_edit_patient_data(user_id));
   2. Supabase JWT 検証 (`HTTP 401 Unauthorized`): `Authorization: Bearer <token>` が送信された場合、JWT 構造・`sub` クレーム・有効期限（`exp`）を検証し、さらに `SUPABASE_URL` および `SUPABASE_ANON_KEY` が環境変数に設定されている場合は Supabase Auth（`/auth/v1/user`）へ照会してトークンの正当性を検証する（不正・期限切れトークンは同一オリジンであっても 401 で拒否）。
   3. 本番モード（`APP_MODE !== 'portfolio'` かつ `VITE_APP_MODE !== 'portfolio'`）では、Supabase Auth で検証済みの有効な Supabase JWT を必須とする（未送信・不正・期限切れ・署名未検証時はすべて `HTTP 401 Unauthorized`）。同一 Origin 検証は Cross-Origin の遮断を目的とする補助的な検査とし、本番モードでは単独の認証として扱わない（`Origin` / `Referer` / `Sec-Fetch-Site` はブラウザ以外のクライアントが任意に設定できるため）。
   4. Workers メモリ内スライディングウィンドウ方式（`checkBffUserRateLimit`）によりユーザー（JWT の `sub`、デモモード時は接続元IP）単位のレート制限を行い、超過時は `Retry-After` ヘッダー付きで `HTTP 429 Too Many Requests` を返す。上限回数とウィンドウ秒数は環境変数（`BFF_RATE_LIMIT_MAX` / `BFF_RATE_LIMIT_WINDOW_SEC`）で設定し、未指定時は安全側既定値（`DEFAULT_BFF_RATE_LIMIT_MAX` / `DEFAULT_BFF_RATE_LIMIT_WINDOW_SEC`）を使用する。
-  5. `SUPABASE_URL` と `SUPABASE_ANON_KEY` が未設定の場合、JWT は構造と有効期限しか検証されず署名が検証されないため、`remoteVerified === false` として本番モードでは通過させない。本番デプロイでは両方を必須の環境変数要件とする。
+  5. `SUPABASE_URL` と `SUPABASE_ANON_KEY`（または `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`）が Cloudflare Pages Functions の Runtime 環境変数に未設定の場合、JWT は構造と有効期限しか検証されず署名が検証されないため、`remoteVerified === false` として本番モードでは通過させない。本番 Cloudflare Pages（`cgm-diabetes-manager-personal`）では Runtime 環境変数への両設定を必須要件とする。
+  6. リクエスト処理順序として、`onRequestPost` の最先頭で必ず `verifyBffRequestAuth`（`403` / `401`）および `checkBffUserRateLimit`（`429`）を実行し、その後に `GEMINI_API_KEY` の設定有無（未設定時は `503` でクライアント内蔵辞書へフォールバック）を判定する。これにより `GEMINI_API_KEY` 未設定環境であっても未認証・偽造 JWT リクエストを常に `401` / `403` で確実に遮断する。
 
 ### 4.6 ローカル端末（IndexedDB & メモリキャッシュ）の保護とログアウト時完全消去 (`src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`, `src/components/settings/CloudSyncFamilySection.tsx`)
 - 共有端末やスマホ・PCでの情報漏洩を防止するため、ユーザーが「ログアウト」を実行した際（または未招待アカウントが遮断された際）は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）により IndexedDB 内の全7テーブル（`user_settings`, `categories`, `food_master`, `event_master`, `events`, `meal_details`, `libre_readings`）および全4種のメモリキャッシュ（カレンダー月次集計・分析集計・期間局所スライス・直近メモリキャッシュ）を完全消去してログイン画面（`AuthGateScreen`）へ戻す。
@@ -344,7 +355,7 @@ USING (can_edit_patient_data(user_id));
 
 ## 5. データベース物理スキーマ（Supabase PostgreSQL 本番完全版: `supabase/migrations/0001_initial_schema.sql`）
 
-以下のDDLスクリプトは、マルチデバイスオフライン採番（UUID）、高速近傍探索（`event_datetime TIMESTAMPTZ`）、カテゴリ参照整合性、招待専用サインアップトリガー、および全テーブルのRow Level Security (RLS) を完備した本番直結スクリプト（[`supabase/migrations/0001_initial_schema.sql`](../../supabase/migrations/0001_initial_schema.sql) と同一のSSOT）です。SupabaseのSQLエディタでそのまま実行可能です。
+以下のDDLスクリプトは、マルチデバイスオフライン採番（UUID）、高速近傍探索（`event_datetime TIMESTAMPTZ`）、カテゴリ参照整合性、招待専用サインアップトリガー、最小権限 `REVOKE`/`GRANT`、および `STABLE`・InitPlan 最適化された全テーブルの Row Level Security (RLS) を完備した本番直結スクリプト（[`supabase/migrations/0001_initial_schema.sql`](../../supabase/migrations/0001_initial_schema.sql) と同一のSSOT）です。新規構築時はそのまま実行可能であり、稼働中の本番環境への差分反映は `0001_initial_schema.sql` と本セクションの完全一致を自動検証ゲート（`scripts/verify-docs-sync.mjs`）で保った上で、Supabase のマイグレーション履歴テーブルへ記録して適用します。
 
 ```sql
 -- ==============================================================================
@@ -891,5 +902,5 @@ END $$;
    - 未ログイン時ローカルデータの自動引き継ぎ (`migrateAnonymousLocalDataToUser`): 未ログイン状態（`DEFAULT_PATIENT_ID`）で記録されたローカルデータは、初回ログイン時に自動的に認証済み `auth.uid()` へマイグレーションされ、そのままクラウドへ同期されます。
    - 家族共有権限の自動解決 & Realtime 同期 (`resolveUserAccessFromPermissions`, `subscribeToPatientRealtime`): `family_permissions` テーブルを `family_user_id = auth.uid()` または `LOWER(family_email) = LOWER(user.email)` で照会し、招待元の `patient_id` とロール（`viewer` は閲覧専用ロック `isReadOnly = true`、`editor` は代理記録可能）を解決します。初回ログイン時に `family_user_id` が未設定の場合は自身の `auth.uid()` と `accepted_at` を自動紐づけし、Realtime 購読および同期完了時に全4種メモリキャッシュを即時破棄してUIを更新します。
 3. Cloudflare Pages Functions BFF (`functions/api/gemini.ts`):
-   - `POST /api/gemini` エンドポイント（`onRequestPost`）を提供し、`verifyBffRequestAuth` による Cross-Origin 遮断（`403 Forbidden`）および本番モード時の検証済み Supabase JWT 必須化（同一 Origin 単独は不許可、未充足時は `401 Unauthorized`）と、`checkBffUserRateLimit` による Workers メモリ内スライディングウィンドウのユーザー単位レート制限（環境変数 `BFF_RATE_LIMIT_MAX` / `BFF_RATE_LIMIT_WINDOW_SEC` 対応、超過時は `429 Too Many Requests`）を実行します（§4.5）。さらに `foodName`（1〜100文字）および `unit`（20文字以内）の厳格な入力長バリデーションを実行した上で、サーバーサイド環境変数 `GEMINI_API_KEY` が設定されている場合は Google Gemini REST API を呼び出して糖質量推定結果（`{ carbs_g, confidence, note }`）を返却します。`GEMINI_API_KEY` 未設定時や `401` / `429` 応答時は、クライアント（`src/lib/gemini.ts`）の内蔵日本食品標準成分表辞書（`estimateCarbsLocally`）へシームレスにフォールバックします。
+   - `POST /api/gemini` エンドポイント（`onRequestPost`）を提供し、最先頭で `verifyBffRequestAuth` による Cross-Origin 遮断（`403 Forbidden`）および本番モード時の検証済み Supabase JWT 必須化（同一 Origin 単独は不許可、未充足時は `401 Unauthorized`）と、`checkBffUserRateLimit` による Workers メモリ内スライディングウィンドウのユーザー単位レート制限（環境変数 `BFF_RATE_LIMIT_MAX` / `BFF_RATE_LIMIT_WINDOW_SEC` 対応、超過時は `429 Too Many Requests`）を実行します（§4.5）。さらに `foodName`（1〜100文字）および `unit`（20文字以内）の厳格な入力長バリデーションを実行した上で、サーバーサイド環境変数 `GEMINI_API_KEY` が設定されている場合は Google Gemini REST API を呼び出して糖質量推定結果（`{ carbs_g, confidence, note }`）を返却し、`GEMINI_API_KEY` 未設定時は `503` を返してクライアント（`src/lib/gemini.ts`）の内蔵日本食品標準成分表辞書（`estimateCarbsLocally`）へシームレスにフォールバックします。
 
