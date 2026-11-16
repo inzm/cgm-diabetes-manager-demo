@@ -1,0 +1,175 @@
+name: Verify Quality Gates & Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify Quality Gates (DDD / Types / Vitest / Smoke / Playwright E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: ci-verify-${{ github.repository }}-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    env:
+      IS_DEMO_REPO: ${{ endsWith(github.repository, '-demo') || vars.APP_BUILD_MODE == 'portfolio' }}
+    steps:
+      - name: Checkout repository (with Git history for DDD diff verification)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production runtime dependencies
+        run: npm run audit:prod
+
+      - name: Run DDD Specification Sync, Schema Parity & Security/UX Gate
+        env:
+          SKIP_DOC_SYNC: ${{ env.IS_DEMO_REPO == 'true' && '1' || '0' }}
+          DIFF_RANGE: ${{ github.event_name == 'pull_request' && format('origin/{0}...HEAD', github.base_ref) || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' && format('{0}..{1}', github.event.before, github.sha) || '') }}
+        run: npm run test:docs
+
+      - name: Run 3-Layer TypeScript Strict Typecheck (src + functions + e2e)
+        run: npm run typecheck
+
+      - name: Run Clinical & Data Integrity Tests (Vitest)
+        run: npm test
+
+      - name: Run Runtime Dev Server Smoke Test (56 Endpoints)
+        run: npm run test:smoke
+
+      - name: Build Portfolio Bundle for E2E Verification (VITE_APP_MODE=portfolio)
+        run: npm run build:vite:portfolio
+
+      - name: Verify Service Worker deterministic revision stamp
+        run: grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" dist/sw.js
+
+      - name: Cache Playwright Chromium binaries
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Chromium, OS dependencies & Japanese CJK fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk fontconfig
+          fc-cache -f
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Run Pre-Deployment Playwright E2E Regression Suite
+        run: npm run test:e2e:regression
+
+      - name: Run 11-Screen Visual Layout & Zero-Jargon DOM Audit
+        run: npm run test:visual
+
+      - name: Verify Personal Bundle Compilation & Demo Asset Exclusion (Private Repo)
+        if: ${{ env.IS_DEMO_REPO != 'true' }}
+        run: |
+          npm run build:vite:personal
+          test ! -d dist/data
+
+      - name: Upload Playwright Failure Traces & Visual Audit Screenshots
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-failure-diagnostics-${{ github.run_id }}
+          path: |
+            test-results/
+            .agents/scratch/screenshots/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  deploy:
+    name: Deploy Verified Bundle to Cloudflare Pages
+    needs: verify
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      deployments: write
+    concurrency:
+      group: cloudflare-pages-deploy-${{ github.repository }}-main
+      cancel-in-progress: false
+    env:
+      IS_DEMO_REPO: ${{ endsWith(github.repository, '-demo') || vars.APP_BUILD_MODE == 'portfolio' }}
+      HAS_CF_SECRETS: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+      RESOLVED_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL }}
+      RESOLVED_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Enforce Personal Production Secrets Guard (Prevent Auth Gate Bypass)
+        if: ${{ env.IS_DEMO_REPO != 'true' }}
+        run: |
+          if [ -z "$RESOLVED_SUPABASE_URL" ] || [ -z "$RESOLVED_SUPABASE_ANON_KEY" ]; then
+            echo "::error::[Security Gate] Production deployment aborted: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be configured in GitHub Secrets or Variables (see Issue #87). Refusing to overwrite cgm-diabetes-manager-personal with Auth Gate / Cloud Sync disabled."
+            exit 1
+          fi
+          if [ "$HAS_CF_SECRETS" != "true" ]; then
+            echo "::error::[Deploy Gate] CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be configured in GitHub Secrets."
+            exit 1
+          fi
+
+      - name: Build Personal Production Bundle (VITE_APP_MODE=personal)
+        if: ${{ env.IS_DEMO_REPO != 'true' }}
+        env:
+          REQUIRE_SUPABASE_ENV: '1'
+          VITE_SUPABASE_URL: ${{ env.RESOLVED_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ env.RESOLVED_SUPABASE_ANON_KEY }}
+        run: |
+          npm run build:vite:personal
+          test ! -d dist/data
+          grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" dist/sw.js
+
+      - name: Build Public Portfolio Bundle (VITE_APP_MODE=portfolio)
+        if: ${{ env.IS_DEMO_REPO == 'true' }}
+        run: |
+          npm run build:vite:portfolio
+          grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" dist/sw.js
+
+      - name: Warn if Public Demo Cloudflare Secrets are Pending
+        if: ${{ env.IS_DEMO_REPO == 'true' && env.HAS_CF_SECRETS != 'true' }}
+        run: |
+          echo "::warning::Cloudflare secrets are not yet configured on public-demo (Issue #87). Skipping Cloudflare Pages deploy."
+
+      - name: Deploy to Cloudflare Pages via Wrangler CLI
+        if: ${{ env.HAS_CF_SECRETS == 'true' }}
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CF_PAGES_PROJECT_NAME || (env.IS_DEMO_REPO == 'true' && 'cgm-diabetes-manager-demo' || 'cgm-diabetes-manager-personal') }} --branch=main

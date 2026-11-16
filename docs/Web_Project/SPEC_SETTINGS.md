@@ -1,0 +1,160 @@
+# 設定画面 詳細仕様書 (SPEC_SETTINGS.md)
+
+本ドキュメントは、血糖値・食事・インスリン統合管理システム Web版における **「設定画面（`src/components/settings/SettingsView.tsx`）」** の機能要件、UI設計、データモデル、セキュリティ制約、ユーザー目線・引き算の原則、ハリボテ（外観のみ実装）排除規約、および受け入れ条件（DoD）を定めた仕様書（SSOT）です。
+旧VBA資産（`legacy_vba/vba_exported/frmSettings.txt`）の設定項目を継承しつつ、Web版のDBスキーマ・4軸評価（セキュリティ・拡張性・保守性・ユーザビリティ）に完全準拠して策定されています。
+
+---
+
+## 1. 概要 & 目的
+
+患者自身が、開発者用語（`IndexedDB`、`マスタ`、`libre_readings` 等）や冗長な説明文に煩わされることなく、
+1. **血糖値の目標範囲・アラート設定（低血糖・高血糖の基準値）** を自身の治療方針に合わせてカスタマイズし、保存と同時に全画面（カレンダー・24H推移グラフ・分析画面）へ即時反映させる
+2. **食事記録のデフォルトインスリン設定（朝食・昼食・夕食・間食）と有効化トグル** を設定し、毎食の単位数が決まっている患者が食事記録モーダルでインスリン入力の手間をゼロにする（トグルOFF時は空欄プレースホルダー＋未入力時確認として動作）
+3. **データのバックアップ・初期化** として、端末内の保存データ件数を確認し、**全データのファイル保存（エクスポート）、確認ダイアログ付きのファイルからの復元（インポート）、および記録データの初期化（初期状態へ戻す）** を行う
+4. **糖質の自動推定** や **家族見守り共有・クラウド同期（実装予定）** の状態を誠実に確認し、未実装機能の呼び出しボタンには必ず `（未実装）` と明記して非活性化する（架空の人物リスト等のハリボテUIは一切表示しない）
+5. **動作検証用オプション（患者本人 / 見守り家族の切替、ホーム画面へのアプリ追加）** を実行する
+ことを実現するための管理画面です。
+
+---
+
+## 2. 画面レイアウト & UIコンポーネント構成 (`src/components/settings/SettingsView.tsx`, `src/components/settings/TargetRangeSection.tsx`, `src/components/settings/DefaultInsulinSection.tsx`, `src/components/settings/DataBackupSection.tsx`, `src/components/settings/CloudSyncFamilySection.tsx`, `src/components/settings/VerificationPwaSection.tsx`)
+
+ヘッダーの「設定」タイトルと重複する画面上部の巨大なタイトルカードや、物理テーブル名（`libre_readings` 等）の露出を引き算し、開いてすぐ設定項目にアクセスできる構成とします。また、単一責任の原則（SRP）に基づき、親コンテナ `SettingsView.tsx` から5つの独立したセクションコンポーネントへ分割しています。
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 【1. 血糖値の目標範囲・アラート設定】                                       │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │ 目標範囲バー: [ 低血糖 < 70 ] === 正常目標帯 (70〜180) === [ 高血糖 > 180] │
+│ │                                                                         │ │
+│ │  低血糖の基準値 (mg/dL): [ 70 ]    高血糖の基準値 (mg/dL): [ 180 ]       │ │
+│ │                                                        [ 💾 設定を保存 ] │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│ 【2. 食事記録のデフォルトインスリン設定】                                   │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │  デフォルト値を有効にする: [ ON / OFF トグルボタン ]                    │ │
+│ │  朝食: [ 8.0 ] U   昼食: [ 6.0 ] U   夕食: [ 10.0 ] U   間食: [ 0.0 ] U │ │
+│ │                                                        [ 💾 設定を保存 ] │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│ 【3. データのバックアップ・初期化】                                         │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │  血糖データ / 食事・活動記録 / 食事明細 / 登録食品 / 登録活動 / カテゴリ │ │
+│ │  [ 📥 バックアップを保存 ] [ 📤 バックアップから復元 ] [ 🗑️ 記録データを削除]│
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│ 【4. クラウド同期 & 家族見守り共有（本番クラウド接続時）】                  │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │  ・クラウドアカウント・端末間同期:                                      │ │
+│ │    ログイン / 新規登録フォーム、またはログイン中アドレス＋[今すぐ同期]  │ │
+│ │  ・表示対象の切り替え（本人＋招待家族の場合）: [自分の記録] [家族の記録]│ │
+│ │  ・家族への共有・権限管理（患者本人のみ）:                              │ │
+│ │    家族メール入力＋権限選択（閲覧のみ / 記録・編集も可能）＋一覧・解除  │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│ 【5. 動作検証・アプリ追加】                                                 │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │  表示モード切替: [ 🛡️ 患者本人 (編集可) ]  [ 👁️ 見守り家族 (閲覧専用) ]  │ │
+│ │  アプリ追加 (対応時のみ): [ 📲 ホーム画面にアプリを追加 ]                │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. 機能要件 & データ仕様
+
+### 3.1 血糖値の目標範囲設定 & 食事区分別デフォルトインスリン設定 (`UserSettings` / `src/contexts/PatientContext.tsx` / `src/lib/anomalyExtractor.ts` / `src/lib/syncEngine.ts`)
+- **データエンティティ**: `db.user_settings`
+  - `user_id`: UUID
+  - `hypo_threshold`: number（デフォルト: 70.0 mg/dL）
+  - `hyper_threshold`: number（デフォルト: 180.0 mg/dL）
+  - `target_tir_min`: number
+  - `target_tir_max`: number
+  - `enable_default_insulin`: boolean（食事記録時のデフォルトインスリン自動入力トグル、デフォルト: `false`）
+  - `default_insulin_breakfast`: number | null（朝食のデフォルトインスリン単位、任意）
+  - `default_insulin_lunch`: number | null（昼食のデフォルトインスリン単位、任意）
+  - `default_insulin_dinner`: number | null（夕食のデフォルトインスリン単位、任意）
+  - `default_insulin_snack`: number | null（間食のデフォルトインスリン単位、任意）
+  - `updated_at`: ISO 8601 TIMESTAMPTZ
+- **食事区分別デフォルトインスリン設定の動作**:
+  - 「デフォルト値を有効にする」トグルボタン（ON/OFF）を備え、OFF時は設定した朝・昼・夕・間食の単位数値を保持したまま、食事記録モーダル側のインスリン初期値を空欄（`placeholder="0"`）にする。
+  - ON時は、食事記録モーダル（`src/components/records/MealRecordModal.tsx`）の新規起動時および食事区分切替時に、設定された区分別単位数を自動セットする。
+- **入力バリデーション**:
+  - 低血糖基準値: $54 \le \text{hypo} \le 90$
+  - 高血糖基準値: $130 \le \text{hyper} \le 250$
+  - 常に $\text{hypo} < \text{hyper}$ であること。
+- **保存時の自動再判定・即時反映・クラウド異常値同期（課題 #6 対応）**:
+  - 保存時に `PatientContext` の `updateClinicalThresholds(hypo, hyper)` を呼び出し、`reevaluatePatientAnomalyEvents`（`src/lib/anomalyExtractor.ts`）によって `db.libre_readings` から `db.events` の低血糖・高血糖エピソードを再抽出・更新する。またクラウド接続時には `triggerBackgroundCloudSync(currentPatientId, { replaceRemoteAnomalies: true })`（`src/lib/syncEngine.ts`）を実行し、Supabase 側の古い異常値エピソードも確実に更新する。
+  - カレンダーのTIR%・平均血糖色分け・スパークライン目標帯・異常値ラベル、日次詳細24H推移グラフの目標緑帯（`DailyGlucoseChart.tsx`）、CSV取込時の基準値（`CsvImportModal.tsx`）、および分析画面（`AnalysisView.tsx` / `TimeAnomalyTab.tsx`）のすべてに即時反映される。
+
+### 3.2 糖質の自動推定 (`src/lib/gemini.ts` / `functions/api/gemini.ts` — 方式1: BFFプロキシ + 案2認証検証 + 内蔵食品辞書)
+- **フロントエンド秘密情報保持の禁止**:
+  - ブラウザの `localStorage` にAPIキーを保存する機能および入力欄は一切設けない。
+  - 「ローカルストレージに安全に保管されます」等の事実と異なるセキュリティ表示を厳禁とする。
+- **推定ロジック・BFF認証検証（案2）と優先順位**:
+  - クラウドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効化（`VITE_ENABLE_GEMINI_BFF === 'true'`）されている場合は、Supabase セッション存在時に `Authorization: Bearer <access_token>` を付与かつ `credentials: 'same-origin'` でサーバー側プロキシへ送信する。BFF側では本番モード時に **Supabase JWT 検証** を必須化（同一 Origin 検証は補助）し、ユーザー単位のレート制限を行い、Cross-Origin 呼び出し（`403`）や未認証・不正トークン呼び出し（`401`）を遮断する（【改修予定】JWT必須化・レート制限は現行コードでは未実装。詳細は ARCHITECTURE.md §4.5）。BFF未接続時やオフライン時は日本食品標準成分表に基づく内蔵食品辞書（`estimateCarbsLocally`）で即座に推定を行う。
+  - **デモアプリ（`isPortfolioMode()`）における非表示制御**: デモアプリでは設定画面の「糖質の自動推定」セクションおよび食事記録・食品登録モーダル内の糖質推定ボタンを非表示とする。
+
+### 3.3 データのバックアップ・初期化 (`src/lib/backupRestore.ts`, `src/lib/db.ts`, `src/lib/uuidUtils.ts`) & デモ環境のデータ管理 (`src/lib/realGlucoseLoader.ts`, `src/lib/demoMealGenerator.ts`, `src/components/common/DemoWelcomeModal.tsx`)
+- **デモアプリ（`isDemoCsvImportDisabled()`）における案内モーダル表示と「デモ環境のデータ管理」カード表示・通常バックアップセクションの非表示制御**:
+  - デモアプリ（オンメモリ動作かつリロード時に初期状態へ自動リセットされるエフェメラル環境）を開いたとき、およびページを再読み込みしたときに**毎回**、コンパクトな案内モーダル（`src/components/common/DemoWelcomeModal.tsx`：`デモ環境について`、フォーカストラップ＆スワイプ抑止付き）を表示し、データが初期状態にリセットされたことの目印として機能させる。
+  - 設定画面では、通常モード用の「データのバックアップ・初期化」セクションを非表示とし、代わりにコンパクトな **「デモ環境のデータ管理」** カード（`src/components/settings/VerificationPwaSection.tsx`）を表示する。
+  - カード内にはモーダルと同じく（）書きを含めず「このデモアプリで登録・変更した内容は、お使いのスマートフォンやPCには保存されません。ページを再読み込みするかタブを閉じると、登録・変更した内容は破棄され、初期状態に戻ります。」と明記し、確認ダイアログ付きの **「デモデータを初期状態に戻す」** ボタンを配置する。実行時には `resetDemoDataToInitialState` により食品・活動・カテゴリ・食事記録・目標範囲設定・デフォルトインスリン設定をすべて初期シード状態へ戻し、全4種メモリキャッシュも破棄した上で「デモデータを初期状態に戻しました。」とフィードバックを表示する。
+- **保存データ件数の表示（通常モード・物理テーブル名の非表示化）**:
+  - 血糖データ、食事・活動記録、食事明細、登録食品、登録活動、カテゴリの各件数をユーザー目線の名称で表示し、`(libre_readings)` 等の物理テーブル名は表示しない。
+- **バックアップの保存（JSONエクスポート）**:
+  - 全7テーブルをまとめたバックアップJSONを `Blob` + `URL.createObjectURL` 方式でダウンロード保存。
+- **バックアップからの復元（JSONインポート: `restorePatientBackupPayload` in `src/lib/backupRestore.ts`）**:
+  - ファイル選択時に件数を確認するカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）を表示する。
+  - 承認後、`markPatientManuallyCleared(currentPatientId)` および `cancelBackgroundHydration(currentPatientId)` を実行した上で、トランザクション内で **既存7テーブルの該当患者レコードのみ（`user_id === currentPatientId`）をクリア（削除）してから** バックアップデータを復元（`bulkPut`）する。
+  - 復元時には `src/lib/uuidUtils.ts` の `ensureUuid` を用いて、旧形式の非UUID文字列ID（`id`, `category_id`, `event_id`）が存在しても100%正規UUIDへ自動マイグレーション変換し、食品・活動・カテゴリが空のバックアップの場合は `seedFoodMasterIfEmpty(currentPatientId)` で初期プリセットを補完する。
+  - 続けて目標範囲およびデフォルトインスリン等のフォーム state を即時更新し、**全4種メモリキャッシュ（`invalidateFoodMasterMemoryCache`, `clearCalendarMonthlyCache`, `invalidateAnalysisDatasetCache`, `invalidateInMemoryRecentCache`）を一括破棄（`invalidateAllPatientMemoryCaches`）** し、クラウド接続時は `triggerBackgroundCloudSync` でクラウドへ反映する。
+- **記録データを初期化（全削除: `resetPatientDataAndInvalidateCaches` in `src/lib/backupRestore.ts`）**:
+  - 共通のカスタム確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）で確認した上で、マルチテナント（家族共有切替）時にも他方の患者データを誤消去しないよう、全7テーブルすべてで `.where('user_id').equals(patientId).delete()` および `db.user_settings.delete(patientId)` によって対象患者の血糖・食事・活動記録および設定のみを消去し、よく使う食品・活動・カテゴリの初期プリセット（`src/lib/foodSeed.ts`：決定論的UUID）のみを再シードし、クラウド接続時は `clearRemotePatientData` と `syncPatientDataWithCloud` を実行して全4種メモリキャッシュを確実に破棄したクリーンな初期状態に戻す。
+
+### 3.4 家族見守り共有・クラウド同期・招待専用ガード (`src/lib/supabase.ts`, `src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`, `src/components/common/AuthGateScreen.tsx`, `src/components/common/PasswordStrengthChecklist.tsx`, `src/components/settings/CloudSyncFamilySection.tsx`)
+- **未ログイン時の「専用ログイン画面（Auth Gate）」強制ロック（本番環境）**:
+  - 本番環境（`VITE_APP_MODE=personal` かつ Supabase 環境変数が有効な場合、`isAuthRequired === true`）では、未ログイン時または権限未検証時にアプリ本体の全画面をロックし、フルスクリーンの `src/components/common/AuthGateScreen.tsx` のみを表示する。URLを知っている第三者がアクセスしても、カレンダーや設定画面は一切表示されない。
+- **未招待の第三者による勝手な利用・アクセス遮断ガード（オーナー本人 ＋ 招待済み家族のみ許可）**:
+  - アプリを利用できるのは **①オーナー（最初に登録された患者本人、または既存の患者本人アカウント）** と、**②その患者本人が `family_permissions` テーブルに招待登録した家族（`family_user_id` または `LOWER(family_email)` が一致するユーザー）** のみに限定する。
+  - DB層（`supabase/migrations/0001_initial_schema.sql` の `public.is_authorized_system_user`、`public.verify_user_authorization` RPC、`trg_enforce_invited_or_owner_signup` トリガー、および `can_view_patient_data` / `can_edit_patient_data`）とクライアント層（`src/lib/syncEngine.ts` の `verifyUserAccessWithCloud`）の二重ガードにより、招待されていない無関係な第三者が万が一サインアップ・ログインしようとしてもアクセス権限エラー（`このアカウントにはアクセス権限がありません。患者本人から招待されたメールアドレスでログインしてください。`）として即座に遮断・強制サインアウトさせる。
+- **パスワード複雑性要件（8文字以上 かつ 英大文字・英小文字・数字・記号の4種類すべて必須）**:
+  - 医療・健康データを保護するため、新規アカウント登録（`signUpWithEmail`）時は純粋関数 `validateStrongPassword(password)`（`src/lib/supabase.ts`）を用いて **①8文字以上 (`minLength`)、②英大文字 (`hasUpper`: `/[A-Z]/`)、③英小文字 (`hasLower`: `/[a-z]/`)、④数字 (`hasDigit`: `/[0-9]/`)、⑤記号 (`hasSymbol`: `/[^A-Za-z0-9\s]/`)** の5条件すべてを満たしていることを検証し、未達成の場合は Supabase API 呼び出し前に即座にエラーを返してブロックする（ログイン `signInWithEmail` 時も最低8文字チェックを行う）。
+  - 専用ログイン画面（`src/components/common/AuthGateScreen.tsx`）および設定画面（`src/components/settings/SettingsView.tsx`）の新規アカウント登録モード（`authMode === 'signup'`）では、パスワード入力欄のラベル・プレースホルダーに「8文字以上・大文字/小文字/数字/記号を含む」と明示し、5つの条件それぞれの達成状況をリアルタイムに視覚的フィードバック（チェックマーク）で表示するとともに、未達成時は登録送信を防止・警告表示する。
+- **Supabase Auth ログイン & 自動同期・ログアウト時のローカルキャッシュ完全消去**:
+  - 初回オーナーログイン時には `verifyUserAccessWithCloud` でオーナー権限を確認した上で、`migrateAnonymousLocalDataToUser`（`src/lib/syncEngine.ts`）によって自身の `auth.uid()` へローカルデータを自動引き継ぎし、そのままクラウド（Supabase PostgreSQL 全7テーブル。`categories.category_name` と `events.timing_category` はともに `VARCHAR(50)` で統一）と双方向同期を実行する。
+  - ログイン中は現在のアカウントメールアドレス、権限バッジ（「患者本人」「家族（記録・編集可）」「家族（閲覧のみ）」）、最終同期時刻、および **「今すぐ同期」** ボタン（`syncNow`）を表示する。
+  - **ログアウト時のローカルキャッシュ完全消去**: ログアウト（`signOut`）を実行した際は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）によりブラウザ内の全ローカルテーブル（7テーブル）および全メモリキャッシュ（4種）を自動消去し、専用ログイン画面（Auth Gate）へ戻す。消去の前に最終同期を試み、失敗した場合は未送信の変更がある旨を警告して「消去してログアウト」か「キャンセル」を選ばせる（【改修予定】現行コードは最終同期をせずに消去する。詳細は ARCHITECTURE.md §4.6）。
+- **家族共有・権限管理（`family_permissions` テーブル連携）と招待手順ガイド**:
+  - 患者本人（`currentRole === 'patient'`）でログインしている場合、家族のメールアドレスと権限（`viewer`: 閲覧のみ / `editor`: 記録・編集も可能）を登録・一覧表示・削除（確認ダイアログ付き）でき、画面内に「新しいご家族を招待する手順（3ステップ）」ガイドを表示する（詳細マニュアルは [`USER_GUIDE.md`](USER_GUIDE.md) に記載）。
+  - 招待された家族がログインした際は、`resolveUserAccessFromPermissions`（`src/lib/syncEngine.ts`）により `family_user_id = auth.uid()` または `LOWER(family_email) = LOWER(user.email)` で招待レコードを照会し、初回ログイン時は `family_user_id` と `accepted_at` を自動更新（承認済みに遷移）する。
+  - 同時に監視対象患者（`currentPatientId`）を招待元の `patient_id` へ切り替え、`role === 'viewer'` の場合は `isReadOnly = true`（全画面で登録・編集・削除・CSV取込・設定変更をロック）、`role === 'editor'` の場合は代理記録・編集を可能とする。また自身の記録と招待された家族の記録の双方を持つ場合は、「表示対象の切り替え」セレクターで切り替え可能とする。
+- **ローカル単体構成時 & デモアプリでの制御**:
+  - デモアプリ（`isPortfolioMode()`）では本セクションを非表示とし、Supabase 環境変数が未設定のローカル単体構成時のみ `（未実装）` かつ `disabled` の案内表示へフォールバックする（架空人物のハリボテ一覧は一切表示しない）。
+
+### 3.5 動作検証・アプリ追加（表示モード切替 & PWA追加・デモアプリでの非表示化）
+- デモアプリ（`isDemoCsvImportDisabled()`）およびクラウド本番ログイン中（実アカウントの権限で動作中）は、クライアント側ロール切替トグルを非表示とする（未ログインのローカル検証時またはE2E回帰テスト `E2E-6` 実行時のみ表示）。
+- 見守り家族モード（`viewer` / `isReadOnly === true`）に切り替えた状態でも、再度「患者本人」へ戻せるよう、この切替ボタン自体は常に操作可能とする。
+
+### 3.6 家族閲覧ロール（`isReadOnly === true`）の制約と1画面視認性
+- 家族アカウント（閲覧専用）でログインしている場合：
+  - 目標値の保存、デフォルトインスリン設定の保存、バックアップからの復元、記録データ初期化ボタンをすべて非活性化（disabled）する。
+- デスクトップ（`1280x800`）表示時に、「血糖値の目標範囲・アラート設定」「食事記録のデフォルトインスリン設定」が下端で見切れることなく一目で把握できるよう、各カードの縦パディングおよびセクション間隔を最適化する。
+
+---
+
+## 4. 受け入れ基準 (Definition of Done: DoD)
+
+- [x] **DoD-1: 血糖値の目標範囲（低血糖/高血糖基準値）の保存・再判定・全画面連動**
+  - 数値入力とバリデーションが動作し、`db.user_settings` に保存されると同時に `db.events` の異常値イベントが再判定され、カレンダー・24Hグラフ・分析画面およびクラウドに即時反映されること。
+- [x] **DoD-2: 食事区分別デフォルトインスリン設定とトグルボタン連動**
+  - 「デフォルト値を有効にする」トグルボタンと朝・昼・夕・間食ごとのデフォルトインスリン単位を `db.user_settings` に保存でき、食事記録モーダルに反映されること。
+- [x] **DoD-3: 開発者用語（マスタ、IndexedDB、物理テーブル名等）の排除と引き算のUI**
+  - 画面内から物理テーブル名や開発者用語が排除され、重複ヘッダーカードのないスッキリした構成になっていること。
+- [x] **DoD-4: デモアプリにおけるページアクセス時＆再読み込み時の案内モーダル毎回表示・不要セクション非表示化・「デモ環境のデータ管理」手動リセット提供**
+  - デモアプリ（`isDemoCsvImportDisabled()`）ではページアクセス時および再読み込み（リロード）時に毎回案内モーダル（`DemoWelcomeModal.tsx`：`デモ環境について`）が表示されて初期化の目印となり、設定画面では未実装ボタン・通常バックアップ初期化・クライアント側ロール切替セクションが非表示となり、「デモ環境のデータ管理」カードから端末への非保存明示とワンクリック初期状態リセットが行えること。
+- [x] **DoD-5: バックアップ保存・確認付きクリーン復元（UUIDマイグレーション付き）・クリーン初期化・全4種キャッシュ破棄 & クラウド認証ゲート・招待専用ガード・ログアウト時キャッシュ全消去**
+  - バックアップの保存、既存テーブル消去＆UUID正規化を伴う確認ダイアログ付き復元、架空データなしのクリーン初期化、全4種メモリキャッシュ破棄、および本番クラウド環境での専用ログイン画面（`AuthGateScreen.tsx`）強制ロック、未招待第三者の遮断（`verifyUserAccessWithCloud` / RLS）、ログアウト時のローカルキャッシュ全消去（`purgeAllLocalPatientCaches`）、家族招待＆閲覧専用ロック（`isReadOnly`）が正常に動作すること。
+

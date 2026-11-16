@@ -1,0 +1,218 @@
+# 総合テスト計画書 (TEST_PLAN.md)
+
+本ドキュメントは、「血糖値・食事・インスリン統合管理システム Web版」におけるテスト方針、テストピラミッド、各レイヤーの検証項目、およびAIエージェント駆動開発（DDD）における品質ゲートウェイ基準を定めた最上位のテスト仕様書です。
+
+---
+
+## 1. テスト基本方針 & 目的
+
+本システムは、CGM（持続血糖測定器）の生データやインスリン投与量、食事記録を扱う医療・ヘルスケア支援アプリケーションです。計算ロジックの不具合、画面間の数値不整合、セキュリティリスク、または外観のみのハリボテ実装はユーザーの健康管理判断に直結するため、以下の4大原則に基づいて品質を保証します。
+
+1. **臨床計算ロジックの絶対的正確性と単一真実源（SSOT）**:
+   - 食前近傍探索、食後ピークΔ、時間帯4区分、ステートマシンによる異常値抽出（`src/lib/anomalyExtractor.ts`）、およびタイムゾーン安全な日時処理（`src/lib/dateUtils.ts`）において、境界値やエッジケースを含めた100%の計算再現性を保証する。
+2. **全画面エンドツーエンド（E2E）データ整合性の機械的検証**:
+   - 「マスタ登録 ➔ 食事/活動記録 ➔ カレンダー集計 ➔ 日次詳細ドロワー ➔ 臨床分析 ➔ 目標閾値変更による再判定」の一連のデータフローにおいて、糖質・インスリン・異常値件数・記録時刻が全画面で100%一致することを自動統合テスト（`src/lib/__tests__/dataIntegrity.test.ts`）で保証する。
+3. **セキュリティ & ハリボテ排除ゲート**:
+   - ブラウザ `localStorage` へのAPIキー等の秘密情報保存や事実と異なるセキュリティ表示、および未実装機能のハリボテUIを `scripts/verify-docs-sync.mjs` で機械的に検出・ブロックする。
+4. **ランタイム信頼性（動的検証）の徹底**:
+   - 静的型検査（`tsc`）や本番バンドル（`vite build`）の成功に過信せず、開発サーバー（Vite dev server）におけるモジュール解決、HMR、エラーオーバーレイの非発生を機械的に検証する。
+
+---
+
+## 2. テストピラミッド & レイヤー定義
+
+```text
+           ▲
+          / \     [Layer 4: Browser E2E Test (Playwright)]
+         /   \    実ブラウザでの初期表示SLA(<2s)・マスタ登録連動・画面上での計算結果検証・レスポンシブ検証
+        /-----\
+       /       \   [Layer 3: Runtime Smoke & Doc/Security/Anti-Stub Gate]
+      /         \  開発サーバーエラーゼロ・仕様同期・秘密情報/ハリボテ検査 (test:docs / test:smoke)
+     /-----------\
+    /             \ [Layer 2: Cross-Screen Data Integrity & Component Test (Vitest)]
+   /               \ マスタ⇔記録⇔カレンダー⇔分析⇔閾値再判定のデータ層整合性検証
+  /-----------------\
+ /                   \ [Layer 1: Unit Test (Vitest)]
+/_____________________\ 臨床計算ロジック・異常値ステートマシン・日時ユーティリティ・食品辞書
+```
+
+### 2.1 Layer 1 & 2: Unit & Data Integrity Test (Vitest)
+最も高速かつ網羅的に臨床ロジックおよび画面間データ整合性を検証するレイヤーです。
+
+| 対象モジュール | 検証内容・エッジケース |
+| :--- | :--- |
+| **臨床分析計算**<br>([`src/lib/analysisCalculators.ts`](../../src/lib/analysisCalculators.ts)) | ・食前血糖値（直前15分〜直後5分以内の最寄り値）の正確な抽出<br>・食後60〜180分ピーク値の特定と上昇幅（Δ）計算<br>・時間帯4区分（朝 06-11時、昼 12-17時、夕・夜 18-23時、夜間・未明 00-05時）のタイムゾーン非依存判定<br>・曜日別傾向・糖質インスリン推移における食事インスリン＋単体インスリン合算 |
+| **異常値抽出ステートマシン**<br>([`src/lib/anomalyExtractor.ts`](../../src/lib/anomalyExtractor.ts)) | ・28分継続回復ルールおよび45分センサー欠損ギャップによるエピソード確定<br>・カスタム閾値（例: 低血糖 `< 80`, 高血糖 `> 160`）変更時の再判定と件数変化 |
+| **日時・タイムゾーン安全処理**<br>([`src/lib/dateUtils.ts`](../../src/lib/dateUtils.ts)) | ・`buildWallClockIso` / `extractTimeStr` による -9時間ズレ防止<br>・`shiftLocalDateStr` / `getDayOfWeekFromDateStr` の境界日付検証 |
+| **画面間データ整合性統合テスト**<br>([`src/lib/__tests__/dataIntegrity.test.ts`](../../src/lib/__tests__/dataIntegrity.test.ts)) | ・カレンダーセル、選択日サマリー、日次詳細、曜日別分析、糖質インスリン推移、時間帯別異常値分析のすべての数値（糖質・インスリン・異常値件数）が100%一致することの検証<br>・`user_settings` の食事区分別デフォルトインスリン設定（`enable_default_insulin` トグル ON/OFF および朝・昼・夕・間食の単位解決）の整合性検証<br>・決定論的UUID生成（[`src/lib/uuidUtils.ts`](../../src/lib/uuidUtils.ts)）、論理削除カテゴリの再登録復活およびカテゴリ文字数上限（`addOrReviveCategory` / `MAX_CATEGORY_NAME_LENGTH = 50`）、本番モード（`personal`）でのデモデータ自動投入ゼロ保証、バックアップ復元時のUUID正規化＆全4種メモリキャッシュ破棄、およびマルチテナント環境での患者別データ初期化隔離（[`src/lib/backupRestore.ts`](../../src/lib/backupRestore.ts) の `resetPatientDataAndInvalidateCaches` が他患者のデータを消去しないこと）の検証<br>・同じ日の朝食・昼食・夕食の重複判定（間食・論理削除・別日除外、日付境界23:59/00:00一致、`aggregateMonthlyData` との一致）および「1つにまとめる」（`mergeDuplicateMeals`：時刻最早＋`id` 最小への統合、明細 `event_id` 付け替え、合計糖質再計算、まとめ元論理削除、全画面合計値一致）の検証 |
+| **双方向クラウド同期エンジン & 招待専用権限管理・キャッシュ全消去・案Bパスワード強度検証**<br>([`src/lib/syncEngine.ts`](../../src/lib/syncEngine.ts) / [`src/lib/supabase.ts`](../../src/lib/supabase.ts)) | ・Supabase (`TIMESTAMPTZ`) から取得した日時の24文字ウォールクロックISO正規化（`normalizeToWallClockIso`: 課題 #7 対応）と `.between()` 境界検索一致検証<br>・1,000件単位チャンク分割（`chunkArray`）および汎用LWW差分計算純粋関数（`computeLwwDiff`）の単体検証<br>・`family_permissions` に基づく患者本人 / 招待家族（`viewer` 閲覧専用ロック / `editor` 代理記録）の権限・対象患者解決（`resolveUserAccessFromPermissions`）<br>・未招待第三者のログイン・サインアップ遮断検証（`verifyUserAccessWithCloud`: オーナー本人・招待家族は許可、未招待第三者は `authorized: false` で即座に拒否）<br>・パスワード複雑性ポリシー（案B：`validateStrongPassword` により8文字以上＋英大文字・英小文字・数字・記号の4種すべて必須）の境界値・欠落パターン検証<br>・ログアウト時のローカル端末キャッシュ完全消去（`purgeAllLocalPatientCaches`: IndexedDB全7テーブル＋全4種メモリキャッシュ消去）<br>・未ログイン時のローカルデータ（`DEFAULT_PATIENT_ID`）から認証済み `auth.uid()` への7テーブル自動引き継ぎ（`migrateAnonymousLocalDataToUser`）<br>・オンライン復帰時（`online` イベント）およびオンライン画面再表示時（`visibilitychange`）の1,000msデバウンス自動同期、未ログイン/デモ時抑止、および閲覧専用ロール時の Push 抑止<br>・7テーブル双方向 Push & Pull、閾値変更・CSV取込時のクラウド側古い異常値エピソード置換（`replaceRemoteAnomalies: true`: 課題 #6 対応） |
+| **糖質自動推定エンジン & BFF認証検証（案2）・ビルド/PWA保護**<br>([`src/lib/gemini.ts`](../../src/lib/gemini.ts) / `functions/api/gemini.ts` / `scripts/build-guards.ts` / `vite.config.ts`) | ・日本食品標準成分表内蔵辞書による主要食品・料理の糖質量推定<br>・Cloudflare Pages Functions BFF（`POST /api/gemini`）の本番認証検証（案2：Supabase Bearer JWT 検証の必須化［同一 Origin のみでは401。改修予定］、ユーザー単位レート制限の `429`［改修予定］、Cross-Origin/Cross-Site の `403` 遮断、期限切れ/不正 JWT および Origin 欠落時の `401` 遮断）<br>・`GEMINI_API_KEY` 検証・`foodName`/`unit` パラメータ長検証・レスポンス整形・未設定時の安全なローカル辞書フォールバック<br>・本番デプロイ用ビルド環境変数ガード（`enforceProductionEnvGuard` / `validateProductionSupabaseEnv`：`REQUIRE_SUPABASE_ENV=1` 時に `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` 欠落を即時ブロック）および Service Worker 決定論的リビジョンハッシュ刻印（`stampServiceWorkerRevision` / `computeServiceWorkerCacheName`）の単体検証<br>・`localStorage` に一切依存しない安全な動作 |
+
+### 2.2 Layer 3: Runtime Smoke Test & Doc/Security Gate
+開発サーバー実行環境におけるエラーゼロおよび仕様書同期・セキュリティ規約遵守を保証するテストです。
+
+| 検証項目 | 手法・判定基準 |
+| :--- | :--- |
+| **DDD 仕様書・図面・DDL・型定義・ユーザーガイド・コード同期 & セキュリティ検査 (`scripts/verify-docs-sync.mjs`)** | ソースコード（`src/`, `functions/`, `supabase/`）変更時に対応する `SPEC_*.md` / `ARCHITECTURE.md` / `USER_GUIDE.md` / `diagrams/*`（重要変更時は `requiredSpecs` 全件）が同時更新されていること、仕様書・ルート `README.md`・`AGENTS.md` 内の参照ファイルパス（日本語パス含む）・リンク・`.agents/hooks.json` スクリプトおよびバッククォート識別子（Check 8：既定で厳格エラー）がすべて実在すること、`src/`・`functions/`・`scripts/` の全モジュールがマッピング＆スモークテスト登録されていること、`0001_initial_schema.sql`・`ARCHITECTURE.md` Section 5・`src/types/database.ts`・`src/lib/db.ts`・`SEQUENCE_AND_ERD.md` の4層スキーマ（全テーブル・全カラム・文字長上限）が完全一致すること、E2Eテストスイート数・Vitest件数表記が実コードと一致すること、置換破損や表崩れ・旧VBA資産のGit追跡が存在しないこと、`src/`・`functions/` 内に `localStorage` へのAPIキー保存や虚偽の「安全に保管」表示が存在しないこと |
+| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | 開発サーバー（稼働中またはエフェメラル自動起動）に対して全56エンドポイント（全UIコンポーネント・Context・Lib・Types・Worker）のリクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
+
+### 2.3 Layer 4: Browser E2E テスト計画 (Playwright)
+
+Node.js 上の仮想環境（Vitest）では検出できない **「実ブラウザ（Chromium / Mobile Viewport）での初期描画速度」「UI操作によるマスタ情報の登録・編集・削除と記録モーダル選択肢の連動」「画面上に表示される計算ロジック結果（糖質合算・インスリン合算・食前→食後ピーク $\Delta$・異常値件数再計算）の正確性」「異常系バリデーション・CSV/バックアップI/O・オフライン耐障害性」「本番認証ゲート（AuthGateScreen）の完全ロックおよび案Bパスワード複雑性リアルタイムUI」** を機械的に保証するため、Playwright による以下の **14大 E2E テストスイート（`E2E-1` 〜 `E2E-14`）およびテスト設計規約（Section 2.4）** を定義します。
+
+#### E2E-1: 初期表示パフォーマンス SLA & ポートフォリオ自動リセット検証
+- **目的**: ユーザー離脱を防ぐため、初回アクセス時およびリロード時にカレンダー画面が基準時間内に確実に描画されること、およびポートフォリオモードの非永続化仕様を検証する。
+- **検証シナリオ & 合格基準**:
+  1. ブラウザのストレージが空のコールドスタート状態でトップページ（`/`）にアクセスし、最新実データ月（`2026年 8月`）のカレンダーセル（数値およびスパークラインSVG）が表示されるまでの経過時間が **2,000ms（2秒）以内**（目標 1,000ms 以内）であること。
+  2. 画面上で食事記録を追加した後にページをリロード（`page.reload()`）した際、ポートフォリオモード（`VITE_APP_MODE=portfolio`）では **2,000ms 以内** に初期データ状態へクリーンリセットされること。
+
+#### E2E-2: マスタ情報（よく使う食品・活動・カテゴリ）の登録・編集・削除と記録画面への連動検証
+- **目的**: 「食品・活動」画面（`src/components/foods/FoodMasterView.tsx`）で登録・変更したマスタ情報が、食事記録モーダル（`src/components/records/MealRecordModal.tsx`）や活動記録モーダル（`src/components/records/ActivityRecordModal.tsx`）、分析画面の選択肢に即座に反映されることを検証する。
+- **検証シナリオ & 合格基準**:
+  1. **食品の新規登録 & 糖質自動推定**: 「食品・活動」タブで「＋食品を追加」を開き、食品名（例: `特製カツ丼`）を入力して「✨ 糖質を自動推定」をクリックすると理論糖質量が自動入力されること。基準糖質量（例: `95.0g`）で保存すると、一覧リストに即座に表示されること。
+  2. **食事記録モーダルでの選択連動**: カレンダーから食事記録モーダルを開き、「登録済みから選ぶ」リストに先ほど登録した `特製カツ丼 (95.0g)` が表示され、選択できること。
+  3. **よく使う活動の登録連動**: 「よく使う活動」タブで新規活動（例: `エアロバイク 45分`）を登録後、活動記録モーダルの選択肢に即座に反映されること。
+  4. **カテゴリ削除時の「未分類」自動移動（孤児データ防止）**: カテゴリ管理モーダル（`src/components/foods/CategoryManageModal.tsx`）で任意カテゴリを削除した際、所属していた食品が消えずに「未分類」カテゴリへ自動移動されていること。
+
+#### E2E-3: 食事・活動記録の入力と「画面上の計算ロジック結果」の一致検証
+- **目的**: ユーザーが画面から入力した複数の食品・分量・インスリン単位に対し、画面上の計算ロジック（分量倍率計算、合計糖質合算、日次インスリン総和、食前→食後ピーク血糖上昇幅 $\Delta$）が正確に計算され、全画面で100%一致することを検証する。
+- **検証シナリオ & 合格基準**:
+  1. **複数品目の分量倍率 & 合計糖質のリアルタイム計算**:
+     - 食事記録モーダルで `ごはん (1杯 = 55.2g)` を数量 `1.5`（$= 82.8\text{g}$）、`豚肉の生姜焼き (1人前 = 6.5g)` を数量 `1`（$= 6.5\text{g}$）として追加した際、モーダル内の合計糖質表示が正確に **`89.3 g`**（$82.8 + 6.5$）と計算・表示されること。
+  2. **カレンダーセル・選択日サマリー・日次ドロワー間の合算値一致**:
+     - インスリン `8 U` を入力して保存した際、対象日のカレンダーセル（`src/components/calendar/CalendarDayCell.tsx`）、上部選択日サマリー（`src/components/calendar/SelectedDaySummary.tsx`）、および日次詳細ドロワー（`src/components/daily/DailyDetailDrawer.tsx`）の3箇所すべてで、日次糖質総量に `+89.3g`、日次インスリン総量に `+8U` が誤差ゼロで加算・一致していること。
+  3. **食前血糖値・食後ピーク血糖値・上昇幅（$\Delta$）の自動算出表示**:
+     - 実測CGMデータが存在する日時（例: `2026-08-25`）の日次詳細ドロワーを開き、食事カードに `食前 XXX → ピーク YYY mg/dL (+Δ)` が表示され、$\Delta = \text{YYY} - \text{XXX}$ の計算結果が1mg/dLの狂いもなく一致していること。
+     - ドロワー内の24時間血糖推移グラフ（`<canvas>` / ECharts）がエラーなく描画されていること。
+
+#### E2E-4: 設定画面の「目標閾値変更」による全期間異常値ステートマシン再計算 & デフォルトインスリン連動検証
+- **目的**: 設定画面（`src/components/settings/SettingsView.tsx`）での変更が、単なる表示切り替えではなく異常値抽出ステートマシン（`src/lib/anomalyExtractor.ts`）の再計算をトリガーし、全画面の数値・色分けに反映されることを検証する。
+- **検証シナリオ & 合格基準**:
+  1. **目標閾値変更による異常値回数の動的再計算**:
+     - 初期状態（低血糖 `< 70` / 高血糖 `> 180`）での選択日の異常値回数（`▼低 X` / `▲高 Y`）を記録する。
+     - 設定画面で高血糖の基準値を `180` ➔ `140 mg/dL` に引き下げて保存する。
+     - カレンダー画面に戻ると、凡例テキストが `高血糖アラート(>140)` に更新され、ステートマシン再判定によって高血糖エピソード件数（`▲`）が増加し、選択日サマリー・日次ドロワー・分析画面（時間帯別異常値）の件数がすべて新しい再計算結果で一致すること。
+  2. **デフォルトインスリン設定トグルの計算連動**:
+     - 設定画面で「デフォルト値を有効にする」を ON にし、朝食 `8U`・昼食 `6U`・夕食 `10U` を保存すると、食事記録モーダルを開いて朝・昼・夕を切り替えるたびにインスリン入力欄の初期値が `8` ➔ `6` ➔ `10` と自動セットされること。
+
+#### E2E-5: 4大データ分析ダッシュボードの集計ロジック & モバイル画面（横スクロールゼロ）検証
+- **目的**: 分析画面（`src/components/analysis/AnalysisView.tsx`）における期間フィルタ・食品別インパクト計算・曜日別/時間帯別集計の整合性と、スマートフォン画面でのレイアウト崩れゼロを検証する。
+- **検証シナリオ & 合格基準**:
+  1. **食品別インパクト計算の正確性**: カテゴリ（例: `主食`）を選択すると対象食品セレクトボックスが主食のみに絞り込まれ、各食事履歴行の「食前→ピーク」と「$\Delta$上昇幅」および上部の「平均上昇幅」の計算値が一致していること。また行クリックで「一緒に食べたもの」の品目ピルと食事合計糖質バッジが展開されること。
+  2. **期間切替（7日/14日/30日/90日/全期間/月別）の即時再集計**: 期間ボタンおよび月別セレクトボックス（`2026年8月` 等）を切り替えた際、対象日数と4つの分析セクションのグラフ・集計表がエラーなく即座に更新されること。
+  3. **モバイルビューポート（幅 `375px × 812px`）での横スクロール完全ゼロ検証**: スマートフォン画面幅で分析画面を表示した際、`document.documentElement.scrollWidth <= document.documentElement.clientWidth` であり、5列テーブルが横スクロールなしで1画面幅に収まっていること。
+
+#### E2E-6: 見守り家族ロール（閲覧専用モード `isReadOnly`）のセキュリティ・操作ロック検証
+- **目的**: 家族閲覧モード時に、誤操作や不正なデータ改ざんがUI層で100%ブロックされることを検証する。
+- **検証シナリオ & 合格基準**:
+  1. 設定画面で表示モードを「👁️ 見守り家族 (閲覧専用)」に切り替える。
+  2. カレンダーの日次詳細ドロワー、よく使う食品・活動画面、共通ナビゲーション、設定画面のすべてにおいて、「食事を記録」「活動を記録」「編集」「削除」「一括選択チェックボックス」「CSV取込」「設定を保存」が非表示または `disabled`（ロック状態）になっており、閲覧のみが可能であること。
+
+#### E2E-7: 異常系・境界値バリデーション & 破壊的操作ガード・削除減算検証 (Negative / Boundary Testing)
+- **目的**: 不正な入力値による `NaN` 発生や誤操作によるデータ消失を防止し、また論理削除（`is_deleted = true`）時に全画面の集計値から正確に減算されることを検証する。
+- **検証シナリオ & 合格基準**:
+  1. **目標閾値の逆転・範囲外バリデーション**: 設定画面（`src/components/settings/SettingsView.tsx`）で低血糖基準値に高血糖以上の値（例: 低血糖 `150` / 高血糖 `120`）または許容範囲外（`< 54` または `> 250`）を入力した際、保存がブロックされてエラーメッセージが表示され、不正な閾値で再判定が走らないこと。
+  2. **システム保護カテゴリ「未分類」の削除不可検証**: カテゴリ管理モーダル（`src/components/foods/CategoryManageModal.tsx`）において、受け皿である「未分類」（`is_protected === true`）には削除ボタンが表示されず、物理的にも削除できないこと。
+  3. **削除確認ダイアログ（`src/components/common/ConfirmDialog.tsx`）のキャンセル保護と削除減算**:
+     - 日次詳細ドロワーまたは食品一覧で「削除」を押し、確認ダイアログで「キャンセル」を押した場合はレコードが削除されず数値が維持されること。
+     - 確認ダイアログで「削除する」を実行した場合は、対象レコードが論理削除され、**カレンダーセル・選択日サマリー・日次詳細ドロワー・分析画面の日次合計糖質およびインスリン単位から削除分の数値が誤差ゼロで差し引かれること**。
+
+#### E2E-8: 大容量CSV取込（Web Worker 並列処理）& JSONバックアップ保存・復元ラウンドトリップ検証
+- **目的**: ファイル入出力（File I/O）と Web Worker（`src/workers/csvParser.worker.ts`）を介した非同期データパイプライン、およびバックアップ・復元の完全性を検証する。
+- **検証シナリオ & 合格基準**:
+  1. **リブレCSV取込と異常値自動抽出**: CSV取込モーダル（`src/components/import/CsvImportModal.tsx`）を開き、`page.setInputFiles()` でテスト用リブレCSVファイルを投入してインポートを実行すると、UIフリーズなくプログレスが進み、完了後に該当日のカレンダーセル・24H推移グラフ・異常値エピソード（`▼`/`▲`）が正確に反映されること。
+  2. **JSONバックアップ出力 ➔ データ全削除 ➔ 復元ラウンドトリップ**:
+     - 設定画面で「📥 バックアップを保存」をクリックし、`page.waitForEvent('download')` で出力された JSON ファイルの内容（件数・スキーマ）が正常であることを確認する。
+     - 続いて「🗑️ 記録データを削除」を実行して記録件数が `0件` になったことを確認した後、先ほど保存した JSON ファイルを「📤 バックアップから復元」に投入し、**すべての血糖データ・食事記録・明細・登録食品・カテゴリが削除前と100%同一の件数・集計値に復元されること**。
+
+#### E2E-9: オフライン動作（Local-First PWA 耐障害性）検証
+- **目的**: ネットワーク切断時（機内モードや通信障害時）でも、IndexedDB と内蔵食品辞書によってすべての主要機能がオンライン時と変わらず動作することを検証する。
+- **検証シナリオ & 合格基準**:
+  1. **オフライン検知バナーの即時表示**: Playwright の `context.setOffline(true)` でネットワークを切断した瞬間、画面上部にオフライン通知バナー（`src/components/common/OfflineBanner.tsx`）が表示されること。
+  2. **完全オフライン下での CRUD・糖質推定・分析動作**:
+     - `offline: true` の状態のまま、①カレンダーの月送り、②日次詳細ドロワーの24Hグラフ描画、③新規食事記録の追加と**「✨ 糖質を自動推定」（`src/lib/gemini.ts` 内蔵日本食品標準成分辞書への自動フォールバック）**、④データ分析画面の期間切替が、ネットワークエラーでクラッシュすることなく 0.1秒以内に完結すること。
+  3. **オンライン復帰検知**: `context.setOffline(false)` に戻すとオフラインバナーが自動的に消去されること。
+
+#### E2E-10: 現在の日付の月までの表示・上限月左スワイプ遷移・ドロワー下スワイプリロード抑止 & 全タブ・下部バースワイプ検証
+- **目的**: モバイル・デスクトップにおける月移動上限ガード、左右スワイプによる月移動・タブ遷移、および日次詳細ドロワーの下スワイプ閉じる操作（ブラウザのプル・トゥ・リフレッシュ誤発火抑止）を検証する。
+
+#### E2E-11: デモ環境案内モーダル（初回＆ページ再読み込み時の毎回表示＝初期化の目印・bfcache復帰・キーボード操作）検証
+- **目的**: デモモードにおける `DemoWelcomeModal.tsx` の初回・リロード・`pageshow`（bfcache復帰）時の表示とデータ初期化連動、およびフォーカストラップ・Escapeキー操作を検証する。
+
+#### E2E-12: 論理削除済み同名カテゴリの復活（UNIQUE衝突防止）・手動初期化後のデモデータ再ハイドレーション抑止 & 全ID正規UUID検証
+- **目的**: カテゴリ削除後に同名カテゴリを再追加した際の既存レコード復活（`is_deleted: false`）、設定画面での「記録データを初期化」実行後にカレンダー・分析画面へ遷移してもデモデータが勝手に再投入されないこと（`markPatientManuallyCleared`）、およびエクスポートされたバックアップJSON内の全テーブル主キー・外部キーが正規UUID形式（`src/lib/uuidUtils.ts`）であることを検証する。
+
+#### E2E-13: 本番認証ゲート（`AuthGateScreen`）による未ログイン画面完全ロック & クイックガイド表示検証
+- **目的**: 本番モード（クラウド認証有効時）において、未ログインの第三者がURLにアクセスした際にカレンダー・ナビゲーション等のアプリ本体がDOMに一切描画されず、専用ログイン画面（`src/components/common/AuthGateScreen.tsx`）のみで完全ロックされること、および初回オーナー・招待家族向けクイックガイドが確認できることを検証する。
+
+#### E2E-14: パスワード複雑性ポリシー（案B：8文字以上＋英大文字・英小文字・数字・記号必須）のリアルタイムUI検証 & 登録ブロック検証
+- **目的**: 新規アカウント登録時に5項目のパスワード要件チェックリスト（`8文字以上` / `英大文字 (A-Z)` / `英小文字 (a-z)` / `数字 (0-9)` / `記号 (!@#$%等)`）がリアルタイムで判定され、要件未達のパスワードでは登録ボタンが非活性化（ブロック）され、4種すべてを含む8文字以上のパスワード入力時のみ登録可能になることを検証する。
+
+---
+
+### 2.4 E2E テスト実装・品質保証規約（Zero-Error Policy & Anti-Flakiness）
+
+Playwright E2E テストを実装・運用する際は、テスト自体の信頼性（Flakyテストの排除）と潜在バグの徹底検出のため、以下の2大規約を全テストファイルに強制適用します。
+
+1. **ランタイムコンソールエラー・未処理例外の「完全ゼロ保証（Zero-Error Policy）」**:
+   - 画面上の見た目だけが通って裏で例外が起きている状態を許さないため、共通フィクスチャ（`beforeEach` / `afterEach`）で以下を常時監視し、**1件でも検出された場合はテストを即座に Fail とする**：
+     - `page.on('pageerror', err => ...)`（未キャッチの JavaScript ランタイム例外・Promise Rejection）
+     - `page.on('console', msg => msg.type() === 'error')`（React のレンダリングエラー、ECharts 初期化エラー、IndexedDB トランザクションエラー等）
+2. **フレーキー（不安定）テスト防止のためのロケーター & 待機規約**:
+   - **固定秒数スリープ（`page.waitForTimeout(ms)`）の原則禁止**: CI環境での実行速度差による不安定化を防ぐため、ハードコードされた秒数待機は行わず、必ず Playwright の **Web-First Assertions**（`await expect(locator).toBeVisible()`, `await expect(locator).toContainText(...)`）による自動リトライ待機を使用する。
+   - **ユーザー目線のセマンティックロケーター優先**: CSSクラス名（Tailwind ユーティリティ）に依存した脆いセレクタを避け、`getByRole`、`getByLabel`、`getByText`、または明示的な `data-testid` 属性を使用する。
+
+---
+
+## 3. テスト実行コマンド体系
+
+| コマンド | 用途・実行タイミング |
+| :--- | :--- |
+| `npm run test:docs` | 仕様書（SSOT）・図面・DDL・型定義とソースコードの同期、参照パス実在性（ローカル絶対パス・`file:///` リンク混入禁止を含む）、セキュリティ/ハリボテ禁止規約、および仕様書破損・旧VBA資産混入防止の検証。Check 8 として仕様書内のバッククォート識別子（camelCase / snake_case / 関数名()）がコード・CI設定に実在するかも既定で厳格エラーとして検査する（意図的な例外は `scripts/verify-docs-sync.mjs` の `IDENT_ALLOWLIST` に理由付きで登録。一時的に警告のみとする場合のみ `WARN_IDENT_CHECK=1`） |
+| `npm run audit:prod` | 本番依存パッケージの脆弱性監査（`npm audit --omit=dev --audit-level=high`） |
+| `npm test` | Vitestによる全Unitテスト・画面間データ整合性テストの実行 |
+| `npm run test:watch` | 開発時のファイル変更連動自動テスト実行 |
+| `npm run test:smoke` | 開発サーバー（`localhost:3000`）に対するランタイムスモークテストの実行 |
+| `npm run test:e2e` | Playwright による全ブラウザ E2E テストスイート（`E2E-1` 〜 `E2E-14`）の実行 |
+| `npm run test:e2e:regression` | デプロイ前自動ゲート用の Playwright E2E リグレッションテスト（`@regression`）の実行 |
+| `npm run typecheck` | 3層 TypeScript 厳格型検査（`tsconfig.json`［フロントエンド］ + `tsconfig.functions.json`［Cloudflare Workers BFF］ + `tsconfig.e2e.json`［E2E・設定］） |
+| `npm run build` | 本番Rollupバンドル整合性検査（`REQUIRE_SUPABASE_ENV=1` 指定時は `enforceProductionEnvGuard` により Supabase 環境変数必須検証を実施） |
+| `npm run demo:rebuild-branch` | `scripts/rebuild-demo-branch.mjs` により旧VBA資産・個人PCパス・過去コミット履歴を完全除外した孤立ブランチ `demo-public` を再生成 |
+| `npm run verify:all` | `test:docs` + `typecheck` + `test` + `test:smoke` + `build` の一括検証 |
+| `npm run pipeline:verify:quick` | 中間確認用の軽量パイプライン。`test:docs` + `typecheck` + `test` + `test:smoke` のみ実行し、ビルド・E2E・画面撮影は行わない |
+| `npm run pipeline:verify` | 出荷前の総合検査。軽量パイプラインの内容に加え、ビルド・E2E回帰（`E2E-1` 〜 `E2E-14`）・全11画面の撮影とDOM監査を実行する |
+| `npm run deploy:portfolio` | ポートフォリオバンドル生成 ➔ Playwright E2E リグレッションテスト通過 ➔ Cloudflare Pages デプロイ（手動緊急用） |
+
+### 3.1 検査の実行タイミング（3段階 + リモートCI/CD分離）
+
+早い段階では軽く、出荷に近づくほど広く深く検査し、Cloudflare Pages へのデプロイはリモート CD ジョブに一本化する（【要確認】GitHub Secrets 登録と公開ブランチ保護: Issue #87）。
+
+| 段階 | タイミング | 仕組み | 実行内容 |
+| :--- | :--- | :--- | :--- |
+| 1 | AIの作業終了時 | `.agents/hooks/stop-guard.mjs`（Stop Hook） | `test:docs` のみ。監視対象の未コミット変更や当ターンのファイル編集（`run_command`・サブエージェント経由を含む）がない場合は検査しない |
+| 2 | `git commit` 時 | `.git/hooks/pre-commit`（`scripts/install-git-hooks.mjs` が設置） | `test:docs --staged` + `typecheck` + `npm test`。`pipeline:ship:*` 内のコミットでは、同じ実行内で `npm test` 通過済みのため `PIPELINE_TESTS_PASSED=1` により `npm test` のみ省略する |
+| 3 | 出荷Push前 / 全Push・PR時 | `npm run pipeline:verify` / `pipeline:ship:*` / `.github/workflows/deploy-pages.yml`（`verify` ジョブ） | Node 24 LTS 上で全フェーズ（`audit:prod`・`test:docs`・3層 `typecheck`・`npm test`・`test:smoke`・E2E回帰・全11画面の撮影とDOM監査・失敗時証跡保存）を実行。撮影画像のAIによる目視確認はUI変更時のみ |
+| 4 | `main` への Push 後 | `.github/workflows/deploy-pages.yml`（`deploy` ジョブ） | `verify` 通過後のみ起動。本番は `REQUIRE_SUPABASE_ENV=1` で Supabase 環境変数完備を強制検証してビルド・デプロイし、公開デモは `portfolio` バンドルをデプロイする |
+
+`npm test` は、臨床計算（異常値抽出・日時処理など）の**単体テスト**と、カレンダー・日次詳細・分析画面の数値一致を確かめる**統合テスト**（`src/lib/__tests__/dataIntegrity.test.ts`）の両方を含む。
+
+---
+
+## 4. DoD（Definition of Done: 完了条件）& 品質ゲート規約
+
+今後、すべての機能追加・改修・PRマージおよびデプロイにおいて、以下の **7重品質ゲート** をすべてクリアすることを必須とします。
+
+1. **仕様同期 & セキュリティ検査**: `npm run test:docs` および `npm run audit:prod` がエラーゼロでパスすること（AIの作業終了時の Stop Hook、Git `pre-commit` フック、および GitHub Actions 全ブランチ Push / PR CI でも強制）
+2. **3層型整合性**: `npm run typecheck`（フロントエンド・Cloudflare Workers BFF・Playwright E2E）がエラーゼロであること
+3. **ロジック & 画面間データ整合性**: `npm test` で全Unit/統合テストがパスすること（Green。Git `pre-commit` フックでも強制）
+4. **静的ビルド & 本番環境変数保護**: `npm run build`（および `build:vite:personal` / `build:vite:portfolio`）がエラーなく成功し、本番デプロイビルド（`REQUIRE_SUPABASE_ENV=1`）では Supabase 環境変数欠落時に即座にデプロイを遮断し、`dist/sw.js` にビルドハッシュリビジョンが自動刻印されること
+5. **ランタイム疎通**: `npm run test:smoke` で開発サーバー上にエラーオーバーレイが発生せず正常描画されること
+6. **期間局所スライス＆境界キャッシュ検証**: `setAnalysisBoundaryCache` および `buildAndCacheLocalizedPeriodSlice` による期間別キャッシュ再利用が単体テストで保証されること
+7. **デプロイ前ブラウザ E2E リグレッション＆視覚監査ゲート (`.github/workflows/deploy-pages.yml` & `e2e/app.spec.ts` & `e2e/visual-design.spec.ts`)**: `build:vite:portfolio` 完了後、Cloudflare Pages へデプロイする前に `npm run test:e2e:regression`（`E2E-1` 〜 `E2E-14`）および `npm run test:visual`（全11画面のDOMレイアウト・専門用語ゼロ監査）をヘッドレス Chromium で自動実行し、1件でも失敗またはコンソールエラーが発生した場合は証跡アーティファクトを保存してデプロイを自動停止し、本番環境のデグレを100%防止すること
+
+## 追加予定のテスト（仕様改訂分・改修予定）
+
+- BFF: 本番モードで JWT なし・同一 Origin のみのリクエストが `401` になる。
+- BFF: 同一ユーザーが上限を超えて呼び出すと `429` になる。
+- ログアウト: 最終同期に成功した場合のみ消去され、失敗した場合は警告が出て、キャンセルすると端末のデータが残る。
+- 異常値の置換: 登録が途中で失敗しても旧異常値イベントが残り、再実行で最新の集合に収束する。
