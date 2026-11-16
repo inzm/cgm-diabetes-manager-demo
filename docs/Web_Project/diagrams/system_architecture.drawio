@@ -55,7 +55,7 @@
                     <mxGeometry x="20" y="40" width="240" height="60" as="geometry"/>
                 </mxCell>
 
-                <mxCell id="node_cf_workers" value="&lt;b&gt;Cloudflare Workers (BFF)&lt;/b&gt;&lt;br&gt;・Gemini API 安全中継プロキシ&lt;br&gt;・APIキーを環境変数で完全秘匿&lt;br&gt;・Supabase JWT必須 / 同一Origin検証 / レート制限（改修予定）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#c2410c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="c_edge">
+                <mxCell id="node_cf_workers" value="&lt;b&gt;Cloudflare Workers (BFF)&lt;/b&gt;&lt;br&gt;・Gemini API 安全中継プロキシ&lt;br&gt;・APIキーを環境変数で完全秘匿&lt;br&gt;・本番Supabase JWT必須 / Cross-Origin遮断 / レート制限(429)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#c2410c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="c_edge">
                     <mxGeometry x="20" y="120" width="240" height="80" as="geometry"/>
                 </mxCell>
 
@@ -98,7 +98,7 @@
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
 
-                <mxCell id="edge_ui_workers" value="AI糖質推定 (JWT必須 / レート制限は改修予定)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#c2410c;strokeWidth=2;fontColor=#9a3412;fontSize=10;" edge="1" parent="1" source="node_ui" target="node_cf_workers">
+                <mxCell id="edge_ui_workers" value="AI糖質推定 (本番JWT必須 / 429レート制限)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#c2410c;strokeWidth=2;fontColor=#9a3412;fontSize=10;" edge="1" parent="1" source="node_ui" target="node_cf_workers">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
 

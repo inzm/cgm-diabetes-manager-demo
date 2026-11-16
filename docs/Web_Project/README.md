@@ -61,7 +61,7 @@
 | **ローカルデータベース** | **IndexedDB (Dexie.js)** | 8.4万件超のリブレデータをブラウザ内に保持し、ミリ秒描画・オフライン動作を実現（本番モードのみ。公開デモは端末へ保存せずオンメモリで動作） |
 | **バックグラウンド処理** | **Web Worker** | 大容量CSVパースや異常値抽出アルゴリズムをメインスレッドから分離（描画カクつき防止） |
 | **グラフ・可視化** | **Apache ECharts** | 24時間血糖散布図＋垂直ドロップライン・異常マーカーの重畳描画、複合グラフ、マイクロチャート |
-| **ホスティング & BFF** | **Cloudflare Pages + Workers** | エッジ配信（無料帯域無制限）、Google Gemini APIキーの安全な秘匿プロキシ（Supabase JWT必須・ユーザー単位のレート制限。【改修予定】現行コードはJWTまたは同一Origin検証） |
+| **ホスティング & BFF** | **Cloudflare Pages + Workers** | エッジ配信（無料帯域無制限）、Google Gemini APIキーの安全な秘匿プロキシ（本番モード時の Supabase JWT 必須検証・Cross-Origin遮断・ユーザー単位スライディングウィンドウレート制限） |
 | **クラウドBaaS & DB** | **Supabase (PostgreSQL + Auth)** | Row Level Security (RLS) による医療データ保護、家族権限管理、Realtime同期 |
 | **AI外部連携** | **Google Gemini API** | 食品名からの糖質量自動推定（Workers BFF経由で中継、オフライン時は内蔵辞書へ自動フォールバック） |
 

@@ -94,7 +94,7 @@
   - ブラウザの `localStorage` にAPIキーを保存する機能および入力欄は一切設けない。
   - 「ローカルストレージに安全に保管されます」等の事実と異なるセキュリティ表示を厳禁とする。
 - **推定ロジック・BFF認証検証（案2）と優先順位**:
-  - クラウドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効化（`VITE_ENABLE_GEMINI_BFF === 'true'`）されている場合は、Supabase セッション存在時に `Authorization: Bearer <access_token>` を付与かつ `credentials: 'same-origin'` でサーバー側プロキシへ送信する。BFF側では本番モード時に **Supabase JWT 検証** を必須化（同一 Origin 検証は補助）し、ユーザー単位のレート制限を行い、Cross-Origin 呼び出し（`403`）や未認証・不正トークン呼び出し（`401`）を遮断する（【改修予定】JWT必須化・レート制限は現行コードでは未実装。詳細は ARCHITECTURE.md §4.5）。BFF未接続時やオフライン時は日本食品標準成分表に基づく内蔵食品辞書（`estimateCarbsLocally`）で即座に推定を行う。
+  - クラウドBFFプロキシ（`functions/api/gemini.ts`：`POST /api/gemini`）が有効化（`VITE_ENABLE_GEMINI_BFF === 'true'`）されている場合は、Supabase セッション存在時に `Authorization: Bearer <access_token>` を付与かつ `credentials: 'same-origin'` でサーバー側プロキシへ送信する。BFF側では本番モード時に **検証済み Supabase JWT** を必須化（同一 Origin 検証は補助であり単独では不許可）し、Workers メモリ内スライディングウィンドウ（`checkBffUserRateLimit`）によるユーザー単位のレート制限（`429`）を行い、Cross-Origin 呼び出し（`403`）や未認証・不正トークン呼び出し（`401`）を遮断する（詳細は `ARCHITECTURE.md` §4.5）。BFF未接続時・未ログイン時（`401`）・レート上限到達時（`429`）・オフライン時は日本食品標準成分表に基づく内蔵食品辞書（`estimateCarbsLocally`）で即座に推定を行う。
   - **デモアプリ（`isPortfolioMode()`）における非表示制御**: デモアプリでは設定画面の「糖質の自動推定」セクションおよび食事記録・食品登録モーダル内の糖質推定ボタンを非表示とする。
 
 ### 3.3 データのバックアップ・初期化 (`src/lib/backupRestore.ts`, `src/lib/db.ts`, `src/lib/uuidUtils.ts`) & デモ環境のデータ管理 (`src/lib/realGlucoseLoader.ts`, `src/lib/demoMealGenerator.ts`, `src/components/common/DemoWelcomeModal.tsx`)
