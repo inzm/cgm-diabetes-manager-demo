@@ -112,12 +112,13 @@ async function fetchAndCacheMonthData(
 
   const startDate = `${firstGridDate}T00:00:00.000Z`;
   const endDate = `${lastGridDate}T23:59:59.999Z`;
+  const eventsEndDate = `${shiftLocalDateStr(lastGridDate, 1)}T23:59:59.999Z`;
 
   // 初回表示時（IndexedDBへのバックグラウンド書き込み完了前）はインメモリキャッシュから 0ms で即時取得
   const inMemorySlice = getInMemoryRecentSlice(
     patientId,
     startDate,
-    endDate,
+    eventsEndDate,
     hypoThreshold,
     hyperThreshold
   );
@@ -126,7 +127,7 @@ async function fetchAndCacheMonthData(
   let eList: HealthEvent[];
 
   if (inMemorySlice) {
-    rList = inMemorySlice.readings;
+    rList = inMemorySlice.readings.filter((r) => r.timestamp <= endDate);
     eList = inMemorySlice.events;
   } else {
     // 全件取得(where('user_id').filter())を廃止し、複合インデックス [user_id+timestamp] / [user_id+event_datetime] の between で局所取得
@@ -137,7 +138,7 @@ async function fetchAndCacheMonthData(
         .toArray(),
       db.events
         .where('[user_id+event_datetime]')
-        .between([patientId, startDate], [patientId, endDate], true, true)
+        .between([patientId, startDate], [patientId, eventsEndDate], true, true)
         .filter((e) => !e.is_deleted)
         .toArray(),
     ]);

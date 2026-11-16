@@ -192,23 +192,73 @@ export async function reevaluatePatientAnomalyEvents(
 }
 
 /**
- * 単一の食事イベントと近傍のCGM測定値配列から、
- * 食前血糖値 ([-15分, +5分] の直近値) と食後ピーク血糖値 ([+60分, +180分] の最高値) を算出する (Single Source of Truth)
+ * 対象食事イベントの食後ピーク探索窓 (T, T + 180分] に対して、別イベントが血糖値に干渉する後続イベント
+ * （次の食事記録、または持効型を除く追加インスリン投与）であるかを判定する純粋関数
+ */
+export function isPostMealInterferingEvent(
+  meal: HealthEvent,
+  otherEvent: HealthEvent
+): boolean {
+  if (otherEvent.is_deleted || otherEvent.id === meal.id) {
+    return false;
+  }
+  if (otherEvent.event_type === '食事') {
+    return true;
+  }
+  const insulinUnits = Number(otherEvent.insulin_units) || 0;
+  if (insulinUnits > 0 && !(otherEvent.memo ?? '').includes('持効型')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 単一の食事イベントと近傍のCGM測定値配列（および近傍イベント配列）から、
+ * 食前血糖値 ([-15分, +5分] の直近値)、食後ピーク血糖値 ([+60分, +180分] の最高値・後続干渉時は直前打ち切り)、
+ * および参考値フラグ (`isPostMealReference`) を算出する (Single Source of Truth)
  */
 export function computeBoundGlucoseForMeal(
   meal: HealthEvent,
-  candidateReadings: LibreReading[]
-): { boundPre: number | undefined; boundPost: number | undefined } {
+  candidateReadings: LibreReading[],
+  candidateEvents?: HealthEvent[]
+): {
+  boundPre: number | undefined;
+  boundPost: number | undefined;
+  isPostMealReference: boolean;
+} {
   const eventTimeMs = parseWallClockMs(meal.event_datetime);
   const preStart = eventTimeMs - 15 * 60 * 1000;
   const preEnd = eventTimeMs + 5 * 60 * 1000;
   const postStart = eventTimeMs + 60 * 60 * 1000;
   const postEnd = eventTimeMs + 180 * 60 * 1000;
 
+  let firstInterferenceMs = Infinity;
+  if (candidateEvents && candidateEvents.length > 0) {
+    for (const ev of candidateEvents) {
+      if (!isPostMealInterferingEvent(meal, ev)) continue;
+      const tEv = parseWallClockMs(ev.event_datetime);
+      if (tEv > eventTimeMs && tEv <= postEnd && tEv < firstInterferenceMs) {
+        firstInterferenceMs = tEv;
+      }
+    }
+  }
+  const isPostMealReference = Number.isFinite(firstInterferenceMs);
+
+  if (candidateReadings.length === 0) {
+    return {
+      boundPre: meal.pre_meal_glucose,
+      boundPost:
+        isPostMealReference && firstInterferenceMs <= postStart
+          ? undefined
+          : meal.post_meal_glucose,
+      isPostMealReference,
+    };
+  }
+
   let boundPre = meal.pre_meal_glucose;
   let bestPreDiff = Infinity;
 
-  let boundPost = meal.post_meal_glucose;
+  let boundPost = isPostMealReference ? undefined : meal.post_meal_glucose;
   let maxPostVal = -Infinity;
   let foundPost = false;
 
@@ -221,7 +271,10 @@ export function computeBoundGlucoseForMeal(
         boundPre = r.glucose_value;
       }
     }
-    if (t >= postStart && t <= postEnd) {
+    const withinPostWindow = isPostMealReference
+      ? t >= postStart && t < firstInterferenceMs
+      : t >= postStart && t <= postEnd;
+    if (withinPostWindow) {
       if (r.glucose_value > maxPostVal) {
         maxPostVal = r.glucose_value;
         foundPost = true;
@@ -233,65 +286,97 @@ export function computeBoundGlucoseForMeal(
     boundPost = maxPostVal;
   }
 
-  return { boundPre, boundPost };
+  return { boundPre, boundPost, isPostMealReference };
 }
 
 /**
- * CSV履歴データ取込完了時、または食事記録の単体保存時に、食事イベント (`event_type === '食事'`) に対して
+ * CSV履歴データ取込完了時、または食事・活動記録の保存/編集/削除/統合時に、食事イベント (`event_type === '食事'`) に対して
  * CGM 測定データから食前血糖値 (`pre_meal_glucose`) および食後ピーク血糖値 (`post_meal_glucose`) を自動バインドする。
- * - `targetMealEventId` 指定時: 該当食事の前後1日の測定値のみを `[user_id+timestamp]` 複合インデックスで局所取得し O(1) で紐づける。
- * - 一括実行時: 日付別インデックス (`Map<YYYY-MM-DD, LibreReading[]>`) を構築し O(N + M) で高速に紐づける。
+ * - `targetEventIdOrDate` 指定時: 該当イベント日（削除済み・活動イベントも対応）または `YYYY-MM-DD` の前後1日の測定値・イベントのみを
+ *   複合インデックスで局所取得し、前後3時間以内の干渉有無の変化を含めて対象範囲の食事を O(1) で再紐づけする。
+ * - 一括実行時: 日付別インデックス (`Map<YYYY-MM-DD, ...>`) を構築し O(N + M) で高速に紐づける。
  */
 export async function bindMealGlucoseFromReadings(
   patientId: string,
-  targetMealEventId?: string
+  targetEventIdOrDate?: string
 ): Promise<number> {
   const nowIso = new Date().toISOString();
 
-  // 単一食事イベントのピンポイント紐づけ（全件取得を排除）
-  if (targetMealEventId) {
-    const meal = await db.events.get(targetMealEventId);
-    if (!meal || meal.is_deleted || meal.event_type !== '食事') {
+  // 単一イベントまたは対象日周辺のピンポイント再紐づけ（全件取得を排除）
+  if (targetEventIdOrDate) {
+    let centerDateStr = '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(targetEventIdOrDate)) {
+      centerDateStr = targetEventIdOrDate;
+    } else {
+      const targetEv = await db.events.get(targetEventIdOrDate);
+      if (!targetEv) {
+        invalidateAnalysisDatasetCache(patientId);
+        return 0;
+      }
+      centerDateStr = targetEv.event_datetime.slice(0, 10);
+    }
+
+    if (!centerDateStr) {
       invalidateAnalysisDatasetCache(patientId);
       return 0;
     }
-    const dateStr = meal.event_datetime.slice(0, 10);
-    const startIso = `${shiftLocalDateStr(dateStr, -1)}T00:00:00.000Z`;
-    const endIso = `${shiftLocalDateStr(dateStr, 1)}T23:59:59.999Z`;
 
-    const windowReadings = await db.libre_readings
-      .where('[user_id+timestamp]')
-      .between([patientId, startIso], [patientId, endIso], true, true)
-      .toArray();
+    const startIso = `${shiftLocalDateStr(centerDateStr, -1)}T00:00:00.000Z`;
+    const endIso = `${shiftLocalDateStr(centerDateStr, 1)}T23:59:59.999Z`;
+
+    const [windowReadings, windowEvents] = await Promise.all([
+      db.libre_readings
+        .where('[user_id+timestamp]')
+        .between([patientId, startIso], [patientId, endIso], true, true)
+        .toArray(),
+      db.events
+        .where('[user_id+event_datetime]')
+        .between([patientId, startIso], [patientId, endIso], true, true)
+        .filter((e) => !e.is_deleted && (e.event_type === '食事' || e.event_type === '活動'))
+        .toArray(),
+    ]);
 
     if (windowReadings.length === 0) {
       invalidateAnalysisDatasetCache(patientId);
       return 0;
     }
 
-    const { boundPre, boundPost } = computeBoundGlucoseForMeal(meal, windowReadings);
-    if (boundPre !== meal.pre_meal_glucose || boundPost !== meal.post_meal_glucose) {
-      await db.events.update(meal.id, {
-        pre_meal_glucose: boundPre,
-        post_meal_glucose: boundPost,
-        updated_at: nowIso,
-      });
-      invalidateAnalysisDatasetCache(patientId);
-      return 1;
+    const updatedLocalMeals: HealthEvent[] = [];
+    for (const meal of windowEvents) {
+      if (meal.event_type !== '食事') continue;
+      const { boundPre, boundPost } = computeBoundGlucoseForMeal(
+        meal,
+        windowReadings,
+        windowEvents
+      );
+      if (boundPre !== meal.pre_meal_glucose || boundPost !== meal.post_meal_glucose) {
+        updatedLocalMeals.push({
+          ...meal,
+          pre_meal_glucose: boundPre,
+          post_meal_glucose: boundPost,
+          updated_at: nowIso,
+        });
+      }
+    }
+
+    if (updatedLocalMeals.length > 0) {
+      await db.events.bulkPut(updatedLocalMeals);
     }
     invalidateAnalysisDatasetCache(patientId);
-    return 0;
+    return updatedLocalMeals.length;
   }
 
   // 一括紐づけ（CSV取込時）：日付バケット化により O(M * N) ループを排除
-  const [readings, mealEvents] = await Promise.all([
+  const [readings, activeEvents] = await Promise.all([
     db.libre_readings.where('user_id').equals(patientId).toArray(),
     db.events
       .where('user_id')
       .equals(patientId)
-      .filter((e) => e.event_type === '食事' && !e.is_deleted)
+      .filter((e) => !e.is_deleted && (e.event_type === '食事' || e.event_type === '活動'))
       .toArray(),
   ]);
+
+  const mealEvents = activeEvents.filter((e) => e.event_type === '食事');
 
   if (readings.length === 0 || mealEvents.length === 0) {
     invalidateAnalysisDatasetCache(patientId);
@@ -309,22 +394,42 @@ export async function bindMealGlucoseFromReadings(
     }
   }
 
+  const eventsByDate = new Map<string, HealthEvent[]>();
+  for (const ev of activeEvents) {
+    const dStr = ev.event_datetime.slice(0, 10);
+    const bucket = eventsByDate.get(dStr);
+    if (bucket) {
+      bucket.push(ev);
+    } else {
+      eventsByDate.set(dStr, [ev]);
+    }
+  }
+
   const updatedMeals: HealthEvent[] = [];
 
   for (const meal of mealEvents) {
     const dStr = meal.event_datetime.slice(0, 10);
     const candidateDates = [shiftLocalDateStr(dStr, -1), dStr, shiftLocalDateStr(dStr, 1)];
     const candidateReadings: LibreReading[] = [];
+    const candidateEvents: HealthEvent[] = [];
     for (const cd of candidateDates) {
-      const bucket = readingsByDate.get(cd);
-      if (bucket) {
-        for (const r of bucket) candidateReadings.push(r);
+      const rBucket = readingsByDate.get(cd);
+      if (rBucket) {
+        for (const r of rBucket) candidateReadings.push(r);
+      }
+      const eBucket = eventsByDate.get(cd);
+      if (eBucket) {
+        for (const ev of eBucket) candidateEvents.push(ev);
       }
     }
 
     if (candidateReadings.length === 0) continue;
 
-    const { boundPre, boundPost } = computeBoundGlucoseForMeal(meal, candidateReadings);
+    const { boundPre, boundPost } = computeBoundGlucoseForMeal(
+      meal,
+      candidateReadings,
+      candidateEvents
+    );
 
     if (boundPre !== meal.pre_meal_glucose || boundPost !== meal.post_meal_glucose) {
       updatedMeals.push({

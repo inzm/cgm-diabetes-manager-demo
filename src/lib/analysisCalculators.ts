@@ -29,6 +29,7 @@ export interface FoodImpactItem {
   preGlucose: number | null;
   peakGlucose: number | null;
   delta: number | null;
+  isPostMealReference?: boolean;
   otherFoods: string[];
 }
 
@@ -80,6 +81,7 @@ export interface PeriodAnalysisSlice {
   mealDetails?: MealDetail[];
   detailsByEventId?: Map<string, MealDetail[]>;
   readingsByDate?: Map<string, LibreReading[]>;
+  eventsByDate?: Map<string, HealthEvent[]>;
   foodOptions?: string[];
   timeAnomaly: TimePeriodAnomaly[];
   weekdayTrends: WeekdayTrendItem[];
@@ -249,10 +251,19 @@ export function buildAndCacheLocalizedPeriodSlice(
   }
 
   const activeEvents: HealthEvent[] = [];
+  const eventsByDate = new Map<string, HealthEvent[]>();
   for (let i = 0; i < periodEvents.length; i++) {
     const e = periodEvents[i];
     if (e.is_deleted) continue;
-    const dStr = e.event_datetime.slice(0, 10);
+    const dStr = extractDateStr(e.event_datetime);
+    if (dStr) {
+      const bucket = eventsByDate.get(dStr);
+      if (bucket) {
+        bucket.push(e);
+      } else {
+        eventsByDate.set(dStr, [e]);
+      }
+    }
     if (dStr >= startDate && dStr <= endDate) {
       activeEvents.push(e);
       if (e.event_type === '食事' && e.memo) {
@@ -306,6 +317,7 @@ export function buildAndCacheLocalizedPeriodSlice(
     mealDetails: periodMealDetails,
     detailsByEventId,
     readingsByDate,
+    eventsByDate,
     foodOptions: Array.from(foodSet).sort(),
     timeAnomaly,
     weekdayTrends,
@@ -514,6 +526,7 @@ export function getOrComputePeriodSlice(
     mealDetails: dataset.allMealDetails,
     detailsByEventId: dataset.detailsByEventId,
     readingsByDate: dataset.readingsByDate,
+    eventsByDate: dataset.eventsByDate,
     foodOptions: dataset.foodOptions,
     timeAnomaly,
     weekdayTrends,
@@ -537,6 +550,7 @@ export function calculateFoodImpact(
   preIndexed?: {
     detailsByEventId?: Map<string, MealDetail[]>;
     readingsByDate?: Map<string, LibreReading[]>;
+    eventsByDate?: Map<string, HealthEvent[]>;
   }
 ): FoodImpactSummary {
   const query = foodQuery.trim().toLowerCase();
@@ -607,7 +621,7 @@ export function calculateFoodImpact(
     };
   }
 
-  // 3. 必要な日付の測定値のみをインデックス化（事前インデックスがあればO(1)で再利用）
+  // 3. 必要な日付の測定値・イベントのみをインデックス化（事前インデックスがあればO(1)で再利用）
   let readingsByDate = preIndexed?.readingsByDate;
   if (!readingsByDate) {
     readingsByDate = new Map<string, LibreReading[]>();
@@ -624,6 +638,23 @@ export function calculateFoodImpact(
     }
   }
 
+  let eventsByDate = preIndexed?.eventsByDate;
+  if (!eventsByDate) {
+    eventsByDate = new Map<string, HealthEvent[]>();
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i];
+      if (ev.is_deleted) continue;
+      const dStr = extractDateStr(ev.event_datetime);
+      if (!neededDates.has(dStr)) continue;
+      const list = eventsByDate.get(dStr);
+      if (list) {
+        list.push(ev);
+      } else {
+        eventsByDate.set(dStr, [ev]);
+      }
+    }
+  }
+
   const matchedItems: FoodImpactItem[] = [];
 
   for (let i = 0; i < matchedMealCandidates.length; i++) {
@@ -632,7 +663,7 @@ export function calculateFoodImpact(
     const nextDateStr = shiftLocalDateStr(eventDateStr, 1);
     const prevDateStr = shiftLocalDateStr(eventDateStr, -1);
 
-    // 食事当日および前後日の測定値のみを走査（最大約200件程度）
+    // 食事当日および前後日の測定値・イベントのみを走査（最大約200件程度）
     const candidateReadings: LibreReading[] = [];
     const rPrev = readingsByDate.get(prevDateStr);
     const rCurr = readingsByDate.get(eventDateStr);
@@ -641,7 +672,19 @@ export function calculateFoodImpact(
     if (rCurr) candidateReadings.push(...rCurr);
     if (rNext) candidateReadings.push(...rNext);
 
-    const { boundPre, boundPost } = computeBoundGlucoseForMeal(event, candidateReadings);
+    const candidateEvents: HealthEvent[] = [];
+    const ePrev = eventsByDate.get(prevDateStr);
+    const eCurr = eventsByDate.get(eventDateStr);
+    const eNext = eventsByDate.get(nextDateStr);
+    if (ePrev) candidateEvents.push(...ePrev);
+    if (eCurr) candidateEvents.push(...eCurr);
+    if (eNext) candidateEvents.push(...eNext);
+
+    const { boundPre, boundPost, isPostMealReference } = computeBoundGlucoseForMeal(
+      event,
+      candidateReadings,
+      candidateEvents
+    );
     const preGlucose: number | null = boundPre ?? null;
     const peakGlucose: number | null = boundPost ?? null;
 
@@ -667,6 +710,7 @@ export function calculateFoodImpact(
       preGlucose,
       peakGlucose,
       delta,
+      isPostMealReference,
       otherFoods,
     });
   }
@@ -691,13 +735,16 @@ export function calculateFoodImpact(
       preSum += item.preGlucose;
       preCount++;
     }
-    if (item.peakGlucose !== null) {
-      peakSum += item.peakGlucose;
-      peakCount++;
-    }
-    if (item.delta !== null) {
-      deltaSum += item.delta;
-      deltaCount++;
+    // 食後3時間以内に次の食事または追加インスリンがある「参考値」は平均ピーク・平均上昇幅から除外する
+    if (!item.isPostMealReference) {
+      if (item.peakGlucose !== null) {
+        peakSum += item.peakGlucose;
+        peakCount++;
+      }
+      if (item.delta !== null) {
+        deltaSum += item.delta;
+        deltaCount++;
+      }
     }
   }
 

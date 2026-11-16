@@ -10,6 +10,7 @@ import {
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
+import { bindMealGlucoseFromReadings } from '@/lib/anomalyExtractor';
 import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import {
   buildWallClockIso,
@@ -344,6 +345,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
         });
       }
 
+      await bindMealGlucoseFromReadings(currentPatientId, editEventId || date);
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
@@ -368,6 +370,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       await waitForRecentPersistence(currentPatientId);
       const nowIso = new Date().toISOString();
       await db.events.update(editEventId, { is_deleted: true, updated_at: nowIso });
+      await bindMealGlucoseFromReadings(currentPatientId, editEventId);
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);

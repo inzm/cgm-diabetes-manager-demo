@@ -169,6 +169,108 @@ describe('analysisCalculators (臨床分析計算ロジック & オンメモリ�
       expect(result.totalCount).toBe(0);
       expect(result.items).toHaveLength(0);
     });
+
+    it('食後3時間以内に次の食事または追加インスリンがある場合は直前打ち切り・参考値とし平均ピーク/平均Δから除外し、持効型インスリンは干渉扱いしないこと', () => {
+      const events: HealthEvent[] = [
+        // 1日目 12:00 昼食（干渉なし：食前100 → ピーク180, Δ+80）
+        {
+          id: 'meal-day1',
+          user_id: userId,
+          event_datetime: '2026-10-20T12:00:00.000Z',
+          event_type: '食事',
+          timing_category: '昼食',
+          insulin_units: 6,
+          total_carbs: 55.2,
+          is_deleted: false,
+          created_at: '2026-10-20T12:00:00.000Z',
+          updated_at: '2026-10-20T12:00:00.000Z',
+        },
+        // 2日目 12:00 昼食（13:30 に間食あり：13:15 の 150 で打ち切り・14:00 の 220 は除外、参考値として平均から除外）
+        {
+          id: 'meal-day2',
+          user_id: userId,
+          event_datetime: '2026-10-21T12:00:00.000Z',
+          event_type: '食事',
+          timing_category: '昼食',
+          insulin_units: 6,
+          total_carbs: 55.2,
+          is_deleted: false,
+          created_at: '2026-10-21T12:00:00.000Z',
+          updated_at: '2026-10-21T12:00:00.000Z',
+        },
+        {
+          id: 'snack-day2',
+          user_id: userId,
+          event_datetime: '2026-10-21T13:30:00.000Z',
+          event_type: '食事',
+          timing_category: '間食',
+          insulin_units: 2,
+          total_carbs: 20,
+          is_deleted: false,
+          created_at: '2026-10-21T13:30:00.000Z',
+          updated_at: '2026-10-21T13:30:00.000Z',
+        },
+        // 3日目 19:30 夕食 + 22:00 持効型インスリン（持効型は干渉扱いせず通常集計に含める：食前110 → ピーク170, Δ+60）
+        {
+          id: 'meal-day3',
+          user_id: userId,
+          event_datetime: '2026-10-22T19:30:00.000Z',
+          event_type: '食事',
+          timing_category: '夕食',
+          insulin_units: 6,
+          total_carbs: 55.2,
+          is_deleted: false,
+          created_at: '2026-10-22T19:30:00.000Z',
+          updated_at: '2026-10-22T19:30:00.000Z',
+        },
+        {
+          id: 'basal-day3',
+          user_id: userId,
+          event_datetime: '2026-10-22T22:00:00.000Z',
+          event_type: '活動',
+          timing_category: 'インスリン',
+          memo: '持効型インスリン投与 (就寝前)',
+          insulin_units: 10,
+          is_deleted: false,
+          created_at: '2026-10-22T22:00:00.000Z',
+          updated_at: '2026-10-22T22:00:00.000Z',
+        },
+      ];
+
+      const details: MealDetail[] = [
+        { id: 'd1', user_id: userId, event_id: 'meal-day1', food_name: 'ごはん', amount: 1, unit: '杯', carbs: 55.2, is_deleted: false, created_at: '', updated_at: '' },
+        { id: 'd2', user_id: userId, event_id: 'meal-day2', food_name: 'ごはん', amount: 1, unit: '杯', carbs: 55.2, is_deleted: false, created_at: '', updated_at: '' },
+        { id: 'ds', user_id: userId, event_id: 'snack-day2', food_name: 'クッキー', amount: 1, unit: '袋', carbs: 20, is_deleted: false, created_at: '', updated_at: '' },
+        { id: 'd3', user_id: userId, event_id: 'meal-day3', food_name: 'ごはん', amount: 1, unit: '杯', carbs: 55.2, is_deleted: false, created_at: '', updated_at: '' },
+      ];
+
+      const readings: LibreReading[] = [
+        { id: 'r1-pre', user_id: userId, timestamp: '2026-10-20T11:55:00.000Z', glucose_value: 100, scan_type: 'Historic', created_at: '' },
+        { id: 'r1-post', user_id: userId, timestamp: '2026-10-20T13:30:00.000Z', glucose_value: 180, scan_type: 'Historic', created_at: '' },
+        { id: 'r2-pre', user_id: userId, timestamp: '2026-10-21T11:55:00.000Z', glucose_value: 90, scan_type: 'Historic', created_at: '' },
+        { id: 'r2-mid', user_id: userId, timestamp: '2026-10-21T13:15:00.000Z', glucose_value: 150, scan_type: 'Historic', created_at: '' },
+        { id: 'r2-after-snack', user_id: userId, timestamp: '2026-10-21T14:00:00.000Z', glucose_value: 220, scan_type: 'Historic', created_at: '' },
+        { id: 'r3-pre', user_id: userId, timestamp: '2026-10-22T19:25:00.000Z', glucose_value: 110, scan_type: 'Historic', created_at: '' },
+        { id: 'r3-post', user_id: userId, timestamp: '2026-10-22T22:15:00.000Z', glucose_value: 170, scan_type: 'Historic', created_at: '' },
+      ];
+
+      const res = calculateFoodImpact('ごはん', events, details, readings);
+      expect(res.totalCount).toBe(3);
+      expect(res.avgPreGlucose).toBe(100); // (100 + 90 + 110) / 3 = 100
+
+      const day2Item = res.items.find((i) => i.id === 'meal-day2')!;
+      expect(day2Item.isPostMealReference).toBe(true);
+      expect(day2Item.peakGlucose).toBe(150); // 13:30 間食直前で打ち切り
+      expect(day2Item.delta).toBe(60);
+
+      const day3Item = res.items.find((i) => i.id === 'meal-day3')!;
+      expect(day3Item.isPostMealReference).toBe(false);
+      expect(day3Item.peakGlucose).toBe(170);
+
+      // 平均ピークと平均Δは参考値 (day2) を除外した day1 (180, +80) と day3 (170, +60) の平均になること
+      expect(res.avgPeakGlucose).toBe(175);
+      expect(res.avgDelta).toBe(70);
+    });
   });
 
   describe('calculateTimeAnomalyPatterns (時間帯別異常値分析)', () => {

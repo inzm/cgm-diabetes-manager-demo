@@ -262,11 +262,11 @@ export const AnalysisView: React.FC = () => {
     (async () => {
       try {
         pauseBackgroundHydration(currentPatientId, 3000);
-        // 食前15分〜食後180分の日跨ぎ探索にも対応するため、血糖測定値は前後1日のマージンを含めて複合インデックス検索
+        // 食前15分〜食後180分の日跨ぎ探索および期間末日夜間の後続イベント干渉判定に対応するため、前後余白を含めて複合インデックス検索
         const readingsStartIso = `${shiftLocalDateStr(startDate, -1)}T00:00:00.000Z`;
         const readingsEndIso = `${shiftLocalDateStr(endDate, 1)}T23:59:59.999Z`;
         const eventsStartIso = `${startDate}T00:00:00.000Z`;
-        const eventsEndIso = `${endDate}T23:59:59.999Z`;
+        const eventsEndIso = `${shiftLocalDateStr(endDate, 1)}T23:59:59.999Z`;
 
         const [periodReadings, periodEvents] = await Promise.all([
           db.libre_readings
@@ -293,7 +293,7 @@ export const AnalysisView: React.FC = () => {
         if (!active) return;
 
         const mealEventIds = periodEvents
-          .filter((e) => e.event_type === '食事')
+          .filter((e) => e.event_type === '食事' && e.event_datetime.slice(0, 10) <= endDate)
           .map((e) => e.id);
         const periodDetails =
           mealEventIds.length > 0
@@ -450,6 +450,7 @@ export const AnalysisView: React.FC = () => {
                   precomputedFoodOptions={periodSlice.foodOptions}
                   detailsByEventId={periodSlice.detailsByEventId}
                   readingsByDate={periodSlice.readingsByDate}
+                  eventsByDate={periodSlice.eventsByDate}
                   foodImpactCache={periodSlice.foodImpactCache}
                   isDashboardMode
                 />

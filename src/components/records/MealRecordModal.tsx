@@ -708,6 +708,7 @@ export const MealRecordModal: React.FC<MealRecordModalProps> = ({
           );
         }
       });
+      await bindMealGlucoseFromReadings(currentPatientId, editEventId);
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);

@@ -350,16 +350,6 @@ export async function verifyBffRequestAuth(
 export async function onRequestPost(
   context: PagesFunctionContext<GeminiPagesEnv>
 ): Promise<Response> {
-  const apiKey = context.env?.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
-    return new Response(
-      JSON.stringify({
-        error: 'GEMINI_API_KEY is not configured; falling back to local dictionary.',
-      }),
-      { status: 503, headers: JSON_HEADERS }
-    );
-  }
-
   const authResult = await verifyBffRequestAuth(context);
   if (!authResult.authorized) {
     return new Response(
@@ -418,6 +408,16 @@ export async function onRequestPost(
       status: 400,
       headers: JSON_HEADERS,
     });
+  }
+
+  const apiKey = context.env?.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    return new Response(
+      JSON.stringify({
+        error: 'GEMINI_API_KEY is not configured; falling back to local dictionary.',
+      }),
+      { status: 503, headers: JSON_HEADERS }
+    );
   }
 
   const model = context.env?.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';

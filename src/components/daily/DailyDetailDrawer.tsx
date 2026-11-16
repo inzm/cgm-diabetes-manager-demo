@@ -17,7 +17,11 @@ import {
   waitForRecentPersistence,
 } from '@/lib/realGlucoseLoader';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
-import { formatJapaneseDateWithWeekday } from '@/lib/dateUtils';
+import {
+  bindMealGlucoseFromReadings,
+  computeBoundGlucoseForMeal,
+} from '@/lib/anomalyExtractor';
+import { formatJapaneseDateWithWeekday, shiftLocalDateStr } from '@/lib/dateUtils';
 import { blurActiveElementOnBackdropClick, useAnimatedModal } from '@/lib/useAnimatedModal';
 import {
   X,
@@ -285,6 +289,18 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
   const mealEvents = dayAllEvents.filter((e) => e.event_type === '食事');
   const otherEvents = dayAllEvents.filter((e) => e.event_type !== '食事');
 
+  const prevDateStr = shiftLocalDateStr(targetDate, -1);
+  const nextDateStr = shiftLocalDateStr(targetDate, 1);
+  const nearbyReadings = readings.filter((r) => {
+    const d = r.timestamp.slice(0, 10);
+    return d === prevDateStr || d === targetDate || d === nextDateStr;
+  });
+  const nearbyEvents = events.filter((e) => {
+    if (e.is_deleted) return false;
+    const d = e.event_datetime.slice(0, 10);
+    return d === prevDateStr || d === targetDate || d === nextDateStr;
+  });
+
   const totalAnomalies = daySummary.hypoCount + daySummary.hyperCount;
   const totalCarbsFormatted = Number.isInteger(daySummary.totalCarbs)
     ? daySummary.totalCarbs
@@ -327,6 +343,7 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
           }
         }
       });
+      await bindMealGlucoseFromReadings(currentPatientId, event.id);
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
@@ -652,11 +669,19 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
                         details.length > 0
                           ? details.reduce((s, d) => s + (Number(d.carbs) || 0), 0)
                           : Number(meal.total_carbs) || 0;
+                      const { boundPre, boundPost, isPostMealReference } =
+                        computeBoundGlucoseForMeal(meal, nearbyReadings, nearbyEvents);
+                      const displayPreGlucose = meal.pre_meal_glucose ?? boundPre;
+                      const displayPostGlucose = isPostMealReference
+                        ? boundPost
+                        : (meal.post_meal_glucose ?? boundPost);
                       const hasGlucoseLink =
-                        meal.pre_meal_glucose != null || meal.post_meal_glucose != null;
+                        displayPreGlucose != null ||
+                        displayPostGlucose != null ||
+                        isPostMealReference;
                       const glucoseDelta =
-                        meal.pre_meal_glucose != null && meal.post_meal_glucose != null
-                          ? Math.round(meal.post_meal_glucose - meal.pre_meal_glucose)
+                        displayPreGlucose != null && displayPostGlucose != null
+                          ? Math.round(displayPostGlucose - displayPreGlucose)
                           : null;
 
                       return (
@@ -673,12 +698,24 @@ export const DailyDetailDrawer: React.FC<DailyDetailDrawerProps> = ({
                                 </span>
                               ) : null}
                               {hasGlucoseLink && (
-                                <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200/80 tabular-nums">
-                                  🩸食前 {meal.pre_meal_glucose ?? '--'} → ピーク{' '}
-                                  {meal.post_meal_glucose ?? '--'}
+                                <span
+                                  title={
+                                    isPostMealReference
+                                      ? '食後3時間以内に次の食事または追加インスリン記録があるため、直前までの参考値です'
+                                      : undefined
+                                  }
+                                  className="text-[11px] font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200/80 tabular-nums"
+                                >
+                                  🩸食前 {displayPreGlucose ?? '--'} → ピーク{' '}
+                                  {displayPostGlucose ?? '--'}
                                   {glucoseDelta !== null && (
                                     <span className="ml-0.5">
                                       ({glucoseDelta >= 0 ? `+${glucoseDelta}` : glucoseDelta})
+                                    </span>
+                                  )}
+                                  {isPostMealReference && (
+                                    <span className="ml-1 px-1 py-0 rounded bg-amber-100/90 text-amber-800 text-[10px] font-extrabold">
+                                      参考値
                                     </span>
                                   )}
                                 </span>

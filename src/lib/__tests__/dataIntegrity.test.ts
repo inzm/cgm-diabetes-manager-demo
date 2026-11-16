@@ -1253,14 +1253,27 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
     it('Cloudflare Pages Functions BFF (/api/gemini) が GEMINI_API_KEY 未設定時に HTTP 503 を返し、設定時は糖質推定JSONを返すこと', async () => {
       const { onRequestPost } = await import('../../../functions/api/gemini');
 
-      // 1. GEMINI_API_KEY 未設定時は 503 を返すこと
-      const resNoKey = await onRequestPost({
+      // 1. GEMINI_API_KEY 未設定時でも未認証リクエストは最優先で 401 遮断し、認証通過後に GEMINI_API_KEY 未設定なら 503 を返すこと
+      const resNoAuthNoKey = await onRequestPost({
         request: new Request('https://example.com/api/gemini', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ foodName: 'カレーライス', amount: 1, unit: '皿' }),
         }),
         env: {},
+      });
+      expect(resNoAuthNoKey.status).toBe(401);
+
+      const resNoKey = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+          },
+          body: JSON.stringify({ foodName: 'カレーライス', amount: 1, unit: '皿' }),
+        }),
+        env: { APP_MODE: 'portfolio' },
       });
       expect(resNoKey.status).toBe(503);
 
@@ -2046,6 +2059,55 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       setAnalysisBoundaryCache(testPid, 'sig-stale-3', '2026-10-20', '2026-10-20', [], []);
       await bindMealGlucoseFromReadings(testPid, '77777777-7777-4777-8777-999999999999');
       expect(getAnalysisBoundaryCache(testPid)).toBeNull();
+
+      // 食後3時間以内の追加インスリン登録時に先行する食事のピーク値が直前打ち切りへ更新され、削除時に元のピーク値へ復元されること
+      await db.libre_readings.bulkPut([
+        { id: '77777777-7777-4777-8777-000000000101', user_id: testPid, timestamp: '2026-10-20T11:55:00.000Z', glucose_value: 100, scan_type: 'Historic', created_at: '' },
+        { id: '77777777-7777-4777-8777-000000000102', user_id: testPid, timestamp: '2026-10-20T13:15:00.000Z', glucose_value: 152, scan_type: 'Historic', created_at: '' },
+        { id: '77777777-7777-4777-8777-000000000103', user_id: testPid, timestamp: '2026-10-20T14:30:00.000Z', glucose_value: 198, scan_type: 'Historic', created_at: '' },
+      ]);
+      await bindMealGlucoseFromReadings(testPid, '77777777-7777-4777-8777-000000000001');
+      expect((await db.events.get('77777777-7777-4777-8777-000000000001'))?.post_meal_glucose).toBe(198);
+
+      // 13:30 に補正インスリン (3U) を追加して再バインド -> 12:00 昼食のピークが 152 に更新されること
+      const bolusId = '77777777-7777-4777-8777-000000000002';
+      await db.events.put({
+        id: bolusId,
+        user_id: testPid,
+        event_datetime: '2026-10-20T13:30:00.000Z',
+        event_type: '活動',
+        timing_category: 'インスリン',
+        memo: '追加インスリン',
+        insulin_units: 3,
+        is_deleted: false,
+        created_at: mealTimeIso,
+        updated_at: mealTimeIso,
+      });
+      await bindMealGlucoseFromReadings(testPid, bolusId);
+      expect((await db.events.get('77777777-7777-4777-8777-000000000001'))?.post_meal_glucose).toBe(152);
+
+      // 12:30 (60分未満) に間食が追加された場合 -> 有効窓が空になるため post_meal_glucose が undefined にクリアされること
+      const earlySnackId = '77777777-7777-4777-8777-000000000003';
+      await db.events.put({
+        id: earlySnackId,
+        user_id: testPid,
+        event_datetime: '2026-10-20T12:30:00.000Z',
+        event_type: '食事',
+        timing_category: '間食',
+        total_carbs: 15,
+        is_deleted: false,
+        created_at: mealTimeIso,
+        updated_at: mealTimeIso,
+      });
+      await bindMealGlucoseFromReadings(testPid, earlySnackId);
+      expect((await db.events.get('77777777-7777-4777-8777-000000000001'))?.post_meal_glucose).toBeUndefined();
+
+      // 両方の後続イベントを論理削除して再バインド -> 元の 198 に復元されること
+      await db.events.update(earlySnackId, { is_deleted: true });
+      await db.events.update(bolusId, { is_deleted: true });
+      await bindMealGlucoseFromReadings(testPid, bolusId);
+      expect((await db.events.get('77777777-7777-4777-8777-000000000001'))?.post_meal_glucose).toBe(198);
+
       clearInMemoryDemoDatabase();
     });
 

@@ -247,7 +247,7 @@ CREATE INDEX IF NOT EXISTS idx_family_email_lookup ON family_permissions (LOWER(
   - 各業務テーブルの RLS ポリシーは `TO authenticated` に限定した上で、`((user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner())) OR public.can_view_patient_data(user_id))` 形式（および `family_permissions` での `(SELECT auth.uid())` / `(SELECT auth.jwt())` ラップと単一アクションポリシー統合、`food_master(category_id)` / `event_master(category_id)` 外部キーインデックス付与）を採用することで、患者オーナー本人の 8.4万行取得時に認可関数をクエリあたり1回の初期評価計画（InitPlan）に抑え、複合インデックス（`idx_libre_user_time`）を直接利用させる。
 
 ```sql
--- 1. 閲覧権限チェック用セキュリティ関数 (未招待第三者は FALSE)
+-- 1. 閲覧権限チェック用セキュリティ関数 (STABLE 宣言・二重評価排除・anon 実行遮断)
 CREATE OR REPLACE FUNCTION can_view_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
 DECLARE
@@ -255,28 +255,28 @@ DECLARE
     uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
     normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
 BEGIN
-    IF NOT public.is_authorized_system_user(uid, uemail) THEN
+    IF uid IS NULL THEN
         RETURN FALSE;
     END IF;
-    RETURN (
-        (uid = target_patient_id AND public.is_system_owner(uid, uemail))
-        OR EXISTS (
-            SELECT 1 FROM family_permissions
-            WHERE patient_id = target_patient_id
-              AND (
-                  family_user_id = uid
-                  OR (
-                      normalized_email IS NOT NULL
-                      AND family_email IS NOT NULL
-                      AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-                  )
+    IF uid = target_patient_id AND public.is_system_owner(uid, uemail) THEN
+        RETURN TRUE;
+    END IF;
+    RETURN EXISTS (
+        SELECT 1 FROM public.family_permissions
+        WHERE patient_id = target_patient_id
+          AND (
+              family_user_id = uid
+              OR (
+                  normalized_email IS NOT NULL
+                  AND family_email IS NOT NULL
+                  AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
               )
-        )
+          )
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
 
--- 2. 編集・登録権限チェック用セキュリティ関数
+-- 2. 編集・登録権限チェック用セキュリティ関数 (STABLE 宣言・anon 実行遮断)
 CREATE OR REPLACE FUNCTION can_edit_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
 DECLARE
@@ -284,44 +284,56 @@ DECLARE
     uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
     normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
 BEGIN
-    IF NOT public.is_authorized_system_user(uid, uemail) THEN
+    IF uid IS NULL THEN
         RETURN FALSE;
     END IF;
-    RETURN (
-        (uid = target_patient_id AND public.is_system_owner(uid, uemail))
-        OR EXISTS (
-            SELECT 1 FROM family_permissions
-            WHERE patient_id = target_patient_id
-              AND role = 'editor'
-              AND (
-                  family_user_id = uid
-                  OR (
-                      normalized_email IS NOT NULL
-                      AND family_email IS NOT NULL
-                      AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-                  )
+    IF uid = target_patient_id AND public.is_system_owner(uid, uemail) THEN
+        RETURN TRUE;
+    END IF;
+    RETURN EXISTS (
+        SELECT 1 FROM public.family_permissions
+        WHERE patient_id = target_patient_id
+          AND role = 'editor'
+          AND (
+              family_user_id = uid
+              OR (
+                  normalized_email IS NOT NULL
+                  AND family_email IS NOT NULL
+                  AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
               )
-        )
+          )
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
 
--- テーブル別ポリシー適用例: libre_readings
+REVOKE ALL ON FUNCTION public.can_view_patient_data(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_view_patient_data(UUID) TO authenticated;
+REVOKE ALL ON FUNCTION public.can_edit_patient_data(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_edit_patient_data(UUID) TO authenticated;
+
+-- テーブル別ポリシー適用例: libre_readings (TO authenticated + オーナー初期評価最適化)
 ALTER TABLE libre_readings ENABLE ROW LEVEL SECURITY;
 
--- 閲覧: 本人および許可された家族
 CREATE POLICY "libre_readings_select"
-ON libre_readings FOR SELECT
-USING (can_view_patient_data(user_id));
+ON libre_readings FOR SELECT TO authenticated
+USING (
+    (user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', ''))))
+    OR public.can_view_patient_data(user_id)
+);
 
--- 登録/更新/削除: 本人（または代理入力者）のみ
 CREATE POLICY "libre_readings_insert"
-ON libre_readings FOR INSERT
-WITH CHECK (can_edit_patient_data(user_id));
+ON libre_readings FOR INSERT TO authenticated
+WITH CHECK (
+    (user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', ''))))
+    OR public.can_edit_patient_data(user_id)
+);
 
 CREATE POLICY "libre_readings_delete"
-ON libre_readings FOR DELETE
-USING (can_edit_patient_data(user_id));
+ON libre_readings FOR DELETE TO authenticated
+USING (
+    (user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', ''))))
+    OR public.can_edit_patient_data(user_id)
+);
 ```
 
 ### 4.4 フロントエンドにおける「専用ログイン画面（Auth Gate）」と「患者コンテキスト（PatientContext）」設計 (`src/components/common/AuthGateScreen.tsx`, `src/contexts/PatientContext.tsx`, `src/App.tsx`)
@@ -407,6 +419,11 @@ BEGIN
         RETURN FALSE;
     END IF;
 
+    -- 認証済みセッションからの直接RPC呼び出しで他者のUID・メールアドレスを探索することを防止
+    IF auth.uid() IS NOT NULL AND check_uid IS DISTINCT FROM auth.uid() THEN
+        RETURN FALSE;
+    END IF;
+
     -- 1. 既にオーナーとして招待を発行しているか、または自身の患者データが存在する場合はオーナーと判定
     IF EXISTS (SELECT 1 FROM public.family_permissions WHERE patient_id = check_uid)
        OR EXISTS (SELECT 1 FROM public.user_settings WHERE user_id = check_uid)
@@ -466,7 +483,7 @@ BEGIN
 
     RETURN FALSE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
 
 -- システムの利用を許可されたユーザー（初期オーナー本人 または 招待済み家族）であるかを判定する
 CREATE OR REPLACE FUNCTION public.is_authorized_system_user(
@@ -478,6 +495,11 @@ DECLARE
     normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(check_email, '')), ''));
 BEGIN
     IF check_uid IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    -- 認証済みセッションからの直接RPC呼び出しで他者のUID・メールアドレスを探索することを防止
+    IF auth.uid() IS NOT NULL AND check_uid IS DISTINCT FROM auth.uid() THEN
         RETURN FALSE;
     END IF;
 
@@ -500,9 +522,9 @@ BEGIN
 
     RETURN FALSE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
 
--- クライアント（Auth Gate）から呼び出し可能な認可確認 RPC
+-- クライアント（Auth Gate）から呼び出し可能な認可確認 RPC（authenticated ロール限定）
 CREATE OR REPLACE FUNCTION public.verify_user_authorization()
 RETURNS JSONB AS $$
 DECLARE
@@ -538,9 +560,14 @@ BEGIN
         'email', uemail
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
 
-GRANT EXECUTE ON FUNCTION public.verify_user_authorization() TO authenticated, anon;
+REVOKE ALL ON FUNCTION public.is_system_owner(UUID, TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_system_owner(UUID, TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.is_authorized_system_user(UUID, TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_authorized_system_user(UUID, TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.verify_user_authorization() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.verify_user_authorization() TO authenticated;
 
 -- 未招待の第三者による勝手なアカウント作成（Sign Up）を DB 層で遮断するトリガー関数
 CREATE OR REPLACE FUNCTION public.enforce_invited_or_owner_signup()
@@ -566,6 +593,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
 
+REVOKE ALL ON FUNCTION public.enforce_invited_or_owner_signup() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.enforce_invited_or_owner_signup() TO service_role;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+        GRANT EXECUTE ON FUNCTION public.enforce_invited_or_owner_signup() TO supabase_auth_admin;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public' AND p.proname = 'rls_auto_enable' AND p.pronargs = 0
+    ) THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon, authenticated';
+    END IF;
+END $$;
+
 DO $$
 BEGIN
     DROP TRIGGER IF EXISTS trg_enforce_invited_or_owner_signup ON auth.users;
@@ -585,26 +628,26 @@ DECLARE
     uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
     normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
 BEGIN
-    IF NOT public.is_authorized_system_user(uid, uemail) THEN
+    IF uid IS NULL THEN
         RETURN FALSE;
     END IF;
-    RETURN (
-        (uid = target_patient_id AND public.is_system_owner(uid, uemail))
-        OR EXISTS (
-            SELECT 1 FROM family_permissions
-            WHERE patient_id = target_patient_id
-              AND (
-                  family_user_id = uid
-                  OR (
-                      normalized_email IS NOT NULL
-                      AND family_email IS NOT NULL
-                      AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-                  )
+    IF uid = target_patient_id AND public.is_system_owner(uid, uemail) THEN
+        RETURN TRUE;
+    END IF;
+    RETURN EXISTS (
+        SELECT 1 FROM public.family_permissions
+        WHERE patient_id = target_patient_id
+          AND (
+              family_user_id = uid
+              OR (
+                  normalized_email IS NOT NULL
+                  AND family_email IS NOT NULL
+                  AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
               )
-        )
+          )
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
 
 CREATE OR REPLACE FUNCTION can_edit_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
@@ -613,27 +656,32 @@ DECLARE
     uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
     normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
 BEGIN
-    IF NOT public.is_authorized_system_user(uid, uemail) THEN
+    IF uid IS NULL THEN
         RETURN FALSE;
     END IF;
-    RETURN (
-        (uid = target_patient_id AND public.is_system_owner(uid, uemail))
-        OR EXISTS (
-            SELECT 1 FROM family_permissions
-            WHERE patient_id = target_patient_id
-              AND role = 'editor'
-              AND (
-                  family_user_id = uid
-                  OR (
-                      normalized_email IS NOT NULL
-                      AND family_email IS NOT NULL
-                      AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-                  )
+    IF uid = target_patient_id AND public.is_system_owner(uid, uemail) THEN
+        RETURN TRUE;
+    END IF;
+    RETURN EXISTS (
+        SELECT 1 FROM public.family_permissions
+        WHERE patient_id = target_patient_id
+          AND role = 'editor'
+          AND (
+              family_user_id = uid
+              OR (
+                  normalized_email IS NOT NULL
+                  AND family_email IS NOT NULL
+                  AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
               )
-        )
+          )
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
+
+REVOKE ALL ON FUNCTION public.can_view_patient_data(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_view_patient_data(UUID) TO authenticated;
+REVOKE ALL ON FUNCTION public.can_edit_patient_data(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_edit_patient_data(UUID) TO authenticated;
 
 -- ------------------------------------------------------------------------------
 -- 3. カテゴリマスタ (論理削除対応の部分ユニークインデックス + 決定論的UUID)
@@ -670,6 +718,7 @@ CREATE TABLE IF NOT EXISTS food_master (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_food_master_user ON food_master (user_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_food_master_category ON food_master (category_id);
 
 -- ------------------------------------------------------------------------------
 -- 5. 活動マスタ
@@ -686,6 +735,7 @@ CREATE TABLE IF NOT EXISTS event_master (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_event_master_user ON event_master (user_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_event_master_category ON event_master (category_id);
 
 -- ------------------------------------------------------------------------------
 -- 6. リブレ生データ (8.4万〜10万行/人)
@@ -779,61 +829,83 @@ ALTER TABLE meal_details ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 
 -- 家族権限テーブル: 認可されたオーナー本人のみ招待・管理可能、招待された家族は自分宛ての権限レコードを参照・初回承認可能
+-- InitPlan 最適化 ((SELECT auth.uid()) / (SELECT auth.jwt())) およびアクション別単一ポリシーで重複評価を排除
+DROP POLICY IF EXISTS "family_permissions_all" ON family_permissions;
+DROP POLICY IF EXISTS "family_permissions_accept_invite" ON family_permissions;
 DROP POLICY IF EXISTS "family_permissions_select" ON family_permissions;
+DROP POLICY IF EXISTS "family_permissions_insert" ON family_permissions;
+DROP POLICY IF EXISTS "family_permissions_update" ON family_permissions;
+DROP POLICY IF EXISTS "family_permissions_delete" ON family_permissions;
+
 CREATE POLICY "family_permissions_select" ON family_permissions
-    FOR SELECT USING (
-        public.is_authorized_system_user(auth.uid(), COALESCE(auth.jwt() ->> 'email', ''))
+    FOR SELECT TO authenticated USING (
+        (SELECT public.is_authorized_system_user((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
         AND (
-            auth.uid() = patient_id
-            OR auth.uid() = family_user_id
+            (SELECT auth.uid()) = patient_id
+            OR (SELECT auth.uid()) = family_user_id
             OR (
                 family_email IS NOT NULL
-                AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''))
+                AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE((SELECT auth.jwt()) ->> 'email', '')), ''))
             )
         )
     );
 
-DROP POLICY IF EXISTS "family_permissions_all" ON family_permissions;
-CREATE POLICY "family_permissions_all" ON family_permissions
-    FOR ALL USING (
-        auth.uid() = patient_id
-        AND public.is_system_owner(auth.uid(), COALESCE(auth.jwt() ->> 'email', ''))
-    )
-    WITH CHECK (
-        auth.uid() = patient_id
-        AND public.is_system_owner(auth.uid(), COALESCE(auth.jwt() ->> 'email', ''))
+CREATE POLICY "family_permissions_insert" ON family_permissions
+    FOR INSERT TO authenticated WITH CHECK (
+        (SELECT auth.uid()) = patient_id
+        AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
     );
 
-DROP POLICY IF EXISTS "family_permissions_accept_invite" ON family_permissions;
-CREATE POLICY "family_permissions_accept_invite" ON family_permissions
-    FOR UPDATE USING (
-        family_email IS NOT NULL
-        AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''))
+CREATE POLICY "family_permissions_update" ON family_permissions
+    FOR UPDATE TO authenticated
+    USING (
+        (
+            (SELECT auth.uid()) = patient_id
+            AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
+        )
+        OR (
+            family_email IS NOT NULL
+            AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE((SELECT auth.jwt()) ->> 'email', '')), ''))
+        )
     )
     WITH CHECK (
-        family_email IS NOT NULL
-        AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''))
-        AND family_user_id = auth.uid()
+        (
+            (SELECT auth.uid()) = patient_id
+            AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
+        )
+        OR (
+            family_email IS NOT NULL
+            AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE((SELECT auth.jwt()) ->> 'email', '')), ''))
+            AND family_user_id = (SELECT auth.uid())
+        )
+    );
+
+CREATE POLICY "family_permissions_delete" ON family_permissions
+    FOR DELETE TO authenticated USING (
+        (SELECT auth.uid()) = patient_id
+        AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
     );
 
 -- 各業務テーブル: 閲覧（本人+家族）、編集（本人+代理入力）
+-- オーナー本人の 8.4万行取得時は InitPlan により認可判定をクエリあたり1回に抑え、複合インデックスを直接利用させる
 DO $$
 DECLARE
     tbl text;
     tables text[] := ARRAY['categories', 'food_master', 'event_master', 'libre_readings', 'events', 'meal_details', 'user_settings'];
+    owner_pred text := '(user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> ''email'', ''''))))';
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP
         EXECUTE format('DROP POLICY IF EXISTS "%s_select" ON %I;', tbl, tbl);
-        EXECUTE format('CREATE POLICY "%s_select" ON %I FOR SELECT USING (can_view_patient_data(user_id));', tbl, tbl);
+        EXECUTE format('CREATE POLICY "%s_select" ON %I FOR SELECT TO authenticated USING (%s OR public.can_view_patient_data(user_id));', tbl, tbl, owner_pred);
 
         EXECUTE format('DROP POLICY IF EXISTS "%s_insert" ON %I;', tbl, tbl);
-        EXECUTE format('CREATE POLICY "%s_insert" ON %I FOR INSERT WITH CHECK (can_edit_patient_data(user_id));', tbl, tbl);
+        EXECUTE format('CREATE POLICY "%s_insert" ON %I FOR INSERT TO authenticated WITH CHECK (%s OR public.can_edit_patient_data(user_id));', tbl, tbl, owner_pred);
 
         EXECUTE format('DROP POLICY IF EXISTS "%s_update" ON %I;', tbl, tbl);
-        EXECUTE format('CREATE POLICY "%s_update" ON %I FOR UPDATE USING (can_edit_patient_data(user_id)) WITH CHECK (can_edit_patient_data(user_id));', tbl, tbl);
+        EXECUTE format('CREATE POLICY "%s_update" ON %I FOR UPDATE TO authenticated USING (%s OR public.can_edit_patient_data(user_id)) WITH CHECK (%s OR public.can_edit_patient_data(user_id));', tbl, tbl, owner_pred, owner_pred);
 
         EXECUTE format('DROP POLICY IF EXISTS "%s_delete" ON %I;', tbl, tbl);
-        EXECUTE format('CREATE POLICY "%s_delete" ON %I FOR DELETE USING (can_edit_patient_data(user_id));', tbl, tbl);
+        EXECUTE format('CREATE POLICY "%s_delete" ON %I FOR DELETE TO authenticated USING (%s OR public.can_edit_patient_data(user_id));', tbl, tbl, owner_pred);
     END LOOP;
 END $$;
 ```

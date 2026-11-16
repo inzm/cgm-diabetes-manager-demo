@@ -31,6 +31,7 @@ interface FoodImpactTabProps {
   precomputedFoodOptions?: string[];
   detailsByEventId?: Map<string, MealDetail[]>;
   readingsByDate?: Map<string, LibreReading[]>;
+  eventsByDate?: Map<string, HealthEvent[]>;
   foodImpactCache?: Map<string, FoodImpactSummary>;
   isDashboardMode?: boolean;
 }
@@ -75,6 +76,7 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
   precomputedFoodOptions,
   detailsByEventId,
   readingsByDate,
+  eventsByDate,
   foodImpactCache,
   isDashboardMode = false,
 }) => {
@@ -162,8 +164,8 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
       events,
       mealDetails,
       readings,
-      detailsByEventId || readingsByDate
-        ? { detailsByEventId, readingsByDate }
+      detailsByEventId || readingsByDate || eventsByDate
+        ? { detailsByEventId, readingsByDate, eventsByDate }
         : undefined
     );
     if (foodImpactCache) {
@@ -177,6 +179,7 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
     readings,
     detailsByEventId,
     readingsByDate,
+    eventsByDate,
     foodImpactCache,
   ]);
 
@@ -452,15 +455,27 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
                           {item.insulinUnits > 0 ? `${item.insulinUnits.toFixed(1)}U` : '-'}
                         </td>
 
-                        {/* 列4: 食前→ピーク */}
+                        {/* 列4: 食前→ピーク（後続記録干渉時は2段目にコンパクトな参考値バッジ） */}
                         <td className="py-2 px-0.5 sm:px-2 text-center font-mono text-[10.5px] sm:text-xs whitespace-nowrap align-middle">
-                          <span className="font-semibold text-slate-700">
-                            {item.preGlucose ?? '-'}
-                          </span>
-                          <span className="text-slate-400 mx-px sm:mx-0.5">→</span>
-                          <span className="font-bold text-amber-600">
-                            {item.peakGlucose ?? '-'}
-                          </span>
+                          <div>
+                            <span className="font-semibold text-slate-700">
+                              {item.preGlucose ?? '-'}
+                            </span>
+                            <span className="text-slate-400 mx-px sm:mx-0.5">→</span>
+                            <span className="font-bold text-amber-600">
+                              {item.peakGlucose ?? '-'}
+                            </span>
+                          </div>
+                          {item.isPostMealReference && (
+                            <div className="mt-0.5">
+                              <span
+                                title="食後3時間以内に次の食事または追加インスリンがあるため、直前までの参考値です（平均から除外）"
+                                className="inline-block px-1 py-0 rounded bg-amber-50 text-amber-700 border border-amber-200/80 font-sans text-[9.5px] font-bold leading-tight"
+                              >
+                                参考値
+                              </span>
+                            </div>
+                          )}
                         </td>
 
                         {/* 列5: Δ上昇幅 */}

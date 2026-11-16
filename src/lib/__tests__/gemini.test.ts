@@ -195,6 +195,75 @@ describe('gemini (方式1: BFFプロキシ連携 & 日本食品標準成分表�
       expect(resUnverifiedSig.status).toBe(401);
     });
 
+    it('GEMINI_API_KEY 未設定時であっても、不正・偽造 JWT や Cross-Origin リクエストは 503 ではなく最優先で 401 / 403 遮断され、認証通過後のみ 503 になること', async () => {
+      const forgedToken = makeTestJwt({
+        sub: '11111111-1111-4111-8111-111111111111',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ message: 'Invalid JWT signature' }), { status: 401 })
+      );
+
+      // 1. GEMINI_API_KEY 未設定 + 偽造 JWT -> 401 (503 ではない)
+      const resForgedNoKey = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+            Authorization: `Bearer ${forgedToken}`,
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: {
+          APP_MODE: 'personal',
+          SUPABASE_URL: 'https://project.supabase.co',
+          SUPABASE_ANON_KEY: 'anon-key',
+        },
+      });
+      expect(resForgedNoKey.status).toBe(401);
+
+      // 2. GEMINI_API_KEY 未設定 + Cross-Origin -> 403 (503 ではない)
+      const resCrossNoKey = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://evil.example.org',
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: { APP_MODE: 'personal' },
+      });
+      expect(resCrossNoKey.status).toBe(403);
+
+      // 3. 検証済み JWT で認証・入力検証を通過した後に GEMINI_API_KEY 未設定なら 503 を返すこと
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ id: '11111111-1111-4111-8111-111111111111' }), {
+          status: 200,
+        })
+      );
+      const resAuthedNoKey = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+            Authorization: `Bearer ${forgedToken}`,
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: {
+          APP_MODE: 'personal',
+          SUPABASE_URL: 'https://project.supabase.co',
+          SUPABASE_ANON_KEY: 'anon-key',
+        },
+      });
+      expect(resAuthedNoKey.status).toBe(503);
+    });
+
     it('同一ユーザーがレート制限上限 (BFF_RATE_LIMIT_MAX) を超えて呼び出すと HTTP 429 (Retry-After付き) になり、別ユーザーやウィンドウ経過後は通過すること', async () => {
       // 1. 純粋スライディングウィンドウ関数の境界検証
       const baseNow = 1_700_000_000_000;
