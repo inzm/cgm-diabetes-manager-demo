@@ -338,12 +338,11 @@ USING (can_edit_patient_data(user_id));
   5. `SUPABASE_URL` と `SUPABASE_ANON_KEY` が未設定の場合、JWT は構造と有効期限しか検証されず、署名が検証されない。本番デプロイでは両方を必須の設定とする（設定の確認: Issue #80）。
   6. 【改修予定】上記3・4は現行コードと異なる。現行は「有効な JWT または同一 Origin」のいずれかで通り、レート制限はない。`functions/api/gemini.ts` を改修する。
 
-### 4.6 ローカル端末（IndexedDB & メモリキャッシュ）の保護とログアウト時完全消去 (`src/lib/syncEngine.ts`)
-- 共有端末やスマホ・PCでの情報漏洩を防止するため、ユーザーが「ログアウト」を実行した際（または未招待アカウントが遮断された際）は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）により IndexedDB 内の全7テーブル（`user_settings`, `categories`, `food_master`, `event_master`, `events`, `meal_details`, `libre_readings`）および全4種のメモリキャッシュ（カレンダー月次集計・分析集計・期間局所スライス・直近メモリキャッシュ）を即座に完全消去してログイン画面（`AuthGateScreen`）へ戻す。
-- ログアウト時は、消去の前に最終同期を試みる。同期に成功した場合のみ、そのまま消去する。
-- 同期に失敗した場合（オフラインなど）は、未送信の変更があることを警告し、「消去してログアウト」か「キャンセル」を選ばせる。
-- 未招待アカウントの遮断時は、従来どおり同期せずに消去する。
-- 【改修予定】現行コード（`src/contexts/PatientContext.tsx` の `signOut`）は最終同期をせずに消去する。未送信の変更は失われる。上記の動作に改める。
+### 4.6 ローカル端末（IndexedDB & メモリキャッシュ）の保護とログアウト時完全消去 (`src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`, `src/components/settings/CloudSyncFamilySection.tsx`)
+- 共有端末やスマホ・PCでの情報漏洩を防止するため、ユーザーが「ログアウト」を実行した際（または未招待アカウントが遮断された際）は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）により IndexedDB 内の全7テーブル（`user_settings`, `categories`, `food_master`, `event_master`, `events`, `meal_details`, `libre_readings`）および全4種のメモリキャッシュ（カレンダー月次集計・分析集計・期間局所スライス・直近メモリキャッシュ）を完全消去してログイン画面（`AuthGateScreen`）へ戻す。
+- 通常のログアウト実行時（`PatientContext.tsx` の `signOut` → `executeSafeLogoutWithFinalSync`）は、編集権限のあるロール（`patient` / `editor`）である場合、端末データを消去する前にクラウドへの最終同期（`syncPatientDataWithCloud`）を試みる。最終同期に成功した場合（または送信対象を持たない `viewer` ロールの場合）のみ、そのままセッション破棄とローカル全消去を実行する。
+- オフラインや通信障害等で最終同期に失敗した場合は、消去を行わずに `{ completed: false, requiresForceConfirm: true }`（`SignOutOutcome`）を返し、設定画面（`CloudSyncFamilySection.tsx`）の共通確認ダイアログ（`ConfirmDialog`）で未送信の変更が失われる可能性があることを警告して「消去してログアウト」（`signOut({ force: true })`）か「キャンセル」（ログアウトを中止し端末内データを保持）を選ばせる。
+- 未招待アカウントの遮断時は、従来どおり同期せずに即座に消去する。
 
 ---
 

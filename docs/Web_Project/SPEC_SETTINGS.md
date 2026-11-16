@@ -126,7 +126,7 @@
 - **Supabase Auth ログイン & 自動同期・ログアウト時のローカルキャッシュ完全消去**:
   - 初回オーナーログイン時には `verifyUserAccessWithCloud` でオーナー権限を確認した上で、`migrateAnonymousLocalDataToUser`（`src/lib/syncEngine.ts`）によって自身の `auth.uid()` へローカルデータを自動引き継ぎし、そのままクラウド（Supabase PostgreSQL 全7テーブル。`categories.category_name` と `events.timing_category` はともに `VARCHAR(50)` で統一）と双方向同期を実行する。
   - ログイン中は現在のアカウントメールアドレス、権限バッジ（「患者本人」「家族（記録・編集可）」「家族（閲覧のみ）」）、最終同期時刻、および **「今すぐ同期」** ボタン（`syncNow`）を表示する。
-  - **ログアウト時のローカルキャッシュ完全消去**: ログアウト（`signOut`）を実行した際は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）によりブラウザ内の全ローカルテーブル（7テーブル）および全メモリキャッシュ（4種）を自動消去し、専用ログイン画面（Auth Gate）へ戻す。消去の前に最終同期を試み、失敗した場合は未送信の変更がある旨を警告して「消去してログアウト」か「キャンセル」を選ばせる（【改修予定】現行コードは最終同期をせずに消去する。詳細は ARCHITECTURE.md §4.6）。
+  - **ログアウト時の最終同期試行とローカルキャッシュ完全消去**: ログアウト（`signOut` / `executeSafeLogoutWithFinalSync`）を実行した際は、編集可能ロール（`patient` / `editor`）であれば消去の前に最終クラウド同期を試みる。同期に成功した場合は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）によりブラウザ内の全ローカルテーブル（7テーブル）および全メモリキャッシュ（4種）を自動消去し、専用ログイン画面（Auth Gate）へ戻す。オフライン等で最終同期に失敗した場合は消去を保留し、共通確認ダイアログ（`ConfirmDialog`）で未送信の変更がある旨を警告して「消去してログアウト」（`signOut({ force: true })`）か「キャンセル」（端末内データを残してログアウト中止）を選ばせる。
 - **家族共有・権限管理（`family_permissions` テーブル連携）と招待手順ガイド**:
   - 患者本人（`currentRole === 'patient'`）でログインしている場合、家族のメールアドレスと権限（`viewer`: 閲覧のみ / `editor`: 記録・編集も可能）を登録・一覧表示・削除（確認ダイアログ付き）でき、画面内に「新しいご家族を招待する手順（3ステップ）」ガイドを表示する（詳細マニュアルは [`USER_GUIDE.md`](USER_GUIDE.md) に記載）。
   - 招待された家族がログインした際は、`resolveUserAccessFromPermissions`（`src/lib/syncEngine.ts`）により `family_user_id = auth.uid()` または `LOWER(family_email) = LOWER(user.email)` で招待レコードを照会し、初回ログイン時は `family_user_id` と `accepted_at` を自動更新（承認済みに遷移）する。

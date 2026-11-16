@@ -171,11 +171,15 @@ sequenceDiagram
         Context-->>User: 5. カレンダー画面・各機能をアンロックして描画
     end
 
-    User->>Context: 6. ログアウト実行 (signOut)
-    Context->>SupaDB: 最終同期を試行 (失敗時は警告し、消去かキャンセルを選択。改修予定)
-    Context->>SupaAuth: セッション破棄
-    Context->>LocalDB: 7. purgeAllLocalPatientCaches() (IndexedDB全7テーブル & 全4種メモリキャッシュ完全消去)
-    Context-->>Gate: 8. 専用ログイン画面 (Auth Gate) へ戻る
+    User->>Context: 6. ログアウト実行 (signOut -> executeSafeLogoutWithFinalSync)
+    Context->>SupaDB: 最終同期を試行 (編集可能ロールかつ force 未指定時)
+    alt 最終同期に成功 または 警告確認で「消去してログアウト」(force: true) を選択
+        Context->>SupaAuth: セッション破棄
+        Context->>LocalDB: 7. purgeAllLocalPatientCaches() (IndexedDB全7テーブル & 全4種メモリキャッシュ完全消去)
+        Context-->>Gate: 8. 専用ログイン画面 (Auth Gate) へ戻る
+    else 最終同期に失敗 かつ ユーザーが「キャンセル」を選択
+        Context-->>User: ログアウトを中止し、端末内の未送信データをそのまま保持
+    end
 ```
 
 ---
