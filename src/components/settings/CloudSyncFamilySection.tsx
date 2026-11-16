@@ -66,6 +66,8 @@ export const CloudSyncFamilySection: React.FC<CloudSyncFamilySectionProps> = ({
   const [familyErrorMsg, setFamilyErrorMsg] = useState<string | null>(null);
   const [pendingRemoveFamilyId, setPendingRemoveFamilyId] = useState<string | null>(null);
   const [pendingRemoveFamilyEmail, setPendingRemoveFamilyEmail] = useState<string>('');
+  const [pendingForceLogoutReason, setPendingForceLogoutReason] = useState<string | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState<boolean>(false);
 
   const authPasswordStrength = validateStrongPassword(authPasswordInput);
 
@@ -135,6 +137,32 @@ export const CloudSyncFamilySection: React.FC<CloudSyncFamilySectionProps> = ({
       setTimeout(() => setAuthSuccessMsg(null), 5000);
     } else if (res.status === 'error' && res.errorMessage) {
       setAuthErrorMsg(res.errorMessage);
+    }
+  };
+
+  const handleLogoutClick = async () => {
+    setAuthErrorMsg(null);
+    setAuthSuccessMsg(null);
+    setIsSigningOut(true);
+    try {
+      const outcome = await signOut();
+      if (outcome.requiresForceConfirm) {
+        setPendingForceLogoutReason(
+          outcome.errorMessage || 'クラウドへの最終同期が完了しませんでした。'
+        );
+      }
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
+
+  const handleConfirmForceLogout = async () => {
+    setPendingForceLogoutReason(null);
+    setIsSigningOut(true);
+    try {
+      await signOut({ force: true });
+    } finally {
+      setIsSigningOut(false);
     }
   };
 
@@ -390,12 +418,12 @@ export const CloudSyncFamilySection: React.FC<CloudSyncFamilySectionProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => void signOut()}
-                  disabled={isSyncing}
-                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold transition-all cursor-pointer"
+                  onClick={() => void handleLogoutClick()}
+                  disabled={isSyncing || isSigningOut}
+                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
                 >
                   <LogOut className="w-3.5 h-3.5 text-slate-500" />
-                  <span>ログアウト</span>
+                  <span>{isSigningOut ? '確認中...' : 'ログアウト'}</span>
                 </button>
               </div>
             </div>
@@ -616,6 +644,18 @@ export const CloudSyncFamilySection: React.FC<CloudSyncFamilySectionProps> = ({
         variant="danger"
         onConfirm={handleConfirmRemoveFamily}
         onCancel={() => setPendingRemoveFamilyId(null)}
+      />
+
+      {/* 最終同期失敗時の強制消去ログアウト確認ダイアログ */}
+      <ConfirmDialog
+        isOpen={pendingForceLogoutReason !== null}
+        title="未送信データの確認"
+        message={`${pendingForceLogoutReason || ''} まだクラウドに送れていない変更がある場合、このまま消去してログアウトするとその変更は失われます。端末内のデータを消去してログアウトしますか？`}
+        confirmLabel="消去してログアウト"
+        cancelLabel="キャンセル"
+        variant="danger"
+        onConfirm={() => void handleConfirmForceLogout()}
+        onCancel={() => setPendingForceLogoutReason(null)}
       />
     </>
   );

@@ -25,9 +25,11 @@ import {
 export { type PasswordStrengthResult, validateStrongPassword };
 import {
   type AccessiblePatientTarget,
+  type SignOutOutcome,
   type SyncResult,
   DEFAULT_LOCAL_PATIENT_ID,
   UNAUTHORIZED_ACCESS_ERROR_MESSAGE,
+  executeSafeLogoutWithFinalSync,
   migrateAnonymousLocalDataToUser,
   purgeAllLocalPatientCaches,
   resolveUserAccessFromPermissions,
@@ -35,6 +37,7 @@ import {
   syncPatientDataWithCloud,
   verifyUserAccessWithCloud,
 } from '@/lib/syncEngine';
+export { type SignOutOutcome };
 
 export interface AuthUserInfo {
   id: string;
@@ -69,7 +72,7 @@ export interface PatientContextType {
     email: string,
     password: string
   ) => Promise<{ error?: string; needsEmailConfirmation?: boolean }>;
-  signOut: () => Promise<void>;
+  signOut: (options?: { force?: boolean }) => Promise<SignOutOutcome>;
   switchTargetPatient: (targetPatientId: string) => Promise<void>;
   syncNow: (options?: {
     replaceRemoteAnomalies?: boolean;
@@ -620,27 +623,53 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
     [resolveSessionAndSync]
   );
 
-  const signOut = useCallback(async (): Promise<void> => {
-    const prevPatientId = currentPatientIdRef.current;
-    rejectionErrorRef.current = null;
-    const client = getSupabaseClient();
-    if (client) {
-      await client.auth.signOut().catch(() => undefined);
-    }
-    await purgeAllLocalPatientCaches(prevPatientId);
-    preferredPatientIdRef.current = null;
-    setAuthUser(null);
-    setIsAccessAuthorized(false);
-    setIsSystemOwner(false);
-    setAccessibleTargets([]);
-    setMyInvitedFollowers([]);
-    setCurrentPatientId(DEFAULT_PATIENT_ID);
-    setCurrentRole('patient');
-    setHypoThreshold(DEFAULT_HYPO_THRESHOLD);
-    setHyperThreshold(DEFAULT_HYPER_THRESHOLD);
-    setLastSyncedAt(null);
-    setSyncError(null);
-  }, []);
+  const signOut = useCallback(
+    async (options?: { force?: boolean }): Promise<SignOutOutcome> => {
+      const prevPatientId = currentPatientIdRef.current;
+      rejectionErrorRef.current = null;
+      const client = getSupabaseClient();
+      const canEditTarget = currentRole !== 'viewer';
+
+      setIsSyncing(true);
+      try {
+        const outcome = await executeSafeLogoutWithFinalSync({
+          patientId: prevPatientId,
+          canEdit: canEditTarget,
+          isAuthenticated: Boolean(authUser),
+          force: options?.force,
+          authSignOutFn: async () => {
+            if (client) {
+              await client.auth.signOut();
+            }
+          },
+        });
+
+        if (!outcome.completed) {
+          if (outcome.errorMessage) {
+            setSyncError(outcome.errorMessage);
+          }
+          return outcome;
+        }
+
+        preferredPatientIdRef.current = null;
+        setAuthUser(null);
+        setIsAccessAuthorized(false);
+        setIsSystemOwner(false);
+        setAccessibleTargets([]);
+        setMyInvitedFollowers([]);
+        setCurrentPatientId(DEFAULT_PATIENT_ID);
+        setCurrentRole('patient');
+        setHypoThreshold(DEFAULT_HYPO_THRESHOLD);
+        setHyperThreshold(DEFAULT_HYPER_THRESHOLD);
+        setLastSyncedAt(null);
+        setSyncError(null);
+        return outcome;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [authUser, currentRole]
+  );
 
   const switchTargetPatient = useCallback(
     async (targetPatientId: string): Promise<void> => {

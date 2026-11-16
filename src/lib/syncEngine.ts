@@ -71,6 +71,23 @@ export interface SyncResult {
   errorMessage?: string;
 }
 
+export interface SignOutOutcome {
+  completed: boolean;
+  requiresForceConfirm: boolean;
+  errorMessage?: string;
+}
+
+export interface SafeLogoutParams {
+  patientId: string;
+  canEdit: boolean;
+  isAuthenticated: boolean;
+  force?: boolean;
+  isOnline?: boolean;
+  syncFn?: (patientId: string) => Promise<SyncResult>;
+  authSignOutFn: () => Promise<void>;
+  purgeFn?: (patientId: string) => Promise<void>;
+}
+
 type UiCacheInvalidator = (patientId?: string) => void;
 const uiCacheInvalidators = new Set<UiCacheInvalidator>();
 
@@ -488,6 +505,74 @@ export async function purgeAllLocalPatientCaches(
 
   // 引数なしで呼び出し、全患者ID分のオンメモリキャッシュ（FoodMasterView, CalendarView, Analysis, RecentSlice）を一括消去
   invalidateAllCachesAfterSync();
+}
+
+/**
+ * 通常ログアウト時の「最終クラウド同期試行 → 成功時のみ自動消去 / 失敗時は警告保留」フロー。
+ * - 編集可能ロール (patient / editor) かつ force 未指定時は、消去前に最終同期を試みる。
+ * - オフラインまたは同期失敗時は消去・サインアウトを行わず requiresForceConfirm: true を返す。
+ * - 同期成功時、閲覧専用ロール時、またはユーザーが「消去してログアウト」(force: true) を承認した時は
+ *   セッション破棄とローカルキャッシュ全消去を実行する。
+ */
+export async function executeSafeLogoutWithFinalSync(
+  params: SafeLogoutParams
+): Promise<SignOutOutcome> {
+  const {
+    patientId,
+    canEdit,
+    isAuthenticated,
+    force = false,
+    isOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
+    syncFn = (pid) =>
+      syncPatientDataWithCloud(pid, { canEdit: true, includeReadings: true }),
+    authSignOutFn,
+    purgeFn = purgeAllLocalPatientCaches,
+  } = params;
+
+  if (
+    !force &&
+    isAuthenticated &&
+    canEdit &&
+    Boolean(patientId) &&
+    patientId !== DEFAULT_LOCAL_PATIENT_ID
+  ) {
+    if (!isOnline) {
+      return {
+        completed: false,
+        requiresForceConfirm: true,
+        errorMessage: 'オフラインのため、クラウドへの最終同期を実行できませんでした。',
+      };
+    }
+
+    try {
+      const syncRes = await syncFn(patientId);
+      if (syncRes.status === 'error') {
+        return {
+          completed: false,
+          requiresForceConfirm: true,
+          errorMessage:
+            syncRes.errorMessage || 'クラウドへの最終同期に失敗しました。',
+        };
+      }
+    } catch (err) {
+      return {
+        completed: false,
+        requiresForceConfirm: true,
+        errorMessage:
+          err instanceof Error
+            ? err.message
+            : 'クラウドへの最終同期に失敗しました。',
+      };
+    }
+  }
+
+  await authSignOutFn().catch(() => undefined);
+  await purgeFn(patientId);
+
+  return {
+    completed: true,
+    requiresForceConfirm: false,
+  };
 }
 
 /**

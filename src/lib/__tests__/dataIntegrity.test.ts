@@ -1625,6 +1625,132 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       expect(isPatientManuallyCleared(targetUserId)).toBe(false);
     });
 
+    it('executeSafeLogoutWithFinalSync が最終同期成功時のみ自動消去し、失敗時は警告要求を返してキャンセル時に端末データを保持し、force: true で消去すること', async () => {
+      const { executeSafeLogoutWithFinalSync } = await import('../syncEngine');
+      const { db, clearInMemoryDemoDatabase } = await import('../db');
+      const { deterministicUuid } = await import('../uuidUtils');
+
+      clearInMemoryDemoDatabase();
+      const logoutUserId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      const mealEventId = deterministicUuid(`${logoutUserId}_logout_meal_1`);
+
+      await db.events.put({
+        id: mealEventId,
+        user_id: logoutUserId,
+        event_datetime: '2026-11-16T12:00:00.000Z',
+        event_type: '食事',
+        timing_category: '昼食',
+        total_carbs: 62.0,
+        insulin_units: 6,
+        is_deleted: false,
+        created_at: '2026-11-16T12:00:00.000Z',
+        updated_at: '2026-11-16T12:00:00.000Z',
+      });
+
+      let authSignOutCount = 0;
+
+      // 1. オフライン時 (isOnline: false): 消去もサインアウトも行わず確認要求を返し、端末データが保持されること
+      const offlineOutcome = await executeSafeLogoutWithFinalSync({
+        patientId: logoutUserId,
+        canEdit: true,
+        isAuthenticated: true,
+        isOnline: false,
+        authSignOutFn: async () => {
+          authSignOutCount++;
+        },
+      });
+      expect(offlineOutcome).toMatchObject({
+        completed: false,
+        requiresForceConfirm: true,
+      });
+      expect(authSignOutCount).toBe(0);
+      expect(await db.events.count()).toBe(1);
+
+      // 2. オンラインだが最終同期失敗時 (status: 'error'): キャンセルを選べば端末データがそのまま残ること
+      const syncFailOutcome = await executeSafeLogoutWithFinalSync({
+        patientId: logoutUserId,
+        canEdit: true,
+        isAuthenticated: true,
+        isOnline: true,
+        syncFn: async () => ({
+          status: 'error',
+          pushedCount: 0,
+          pulledCount: 0,
+          errorMessage: '一時的なネットワークエラー',
+        }),
+        authSignOutFn: async () => {
+          authSignOutCount++;
+        },
+      });
+      expect(syncFailOutcome).toMatchObject({
+        completed: false,
+        requiresForceConfirm: true,
+        errorMessage: '一時的なネットワークエラー',
+      });
+      expect(authSignOutCount).toBe(0);
+      expect(await db.events.count()).toBe(1);
+
+      // 3. 警告ダイアログで「消去してログアウト」(force: true) を選択した場合: セッション破棄と端末データ全消去が実行されること
+      const forcedOutcome = await executeSafeLogoutWithFinalSync({
+        patientId: logoutUserId,
+        canEdit: true,
+        isAuthenticated: true,
+        force: true,
+        isOnline: false,
+        authSignOutFn: async () => {
+          authSignOutCount++;
+        },
+      });
+      expect(forcedOutcome).toEqual({
+        completed: true,
+        requiresForceConfirm: false,
+      });
+      expect(authSignOutCount).toBe(1);
+      expect(await db.events.count()).toBe(0);
+
+      // 4. 最終同期に成功した場合: 確認ダイアログなしでそのままセッション破棄・端末データ全消去が完結すること
+      await db.events.put({
+        id: mealEventId,
+        user_id: logoutUserId,
+        event_datetime: '2026-11-16T18:00:00.000Z',
+        event_type: '食事',
+        timing_category: '夕食',
+        total_carbs: 70.0,
+        insulin_units: 7,
+        is_deleted: false,
+        created_at: '2026-11-16T18:00:00.000Z',
+        updated_at: '2026-11-16T18:00:00.000Z',
+      });
+      let finalSyncCalled = false;
+      const cleanSuccessOutcome = await executeSafeLogoutWithFinalSync({
+        patientId: logoutUserId,
+        canEdit: true,
+        isAuthenticated: true,
+        isOnline: true,
+        syncFn: async () => {
+          finalSyncCalled = true;
+          return {
+            status: 'success',
+            pushedCount: 1,
+            pulledCount: 0,
+            syncedAt: '2026-11-16T18:05:00.000Z',
+          };
+        },
+        authSignOutFn: async () => {
+          authSignOutCount++;
+        },
+      });
+      expect(finalSyncCalled).toBe(true);
+      expect(cleanSuccessOutcome).toEqual({
+        completed: true,
+        requiresForceConfirm: false,
+      });
+      expect(authSignOutCount).toBe(2);
+      expect(await db.events.count()).toBe(0);
+
+      clearInMemoryDemoDatabase();
+    });
+
     it('validateStrongPassword が 8文字未満・大文字欠落・小文字欠落・数字欠落・記号欠落をすべて拒否し、4種すべて含む8文字以上のみ許可すること', async () => {
       const { validateStrongPassword } = await import('../supabase');
 
