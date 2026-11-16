@@ -13,17 +13,18 @@
  * 1. [Index & Stale Check] docs/Web_Project/README.md に全 SPEC_*.md & USER_GUIDE.md が掲載され、「策定予定」等の放置記述がないか
  * 2. [Path & Link Existence Check] 仕様書・スキル・AGENTS.md・ルートREADME.md 内に記載されたファイルパス（日本語等の非ASCII文字を含む）および Markdown 相対リンクが実在するか
  * 3. [Full Module Coverage Check] src/components, src/contexts, src/lib, src/types, src/workers, functions 配下の全モジュールが仕様書マッピングと smoke-test.mjs の両方に100%登録されているか
- * 4. [Git Diff Sync Gate] ソースコード・マイグレーション・BFF変更時に、対応する仕様書・図面（重要モジュールは requiredSpecs 全件）が同一変更セット内で更新されているか（CI の DIFF_RANGE にも対応）
+ * 4. [Git Diff Sync Gate (2-Stage Spec-First Aware)] ソースコード・マイグレーション・BFF変更時に、対応する仕様書・図面（重要モジュールは requiredSpecs 全件）が直前の連続する純粋 docs(spec): コミットまたは同一変更セット内で更新されているか（CI の DIFF_RANGE にも対応）
  * 5. [Security, Anti-Stub & User-Centric UX Gate] src/ および functions/ 内に localStorage への APIキー保存、虚偽のセキュリティ表記、架空人物ハードコード、window.confirm()、およびUIコンポーネントにおける開発者用語が含まれていないか
  * 6. [4-Layer Schema & Diagram Parity Gate] supabase/migrations/0001_initial_schema.sql・ARCHITECTURE.md Section 5・src/types/database.ts・src/lib/db.ts・diagrams/SEQUENCE_AND_ERD.md の全テーブル・全カラム・文字長上限および第一級図面が100%一致しているか
  * 7. [Suite/Endpoint Count & Hook Integrity Gate] E2E実スイート数・スモークエンドポイント数・Vitestテスト数表記および .agents/hooks.json のスクリプト実在を検証
- * 8. [Documented Identifier Existence Gate] 仕様書内のバッククォート識別子がコードに実在するか（既定で厳格 ERROR。WARN_IDENT_CHECK=1 指定時のみ警告）
- * 9. [Doc Corruption & Legacy Asset Isolation Gate] 正規表現置換ミス（単独行の $1 等）・孤立した Markdown テーブル行の混入防止、および旧VBA関連ディレクトリ（legacy_vba/, docs/VBA_Project/, docs/screenshot/, docs/動画作成用資料/）の Git 追跡ゼロ保証
+ * 8. [Documented Identifier Existence Gate] 仕様書内のバッククォート識別子がコードに実在するか（純粋 docs(spec) 先行編集段階の新規追加識別子のみ段階的許容し、実装後・パイプライン・CIでは既定で厳格 ERROR）
+ * 9. [Doc Corruption, Open-Item Issue Link & Legacy Asset Gate] 正規表現置換ミス（単独行の $1 等）・文字化け（U+FFFD）・孤立テーブル行・「【未決事項】/【要確認】」の Issue番号欠落防止、および旧VBA関連ディレクトリの Git 追跡ゼロ保証
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const ROOT_DIR = process.cwd();
 const DOCS_DIR = path.join(ROOT_DIR, 'docs', 'Web_Project');
@@ -96,6 +97,7 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/SPEC_SETTINGS.md',
       'docs/Web_Project/USER_GUIDE.md',
     ],
+    requiredSpecs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_SETTINGS.md'],
     description: '本番モード専用ログイン画面 (Auth Gate) & 初回セットアップ案内',
   },
   {
@@ -105,6 +107,7 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/SPEC_SETTINGS.md',
       'docs/Web_Project/USER_GUIDE.md',
     ],
+    requiredSpecs: ['docs/Web_Project/SPEC_SETTINGS.md'],
     description: 'パスワード強度5条件リアルタイムチェックリスト共通コンポーネント',
   },
   {
@@ -178,6 +181,7 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/ARCHITECTURE.md',
       'docs/Web_Project/diagrams/system_architecture.drawio',
     ],
+    requiredSpecs: ['docs/Web_Project/SPEC_FOOD_MASTER.md'],
     description: '糖質量自動推定エンジン (BFFプロキシ + 案2認証ヘッダ + 標準食品辞書)',
   },
   {
@@ -224,6 +228,7 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/SPEC_CALENDAR.md',
       'docs/Web_Project/USER_GUIDE.md',
     ],
+    requiredSpecs: ['docs/Web_Project/SPEC_SETTINGS.md'],
     description: '患者コンテキスト・ロール・臨床目標閾値・認証ゲート状態',
   },
   {
@@ -277,6 +282,7 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/SPEC_SETTINGS.md',
       'docs/Web_Project/USER_GUIDE.md',
     ],
+    requiredSpecs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_SETTINGS.md'],
     description: '患者バックアップJSON検証・UUID正規化マイグレーション復元・マルチテナント安全な初期化サービス',
   },
   {
@@ -354,7 +360,7 @@ export const SOURCE_TO_SPEC_RULES = [
       'docs/Web_Project/SPEC_SETTINGS.md',
       'docs/Web_Project/diagrams/system_architecture.drawio',
     ],
-    requiredSpecs: ['docs/Web_Project/ARCHITECTURE.md'],
+    requiredSpecs: ['docs/Web_Project/ARCHITECTURE.md', 'docs/Web_Project/SPEC_SETTINGS.md'],
     description: 'Cloudflare Pages Functions BFF (/api/gemini)',
   },
 ];
@@ -395,11 +401,182 @@ function toPosixRelative(fullPath) {
   return path.relative(ROOT_DIR, fullPath).split(path.sep).join('/');
 }
 
-function getChangedFiles() {
+/**
+ * コミットが「コード（src/・functions/・supabase/）を一切含まない純粋な先行仕様コミット (docs(spec): ...)」
+ * であるかを判定する純粋関数（Git 履歴上での2段階 Spec-First 証明用）
+ */
+export function isPureSpecFirstCommit(subject, commitFiles) {
+  if (typeof subject !== 'string' || !/^docs\(spec\):\s*\S/.test(subject.trim())) {
+    return false;
+  }
+  if (!Array.isArray(commitFiles) || commitFiles.length === 0) {
+    return false;
+  }
+  const touchesImplementationCode = commitFiles.some((f) =>
+    /^(?:src|functions|supabase)\//.test(String(f).trim())
+  );
+  return !touchesImplementationCode;
+}
+
+/**
+ * 指定された基準コミット（startRef）から親方向へ連続する純粋 docs(spec): コミット群を辿り、
+ * 先行コミットで更新済みの仕様書ファイル一覧を返す（途中に実装コミットやマージコミットがあれば即打ち切り）
+ */
+function getPrecedingSpecFirstContext(startRef = 'HEAD', maxDepth = 5) {
+  const commits = [];
+  const specFilesSet = new Set();
+  const safeStart = (startRef || 'HEAD').trim();
+  if (!/^[A-Za-z0-9_./~^-]+$/.test(safeStart)) {
+    return { commits, specFiles: [] };
+  }
+
+  for (let offset = 0; offset < maxDepth; offset++) {
+    const rev = offset === 0 ? safeStart : `${safeStart}~${offset}`;
+    try {
+      const meta = execSync(`git log -1 --format="%h|%P|%s" ${rev}`, {
+        cwd: ROOT_DIR,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      if (!meta) break;
+
+      const [shortHash, parentsRaw, ...subjParts] = meta.split('|');
+      const parents = parentsRaw.trim().split(/\s+/).filter(Boolean);
+      if (parents.length > 1) break; // マージコミット到達時は打ち切り
+
+      const subject = subjParts.join('|');
+      const filesOut = execSync(`git diff-tree --no-commit-id --name-only -r ${rev}`, {
+        cwd: ROOT_DIR,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const files = filesOut
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      if (!isPureSpecFirstCommit(subject, files)) {
+        break;
+      }
+
+      commits.push(shortHash);
+      for (const f of files) {
+        specFilesSet.add(f);
+      }
+    } catch {
+      break;
+    }
+  }
+
+  return { commits, specFiles: Array.from(specFilesSet) };
+}
+
+/**
+ * Unified Diff (+行) から今回新たに追加されたバッククォート識別子のコア名集合を抽出する純粋関数
+ */
+export function extractAddedBacktickIdentifiersFromDiff(unifiedDiffText) {
+  const added = new Set();
+  if (typeof unifiedDiffText !== 'string' || !unifiedDiffText) return added;
+  for (const rawLine of unifiedDiffText.split(/\r?\n/)) {
+    if (!rawLine.startsWith('+') || rawLine.startsWith('+++ ')) continue;
+    const line = rawLine.slice(1);
+    for (const m of line.matchAll(/`([A-Za-z_][A-Za-z0-9_.]*)(\(\))?`/g)) {
+      if (/\.(?:tsx?|mjs|js|sql|json|md|xlsm|xlsx|txt|png|jpg|svg|yml|yaml|drawio|css|html)$/i.test(m[1])) {
+        continue;
+      }
+      const core = m[1].split('.').pop();
+      if (core && core.length >= 5 && (/[a-z][A-Z]|_/.test(core) || m[2])) {
+        added.add(core);
+      }
+    }
+  }
+  return added;
+}
+
+/**
+ * Markdown ドキュメントの破損（正規表現 $1 残存・文字化け U+FFFD・孤立テーブル行・未決事項のIssue番号欠落）を検査する純粋関数
+ */
+export function inspectMarkdownIntegrity(relDoc, content) {
+  const docErrors = [];
+  const normalized = String(content ?? '').replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  let inFence = false;
+  const nonFenceTableFlags = new Array(lines.length).fill(false);
+  const isWebSpecDoc = relDoc.startsWith('docs/Web_Project/');
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    if (rawLine.includes('\uFFFD')) {
+      docErrors.push(
+        `[Mojibake / Encoding Corruption Detected] ${relDoc}:${i + 1} contains Unicode replacement character (U+FFFD).`
+      );
+    }
+
+    if (/^(`{3,}|~{3,})/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+
+    if (/^\$[1-9]\d*$/.test(trimmed)) {
+      docErrors.push(
+        `[Doc Corruption Detected] ${relDoc}:${i + 1} contains literal regex placeholder "${trimmed}".`
+      );
+    }
+
+    const lineWithoutInlineCode = trimmed.replace(/`[^`]*`/g, '');
+    if (isWebSpecDoc && /(?:【未決事項】|【要確認】)/.test(lineWithoutInlineCode)) {
+      if (!/(?:Issue\s*)?#\d+/i.test(lineWithoutInlineCode)) {
+        docErrors.push(
+          `[Missing Issue Reference] ${relDoc}:${i + 1} contains 【未決事項】 or 【要確認】 without a linked GitHub Issue number (e.g., Issue #82).`
+        );
+      }
+    }
+
+    if (/^\|.+\|$/.test(trimmed)) {
+      nonFenceTableFlags[i] = true;
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!nonFenceTableFlags[i]) continue;
+    const prevIsTable = i > 0 && nonFenceTableFlags[i - 1];
+    const nextIsTable = i + 1 < lines.length && nonFenceTableFlags[i + 1];
+    if (!prevIsTable && !nextIsTable) {
+      docErrors.push(
+        `[Orphaned Markdown Table Row] ${relDoc}:${i + 1} has an isolated table row detached from any table header/separator: "${lines[i].trim().slice(0, 80)}".`
+      );
+    }
+  }
+
+  return docErrors;
+}
+
+function getWorkingTreeOrStagedFiles() {
   try {
     if (isStagedMode) {
       const out = execSync('git diff --cached --name-only', { encoding: 'utf8' });
       return out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    }
+    const statusOut = execSync('git status --porcelain', { encoding: 'utf8' });
+    return statusOut
+      .split(/\r?\n/)
+      .map((line) => {
+        const entry = line.slice(3).trim().replace(/^"(.*)"$/, '$1');
+        return entry.includes(' -> ') ? entry.split(' -> ').pop().trim() : entry;
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function getChangedFiles() {
+  try {
+    if (isStagedMode) {
+      return getWorkingTreeOrStagedFiles();
     }
 
     const explicitRange = getExplicitDiffRange();
@@ -413,14 +590,7 @@ function getChangedFiles() {
     }
 
     // Working tree (staged + unstaged) + commits ahead of main
-    const statusOut = execSync('git status --porcelain', { encoding: 'utf8' });
-    const workingFiles = statusOut
-      .split(/\r?\n/)
-      .map((line) => {
-        const entry = line.slice(3).trim().replace(/^"(.*)"$/, '$1');
-        return entry.includes(' -> ') ? entry.split(' -> ').pop().trim() : entry;
-      })
-      .filter(Boolean);
+    const workingFiles = getWorkingTreeOrStagedFiles();
 
     let branchFiles = [];
     try {
@@ -727,9 +897,21 @@ function runVerification() {
   );
 
   // -------------------------------------------------------------------------
-  // 4. Git Diff Sync Gate (Code change requires corresponding Spec update)
+  // 4. Git Diff Sync Gate (2-Stage Spec-First Commit & Atomic Sync Aware)
   // -------------------------------------------------------------------------
   const changedFiles = getChangedFiles();
+  const explicitRange = getExplicitDiffRange();
+  let specFirstStartRef = 'HEAD';
+  if (!isStagedMode && explicitRange) {
+    const rangeMatch = explicitRange.match(/^([A-Za-z0-9_./~^-]+?)\.{2,3}/);
+    if (rangeMatch) {
+      specFirstStartRef = rangeMatch[1];
+    }
+  }
+  const specFirstCtx = getPrecedingSpecFirstContext(specFirstStartRef);
+  const effectiveSpecSet = new Set([...changedFiles, ...specFirstCtx.specFiles]);
+  let usedPrecedingSpecFirst = false;
+
   if (changedFiles.length > 0 && !skipDiffGate) {
     for (const changedFile of changedFiles) {
       const matchedRules = SOURCE_TO_SPEC_RULES.filter((rule) =>
@@ -738,30 +920,45 @@ function runVerification() {
       for (const rule of matchedRules) {
         if (Array.isArray(rule.requiredSpecs) && rule.requiredSpecs.length > 0) {
           const missingRequired = rule.requiredSpecs.filter(
-            (reqSpec) => !changedFiles.includes(reqSpec)
+            (reqSpec) => !effectiveSpecSet.has(reqSpec)
           );
           if (missingRequired.length > 0) {
             errors.push(
               `[Required Spec Sync Missing] Core file "${changedFile}" (${rule.description}) was modified, ` +
-                `but required SSOT spec(s) [${missingRequired.join(', ')}] were not updated in this change set.`
+                `but required SSOT spec(s) [${missingRequired.join(', ')}] were updated neither in a preceding "docs(spec): ..." commit nor in this change set.`
             );
+          } else if (
+            rule.requiredSpecs.some(
+              (reqSpec) => !changedFiles.includes(reqSpec) && specFirstCtx.specFiles.includes(reqSpec)
+            )
+          ) {
+            usedPrecedingSpecFirst = true;
           }
         }
         const isSpecUpdated = rule.specs.some((specPath) =>
-          changedFiles.includes(specPath)
+          effectiveSpecSet.has(specPath)
         );
         if (!isSpecUpdated) {
           errors.push(
             `[Spec Sync Required] Source file "${changedFile}" (${rule.description}) was modified, ` +
-              `but none of its corresponding specifications (${rule.specs.join(', ')}) were updated in this change set.\n` +
-              `   👉 Please update the relevant SPEC_*.md to reflect the latest design/behavior (or set SKIP_DOC_SYNC=1 if this is a pure internal refactor with zero spec changes).`
+              `but none of its corresponding specifications (${rule.specs.join(', ')}) were updated in a preceding "docs(spec): ..." commit or in this change set.\n` +
+              `   👉 Record a Spec-First commit ('git commit -m "docs(spec): ..."') before implementing, or update the relevant SPEC_*.md in this change set (set SKIP_DOC_SYNC=1 only for pure internal refactors with zero spec changes).`
           );
+        } else if (
+          !rule.specs.some((specPath) => changedFiles.includes(specPath)) &&
+          rule.specs.some((specPath) => specFirstCtx.specFiles.includes(specPath))
+        ) {
+          usedPrecedingSpecFirst = true;
         }
       }
     }
   }
   console.log(
-    `✅ [PASS] Check 4: Git diff sync gate evaluated (${changedFiles.length} changed files inspected).`
+    `✅ [PASS] Check 4: Git diff sync gate evaluated (${changedFiles.length} changed files inspected${
+      usedPrecedingSpecFirst
+        ? `; Spec-First verified via preceding docs(spec) commit [${specFirstCtx.commits.join(', ')}]`
+        : ''
+    }).`
   );
 
   // -------------------------------------------------------------------------
@@ -1154,7 +1351,35 @@ function runVerification() {
       path.join(ROOT_DIR, 'README.md'),
     ].filter((f) => fs.existsSync(f));
 
+    const forceStrictIdents =
+      process.env.CI === 'true' ||
+      process.env.STRICT_DOC_IDENTIFIERS === '1' ||
+      process.argv.includes('--strict-identifiers');
+    const activeFilesForIdentCheck = getWorkingTreeOrStagedFiles();
+    const isPureSpecEditPhase =
+      !forceStrictIdents &&
+      activeFilesForIdentCheck.length > 0 &&
+      activeFilesForIdentCheck.every((f) =>
+        /^(?:docs\/|\.agents\/|README\.md$|AGENTS\.md$)/.test(f)
+      );
+
+    let specFirstAddedIdents = new Set();
+    if (isPureSpecEditPhase) {
+      try {
+        const diffCmd = isStagedMode ? 'git diff --cached -U0' : 'git diff HEAD -U0';
+        const diffText = execSync(diffCmd, {
+          cwd: ROOT_DIR,
+          encoding: 'utf8',
+          maxBuffer: 20 * 1024 * 1024,
+        });
+        specFirstAddedIdents = extractAddedBacktickIdentifiersFromDiff(diffText);
+      } catch {
+        specFirstAddedIdents = new Set();
+      }
+    }
+
     const missingIdents = new Map();
+    const pendingSpecFirstIdents = new Map();
     let identChecked = 0;
     for (const f of identDocs) {
       const text = fs.readFileSync(f, 'utf8');
@@ -1169,8 +1394,20 @@ function runVerification() {
         identChecked++;
         if (!codeCorpus.includes(core)) {
           const key = `${path.relative(ROOT_DIR, f).replace(/\\/g, '/')} :: ${m[1]}`;
-          missingIdents.set(key, true);
+          if (isPureSpecEditPhase && specFirstAddedIdents.has(core)) {
+            pendingSpecFirstIdents.set(key, true);
+          } else {
+            missingIdents.set(key, true);
+          }
         }
+      }
+    }
+    if (pendingSpecFirstIdents.size > 0) {
+      console.log(
+        `ℹ️ [Spec-First Stage] Check 8: Allowing ${pendingSpecFirstIdents.size} newly added planned identifier(s) during pure spec update (will be strictly enforced upon implementation / pipeline / CI):`
+      );
+      for (const key of pendingSpecFirstIdents.keys()) {
+        console.log(`   - ${key}`);
       }
     }
     if (missingIdents.size > 0) {
@@ -1186,49 +1423,23 @@ function runVerification() {
         }
       }
     } else {
-      console.log(`✅ [PASS] Check 8: All ${identChecked} documented identifiers exist in code (strict mode).`);
+      console.log(`✅ [PASS] Check 8: All ${identChecked} documented identifiers verified (${pendingSpecFirstIdents.size > 0 ? 'Spec-First pending stage' : 'strict mode'}).`);
     }
   }
 
   // -------------------------------------------------------------------------
-  // 9. Doc Corruption & Legacy Asset Isolation Gate
-  //    - 正規表現置換ミスによる "$1" 等の単独行破損を検出
+  // 9. Doc Corruption, Open-Item Issue Link & Legacy Asset Isolation Gate
+  //    - 正規表現置換ミスによる "$1" 等の単独行破損・文字化け (U+FFFD) を検出
   //    - フェンスコードブロック外の孤立した1行 Markdown テーブル行を検出
+  //    - 仕様書内の「【未決事項】」「【要確認】」に Issue 番号が併記されていることを検証
   //    - 旧VBA資料・旧スクリーンショット・個人メモが Git インデックスに含まれていないことを検証
   // -------------------------------------------------------------------------
   for (const docFile of docFiles) {
     const relDoc = toPosixRelative(docFile);
-    const lines = fs.readFileSync(docFile, 'utf8').replace(/\r\n/g, '\n').split('\n');
-    let inFence = false;
-    const nonFenceTableFlags = new Array(lines.length).fill(false);
-
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (/^(`{3,}|~{3,})/.test(trimmed)) {
-        inFence = !inFence;
-        continue;
-      }
-      if (inFence) continue;
-
-      if (/^\$[1-9]\d*$/.test(trimmed)) {
-        errors.push(
-          `[Doc Corruption Detected] ${relDoc}:${i + 1} contains literal regex placeholder "${trimmed}".`
-        );
-      }
-      if (/^\|.+\|$/.test(trimmed)) {
-        nonFenceTableFlags[i] = true;
-      }
-    }
-
-    for (let i = 0; i < lines.length; i++) {
-      if (!nonFenceTableFlags[i]) continue;
-      const prevIsTable = i > 0 && nonFenceTableFlags[i - 1];
-      const nextIsTable = i + 1 < lines.length && nonFenceTableFlags[i + 1];
-      if (!prevIsTable && !nextIsTable) {
-        errors.push(
-          `[Orphaned Markdown Table Row] ${relDoc}:${i + 1} has an isolated table row detached from any table header/separator: "${lines[i].trim().slice(0, 80)}".`
-        );
-      }
+    const content = fs.readFileSync(docFile, 'utf8');
+    const integrityErrors = inspectMarkdownIntegrity(relDoc, content);
+    for (const ie of integrityErrors) {
+      errors.push(ie);
     }
   }
 
@@ -1249,7 +1460,7 @@ function runVerification() {
     }
   }
   console.log(
-    `✅ [PASS] Check 9: Doc corruption guard (zero regex placeholders / orphaned table rows) & legacy VBA asset isolation verified.`
+    `✅ [PASS] Check 9: Doc corruption guard (zero regex placeholders / mojibake / orphaned table rows / unlinked open items) & legacy VBA asset isolation verified.`
   );
 
   // -------------------------------------------------------------------------
@@ -1267,4 +1478,10 @@ function runVerification() {
   console.log(`\n🎉 All DDD Documentation & Code Sync checks PASSED!\n`);
 }
 
-runVerification();
+const isExecutedDirectly =
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isExecutedDirectly) {
+  runVerification();
+}

@@ -266,9 +266,10 @@ function main() {
     // Phase 1: DDD Specification Sync, Security & UX Terminology Gate + Production Dependency Audit
     runStep(
       'PHASE-1A',
-      'DDD Specification Sync & Security/UX Gate',
+      'DDD Specification Sync & Security/UX Gate (Strict Identifier Mode)',
       'npm run test:docs',
-      stepLogs
+      stepLogs,
+      { STRICT_DOC_IDENTIFIERS: '1' }
     );
     runStep(
       'PHASE-1B',

@@ -9,6 +9,12 @@ import { __setSupabaseClientForTest } from '../supabase';
 import { escapeHtml } from '../utils';
 import { onRequestPost, verifyBffRequestAuth } from '../../../functions/api/gemini';
 import {
+  SOURCE_TO_SPEC_RULES,
+  extractAddedBacktickIdentifiersFromDiff,
+  inspectMarkdownIntegrity,
+  isPureSpecFirstCommit,
+} from '../../../scripts/verify-docs-sync.mjs';
+import {
   validateProductionSupabaseEnv,
   computeServiceWorkerCacheName,
 } from '../../../scripts/build-guards';
@@ -367,6 +373,90 @@ describe('gemini (方式1: BFFプロキシ連携 & 日本食品標準成分表�
       expect(cacheV1A).toBe(cacheV1B);
       expect(cacheV2).toMatch(/^cgm-manager-v2-[0-9a-f]{8}$/);
       expect(cacheV2).not.toBe(cacheV1A);
+    });
+  });
+
+  describe('DDD 2段階記録 (Spec-First) 同期検証ゲート純粋ロジック (scripts/verify-docs-sync.mjs)', () => {
+    it('isPureSpecFirstCommit が純粋な docs(spec): コミットのみを許可し、コード混在や他プレフィックスを拒否すること', () => {
+      expect(
+        isPureSpecFirstCommit('docs(spec): update BFF rate limit specification', [
+          'docs/Web_Project/ARCHITECTURE.md',
+          'docs/Web_Project/SPEC_SETTINGS.md',
+        ])
+      ).toBe(true);
+
+      // src/ や functions/ が混在している場合は純粋 Spec-First とはみなさない
+      expect(
+        isPureSpecFirstCommit('docs(spec): mixed commit', [
+          'docs/Web_Project/ARCHITECTURE.md',
+          'src/App.tsx',
+        ])
+      ).toBe(false);
+      expect(
+        isPureSpecFirstCommit('docs(spec): mixed bff', [
+          'docs/Web_Project/ARCHITECTURE.md',
+          'functions/api/gemini.ts',
+        ])
+      ).toBe(false);
+
+      // feat: や空ファイル配列は拒否
+      expect(
+        isPureSpecFirstCommit('feat(personal): implement feature', [
+          'docs/Web_Project/ARCHITECTURE.md',
+        ])
+      ).toBe(false);
+      expect(isPureSpecFirstCommit('docs(spec): empty', [])).toBe(false);
+    });
+
+    it('extractAddedBacktickIdentifiersFromDiff が追加行(+)の識別子のみを抽出し、削除行(-)やファイルパスを除外すること', () => {
+      const sampleDiff = [
+        '+++ b/docs/Web_Project/ARCHITECTURE.md',
+        '-旧識別子 `legacyRemovedFunc()` を削除',
+        '+新設関数 `verifyNewSpecFirstGate()` および `BFF_RATE_LIMIT_MAX`、`src/lib/syncEngine.ts` を定義',
+      ].join('\n');
+
+      const extracted = extractAddedBacktickIdentifiersFromDiff(sampleDiff);
+      expect(extracted.has('verifyNewSpecFirstGate')).toBe(true);
+      expect(extracted.has('BFF_RATE_LIMIT_MAX')).toBe(true);
+      expect(extracted.has('legacyRemovedFunc')).toBe(false);
+      expect(extracted.has('syncEngine.ts')).toBe(false);
+    });
+
+    it('inspectMarkdownIntegrity が $1 破損・U+FFFD 文字化け・孤立テーブル行・Issue番号なしの未決事項を確実に検出すること', () => {
+      expect(
+        inspectMarkdownIntegrity(
+          'docs/Web_Project/ARCHITECTURE.md',
+          '# 正常見出し\n- 【未決事項】仕様の確認（Issue #82）\n- `【未決事項】` の説明引用は除外\n\n| A | B |\n|---|---|\n| 1 | 2 |\n'
+        )
+      ).toEqual([]);
+
+      const corrupted = inspectMarkdownIntegrity(
+        'docs/Web_Project/ARCHITECTURE.md',
+        '# 異常サンプル\n$1\n文字化け\uFFFDテスト\n- 【要確認】Issue番号なしの項目\n\n| 孤立した行 |\n'
+      );
+      expect(corrupted.some((e) => e.includes('[Doc Corruption Detected]'))).toBe(true);
+      expect(corrupted.some((e) => e.includes('[Mojibake / Encoding Corruption Detected]'))).toBe(
+        true
+      );
+      expect(corrupted.some((e) => e.includes('[Missing Issue Reference]'))).toBe(true);
+      expect(corrupted.some((e) => e.includes('[Orphaned Markdown Table Row]'))).toBe(true);
+    });
+
+    it('横断コアモジュール (AuthGateScreen, PatientContext, backupRestore, gemini, BFF) に requiredSpecs が設定されていること', () => {
+      const mustHaveRequired = [
+        'src/components/common/AuthGateScreen.tsx',
+        'src/components/common/PasswordStrengthChecklist.tsx',
+        'src/contexts/PatientContext.tsx',
+        'src/lib/backupRestore.ts',
+        'src/lib/gemini.ts',
+        'functions/api/gemini.ts',
+      ];
+
+      for (const targetPrefix of mustHaveRequired) {
+        const rule = SOURCE_TO_SPEC_RULES.find((r) => r.prefix === targetPrefix);
+        expect(rule, `Rule missing for ${targetPrefix}`).toBeDefined();
+        expect(Array.isArray(rule?.requiredSpecs) && rule!.requiredSpecs!.length > 0).toBe(true);
+      }
     });
   });
 });
