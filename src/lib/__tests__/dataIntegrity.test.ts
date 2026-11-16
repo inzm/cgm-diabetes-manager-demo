@@ -1264,18 +1264,21 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       });
       expect(resNoKey.status).toBe(503);
 
-      // 2. 認証も同一Originも無いリクエストは 401 を返すこと
+      // 2. 本番モードでは同一Originのみ（JWTなし）のリクエストも 401 を返すこと
       const resUnauth = await onRequestPost({
         request: new Request('https://example.com/api/gemini', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+          },
           body: JSON.stringify({ foodName: 'カレーライス', amount: 1, unit: '皿' }),
         }),
-        env: { GEMINI_API_KEY: 'dummy-test-key' },
+        env: { GEMINI_API_KEY: 'dummy-test-key', APP_MODE: 'personal' },
       });
       expect(resUnauth.status).toBe(401);
 
-      // 3. 同一Originで不正なリクエストボディ時は 400 を返すこと
+      // 3. ポートフォリオモード＋同一Originで不正なリクエストボディ時は 400 を返すこと
       const resBadBody = await onRequestPost({
         request: new Request('https://example.com/api/gemini', {
           method: 'POST',
@@ -1285,7 +1288,7 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
           },
           body: JSON.stringify({ foodName: '', amount: 1, unit: '皿' }),
         }),
-        env: { GEMINI_API_KEY: 'dummy-test-key' },
+        env: { GEMINI_API_KEY: 'dummy-test-key', APP_MODE: 'portfolio' },
       });
       expect(resBadBody.status).toBe(400);
     });
@@ -2146,7 +2149,7 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
             unit: '123456789012345678901', // 21文字 (> 20)
           }),
         }),
-        env: { GEMINI_API_KEY: 'dummy-test-key' },
+        env: { GEMINI_API_KEY: 'dummy-test-key', APP_MODE: 'portfolio' },
       });
       expect(resLongUnit.status).toBe(400);
 

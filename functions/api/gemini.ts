@@ -6,11 +6,18 @@
  *    Cloudflare Pages / Workers の環境変数（Secrets）からのみ読み出してサーバーサイドで推論を実行する。
  * 2. 本番モード時は不正な外部呼び出し（APIキータダ乗り・CSRF）を遮断するため、
  *    Cross-Origin / Cross-Site リクエストを即時拒否（HTTP 403）した上で、
- *    有効な Supabase JWT（`Authorization: Bearer <token>`）または同一 Origin（`Origin` / `Sec-Fetch-Site: same-origin` / `Referer`）の
- *    検証を必須化する（未充足時は HTTP 401）。
- * 3. `GEMINI_API_KEY` 未設定時やエラー発生時は非200応答を返し、クライアント側の
+ *    Supabase Auth で検証済みの有効な Supabase JWT（`Authorization: Bearer <token>`）を必須化する
+ *    （同一 Origin ヘッダー単独では認証として扱わず HTTP 401 を返す）。
+ * 3. Workers メモリ内スライディングウィンドウ方式（`checkBffUserRateLimit`）によりユーザー（JWT `sub`）単位の
+ *    レート制限を実施し、上限（環境変数 `BFF_RATE_LIMIT_MAX` / `BFF_RATE_LIMIT_WINDOW_SEC`）超過時は
+ *    `Retry-After` ヘッダー付きで HTTP 429 を返す。
+ * 4. `GEMINI_API_KEY` 未設定時や `401` / `429` / `5xx` 応答時は、クライアント側の
  *    日本食品標準成分表内蔵辞書（`estimateCarbsLocally`）へ安全にフォールバックさせる。
  */
+
+export const DEFAULT_BFF_RATE_LIMIT_MAX = 20;
+export const DEFAULT_BFF_RATE_LIMIT_WINDOW_SEC = 60;
+const MAX_TRACKED_RATE_LIMIT_KEYS = 1000;
 
 export interface GeminiPagesEnv {
   GEMINI_API_KEY?: string;
@@ -22,6 +29,8 @@ export interface GeminiPagesEnv {
   SUPABASE_ANON_KEY?: string;
   VITE_SUPABASE_ANON_KEY?: string;
   REQUIRE_SUPABASE_JWT?: string;
+  BFF_RATE_LIMIT_MAX?: string;
+  BFF_RATE_LIMIT_WINDOW_SEC?: string;
 }
 
 export interface PagesFunctionContext<Env = GeminiPagesEnv> {
@@ -44,13 +53,99 @@ interface CarbEstimateResponseBody {
 export interface BffAuthVerificationResult {
   authorized: boolean;
   status: number;
+  userId?: string;
   error?: string;
+}
+
+export interface BffRateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  retryAfterSec: number;
 }
 
 const JSON_HEADERS: Record<string, string> = {
   'Content-Type': 'application/json; charset=utf-8',
   'Cache-Control': 'no-store',
 };
+
+const rateLimitSlidingStore = new Map<string, number[]>();
+
+export function resetBffRateLimitStoreForTest(): void {
+  rateLimitSlidingStore.clear();
+}
+
+function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * Workers メモリ内スライディングウィンドウ方式によるユーザー単位レート制限
+ */
+export function checkBffUserRateLimit(
+  rateKey: string,
+  env?: GeminiPagesEnv,
+  nowMs: number = Date.now()
+): BffRateLimitResult {
+  const maxRequests = parsePositiveIntEnv(
+    env?.BFF_RATE_LIMIT_MAX,
+    DEFAULT_BFF_RATE_LIMIT_MAX
+  );
+  const windowSec = parsePositiveIntEnv(
+    env?.BFF_RATE_LIMIT_WINDOW_SEC,
+    DEFAULT_BFF_RATE_LIMIT_WINDOW_SEC
+  );
+  const windowMs = windowSec * 1000;
+  const cutoffMs = nowMs - windowMs;
+  const normalizedKey = rateKey.trim() || 'anonymous';
+
+  if (rateLimitSlidingStore.size >= MAX_TRACKED_RATE_LIMIT_KEYS) {
+    for (const [key, timestamps] of rateLimitSlidingStore.entries()) {
+      const active = timestamps.filter((ts) => ts > cutoffMs);
+      if (active.length === 0) {
+        rateLimitSlidingStore.delete(key);
+      } else {
+        rateLimitSlidingStore.set(key, active);
+      }
+    }
+    if (
+      rateLimitSlidingStore.size >= MAX_TRACKED_RATE_LIMIT_KEYS &&
+      !rateLimitSlidingStore.has(normalizedKey)
+    ) {
+      const oldestKey = rateLimitSlidingStore.keys().next().value;
+      if (oldestKey !== undefined) {
+        rateLimitSlidingStore.delete(oldestKey);
+      }
+    }
+  }
+
+  const existing = rateLimitSlidingStore.get(normalizedKey) ?? [];
+  const activeTimestamps = existing.filter((ts) => ts > cutoffMs);
+
+  if (activeTimestamps.length >= maxRequests) {
+    const oldestTs = activeTimestamps[0] ?? nowMs;
+    const retryAfterSec = Math.max(
+      1,
+      Math.ceil((oldestTs + windowMs - nowMs) / 1000)
+    );
+    rateLimitSlidingStore.set(normalizedKey, activeTimestamps);
+    return {
+      allowed: false,
+      remaining: 0,
+      retryAfterSec,
+    };
+  }
+
+  activeTimestamps.push(nowMs);
+  rateLimitSlidingStore.set(normalizedKey, activeTimestamps);
+
+  return {
+    allowed: true,
+    remaining: Math.max(0, maxRequests - activeTimestamps.length),
+    retryAfterSec: 0,
+  };
+}
 
 function decodeBase64UrlJson(segment: string): Record<string, unknown> | null {
   try {
@@ -68,7 +163,12 @@ function decodeBase64UrlJson(segment: string): Record<string, unknown> | null {
 async function verifySupabaseBearerJwt(
   token: string,
   env?: GeminiPagesEnv
-): Promise<{ valid: boolean; remoteVerified: boolean; reason?: string }> {
+): Promise<{
+  valid: boolean;
+  remoteVerified: boolean;
+  userId?: string;
+  reason?: string;
+}> {
   const parts = token.split('.');
   if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
     return { valid: false, remoteVerified: false, reason: 'Malformed JWT structure' };
@@ -113,7 +213,16 @@ async function verifySupabaseBearerJwt(
           reason: `Supabase Auth rejected token (${authRes.status})`,
         };
       }
-      return { valid: true, remoteVerified: true };
+      let resolvedUserId = sub || 'authenticated-user';
+      try {
+        const userJson = (await authRes.json()) as { id?: unknown };
+        if (typeof userJson?.id === 'string' && userJson.id.trim()) {
+          resolvedUserId = userJson.id.trim();
+        }
+      } catch {
+        // Keep sub from JWT payload if body is empty
+      }
+      return { valid: true, remoteVerified: true, userId: resolvedUserId };
     } catch {
       return {
         valid: false,
@@ -124,11 +233,11 @@ async function verifySupabaseBearerJwt(
   }
 
   // SUPABASE_URL / SUPABASE_ANON_KEY 未設定時はフォーマット・有効期限のみ通過とし、署名検証済み (remoteVerified) とはみなさない
-  return { valid: true, remoteVerified: false };
+  return { valid: true, remoteVerified: false, userId: sub || undefined };
 }
 
 /**
- * BFF リクエスト元の認証・同一 Origin 検証を実行する
+ * BFF リクエスト元の Cross-Origin 遮断および本番 Supabase JWT 必須検証を実行する
  */
 export async function verifyBffRequestAuth(
   context: PagesFunctionContext<GeminiPagesEnv>
@@ -188,6 +297,7 @@ export async function verifyBffRequestAuth(
   // 2. Authorization (Supabase JWT) ヘッダーの検証
   const authHeader = context.request.headers.get('Authorization')?.trim() || '';
   let hasValidJwt = false;
+  let verifiedUserId: string | undefined;
 
   if (authHeader) {
     if (!authHeader.toLowerCase().startsWith('bearer ')) {
@@ -207,29 +317,34 @@ export async function verifyBffRequestAuth(
       };
     }
     hasValidJwt = jwtCheck.remoteVerified;
+    if (jwtCheck.remoteVerified) {
+      verifiedUserId = jwtCheck.userId;
+    }
   }
 
-  if (context.env?.REQUIRE_SUPABASE_JWT === 'true' && !hasValidJwt) {
-    return {
-      authorized: false,
-      status: 401,
-      error: 'Unauthorized: Verified Supabase JWT Bearer token is required',
-    };
-  }
-
-  // 3. 本番モード時は「Supabase Authで検証済みのJWT」または「同一 Origin 検証」のいずれかを必須化
   const isPortfolioMode =
     context.env?.APP_MODE === 'portfolio' || context.env?.VITE_APP_MODE === 'portfolio';
 
-  if (!isPortfolioMode && !hasValidJwt && !isSameOriginVerified) {
+  // 3. 本番モード時（または REQUIRE_SUPABASE_JWT 指定時）は、同一 Origin ヘッダー単独での通過を認めず、
+  //    Supabase Auth で検証済みの有効な JWT を必須とする (HTTP 401)
+  if ((!isPortfolioMode || context.env?.REQUIRE_SUPABASE_JWT === 'true') && !hasValidJwt) {
     return {
       authorized: false,
       status: 401,
-      error: 'Unauthorized: Supabase JWT or Same-Origin verification is required in production mode',
+      error: 'Unauthorized: Verified Supabase JWT Bearer token is required in production mode',
     };
   }
 
-  return { authorized: true, status: 200 };
+  // ポートフォリオモード時は検証済み JWT または同一 Origin を要求
+  if (isPortfolioMode && !hasValidJwt && !isSameOriginVerified) {
+    return {
+      authorized: false,
+      status: 401,
+      error: 'Unauthorized: Same-Origin verification is required in portfolio mode',
+    };
+  }
+
+  return { authorized: true, status: 200, userId: verifiedUserId };
 }
 
 export async function onRequestPost(
@@ -252,6 +367,28 @@ export async function onRequestPost(
         error: authResult.error || 'Unauthorized BFF request',
       }),
       { status: authResult.status, headers: JSON_HEADERS }
+    );
+  }
+
+  const clientIp =
+    context.request.headers.get('CF-Connecting-IP')?.trim() || 'anonymous';
+  const rateKey = authResult.userId
+    ? `user:${authResult.userId}`
+    : `ip:${clientIp}`;
+  const rateCheck = checkBffUserRateLimit(rateKey, context.env);
+  if (!rateCheck.allowed) {
+    return new Response(
+      JSON.stringify({
+        error: 'Too Many Requests: Rate limit exceeded for Gemini BFF',
+        retryAfterSec: rateCheck.retryAfterSec,
+      }),
+      {
+        status: 429,
+        headers: {
+          ...JSON_HEADERS,
+          'Retry-After': String(rateCheck.retryAfterSec),
+        },
+      }
     );
   }
 
@@ -357,4 +494,3 @@ export async function onRequestPost(
     });
   }
 }
-

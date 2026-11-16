@@ -7,7 +7,12 @@ import {
 } from '../gemini';
 import { __setSupabaseClientForTest } from '../supabase';
 import { escapeHtml } from '../utils';
-import { onRequestPost, verifyBffRequestAuth } from '../../../functions/api/gemini';
+import {
+  checkBffUserRateLimit,
+  onRequestPost,
+  resetBffRateLimitStoreForTest,
+  verifyBffRequestAuth,
+} from '../../../functions/api/gemini';
 import {
   SOURCE_TO_SPEC_RULES,
   extractAddedBacktickIdentifiersFromDiff,
@@ -32,6 +37,7 @@ function makeTestJwt(payload: Record<string, unknown>): string {
 describe('gemini (方式1: BFFプロキシ連携 & 日本食品標準成分表内蔵辞書)', () => {
   afterEach(() => {
     __setSupabaseClientForTest(undefined);
+    resetBffRateLimitStoreForTest();
     vi.restoreAllMocks();
   });
 
@@ -152,7 +158,148 @@ describe('gemini (方式1: BFFプロキシ連携 & 日本食品標準成分表�
       }
     });
 
-    it('有効な Supabase JWT または同一 Origin が確認できた場合は認証を通過し、上流Gemini API応答を整形して返すこと', async () => {
+    it('本番モードでは同一 Origin ヘッダーのみ（JWTなし）のリクエストも HTTP 401 で遮断すること', async () => {
+      const resSameOriginNoJwt = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+            Referer: 'https://example.com/foods',
+            'Sec-Fetch-Site': 'same-origin',
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-key', APP_MODE: 'personal' },
+      });
+      expect(resSameOriginNoJwt.status).toBe(401);
+
+      // SUPABASE_URL / SUPABASE_ANON_KEY 未設定時は同一 Origin + 形式上妥当な JWT でも署名未検証として 401 にすること
+      const unverifiedToken = makeTestJwt({
+        sub: '11111111-1111-4111-8111-111111111111',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+      const resUnverifiedSig = await onRequestPost({
+        request: new Request('https://example.com/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://example.com',
+            Authorization: `Bearer ${unverifiedToken}`,
+          },
+          body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+        }),
+        env: { GEMINI_API_KEY: 'dummy-key', APP_MODE: 'personal' },
+      });
+      expect(resUnverifiedSig.status).toBe(401);
+    });
+
+    it('同一ユーザーがレート制限上限 (BFF_RATE_LIMIT_MAX) を超えて呼び出すと HTTP 429 (Retry-After付き) になり、別ユーザーやウィンドウ経過後は通過すること', async () => {
+      // 1. 純粋スライディングウィンドウ関数の境界検証
+      const baseNow = 1_700_000_000_000;
+      const limitEnv = { BFF_RATE_LIMIT_MAX: '2', BFF_RATE_LIMIT_WINDOW_SEC: '30' };
+      expect(checkBffUserRateLimit('user:u1', limitEnv, baseNow)).toMatchObject({
+        allowed: true,
+        remaining: 1,
+      });
+      expect(checkBffUserRateLimit('user:u1', limitEnv, baseNow + 5_000)).toMatchObject({
+        allowed: true,
+        remaining: 0,
+      });
+      const blocked = checkBffUserRateLimit('user:u1', limitEnv, baseNow + 10_000);
+      expect(blocked.allowed).toBe(false);
+      expect(blocked.retryAfterSec).toBe(20);
+
+      // 別ユーザーは影響を受けないこと
+      expect(checkBffUserRateLimit('user:u2', limitEnv, baseNow + 10_000).allowed).toBe(true);
+      // 30秒経過後は最初の1件がウィンドウから外れて再び通過すること
+      expect(checkBffUserRateLimit('user:u1', limitEnv, baseNow + 30_001).allowed).toBe(true);
+
+      resetBffRateLimitStoreForTest();
+
+      // 2. onRequestPost 統合検証 (上限2回で3回目が 429 になること)
+      const userAToken = makeTestJwt({
+        sub: 'aaaa1111-1111-4111-8111-111111111111',
+        role: 'authenticated',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url.includes('/auth/v1/user')) {
+          return new Response(
+            JSON.stringify({ id: 'aaaa1111-1111-4111-8111-111111111111' }),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        carbs_g: 55.2,
+                        confidence: 'high',
+                        note: 'AI推定',
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      });
+
+      const makeReq = () =>
+        onRequestPost({
+          request: new Request('https://example.com/api/gemini', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Origin: 'https://example.com',
+              Authorization: `Bearer ${userAToken}`,
+            },
+            body: JSON.stringify({ foodName: '白ごはん', amount: 1, unit: '杯' }),
+          }),
+          env: {
+            GEMINI_API_KEY: 'dummy-key',
+            SUPABASE_URL: 'https://project.supabase.co',
+            SUPABASE_ANON_KEY: 'anon-key',
+            BFF_RATE_LIMIT_MAX: '2',
+            BFF_RATE_LIMIT_WINDOW_SEC: '60',
+          },
+        });
+
+      expect((await makeReq()).status).toBe(200);
+      expect((await makeReq()).status).toBe(200);
+      const thirdRes = await makeReq();
+      expect(thirdRes.status).toBe(429);
+      expect(Number(thirdRes.headers.get('Retry-After'))).toBeGreaterThan(0);
+
+      // クライアント側でも 429 受信時に内蔵日本食品標準成分辞書へ安全にフォールバックすること
+      vi.stubEnv('VITE_ENABLE_GEMINI_BFF', 'true');
+      try {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response(JSON.stringify({ error: 'Too Many Requests' }), { status: 429 })
+        );
+        const fallback = await estimateCarbsWithGemini('白ごはん', 1, '杯');
+        expect(fallback.carbs_g).toBe(55.2);
+        expect(fallback.note).toContain('日本食品標準成分表');
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('検証済みの有効な Supabase JWT が確認できた場合は認証を通過し、上流Gemini API応答を整形して返すこと', async () => {
       const validToken = makeTestJwt({
         sub: '11111111-1111-4111-8111-111111111111',
         role: 'authenticated',

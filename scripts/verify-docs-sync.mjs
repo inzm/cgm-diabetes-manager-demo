@@ -527,10 +527,10 @@ export function inspectMarkdownIntegrity(relDoc, content) {
     }
 
     const lineWithoutInlineCode = trimmed.replace(/`[^`]*`/g, '');
-    if (isWebSpecDoc && /(?:【未決事項】|【要確認】)/.test(lineWithoutInlineCode)) {
+    if (isWebSpecDoc && /(?:【未決事項】|【要確認】|【改修予定】)/.test(lineWithoutInlineCode)) {
       if (!/(?:Issue\s*)?#\d+/i.test(lineWithoutInlineCode)) {
         docErrors.push(
-          `[Missing Issue Reference] ${relDoc}:${i + 1} contains 【未決事項】 or 【要確認】 without a linked GitHub Issue number (e.g., Issue #82).`
+          `[Missing Issue Reference] ${relDoc}:${i + 1} contains 【未決事項】 / 【要確認】 / 【改修予定】 without a linked GitHub Issue number (e.g., Issue #82).`
         );
       }
     }
