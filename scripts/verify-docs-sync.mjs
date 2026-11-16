@@ -18,7 +18,7 @@
  * 6. [4-Layer Schema & Diagram Parity Gate] supabase/migrations/0001_initial_schema.sql・ARCHITECTURE.md Section 5・src/types/database.ts・src/lib/db.ts・diagrams/SEQUENCE_AND_ERD.md の全テーブル・全カラム・文字長上限および第一級図面が100%一致しているか
  * 7. [Suite/Endpoint Count & Hook Integrity Gate] E2E実スイート数・スモークエンドポイント数・Vitestテスト数表記および .agents/hooks.json のスクリプト実在を検証
  * 8. [Documented Identifier Existence Gate] 仕様書内のバッククォート識別子がコードに実在するか（純粋 docs(spec) 先行編集段階の新規追加識別子のみ段階的許容し、実装後・パイプライン・CIでは既定で厳格 ERROR）
- * 9. [Doc Corruption, Open-Item Issue Link & Legacy Asset Gate] 正規表現置換ミス（単独行の $1 等）・文字化け（U+FFFD）・孤立テーブル行・「【未決事項】/【要確認】」の Issue番号欠落防止、および旧VBA関連ディレクトリの Git 追跡ゼロ保証
+ * 9. [Doc Corruption, Prohibited Unresolved Marker & Legacy Asset Gate] 正規表現置換ミス（単独行の $1 等）・文字化け（U+FFFD）・孤立テーブル行・仕様書内への未完了ステータスタグ（【未決事項】/【要確認】/【改修予定】/【実装予定】/【将来案】）および内部 Issue #XX 参照の混入防止、旧VBA関連ディレクトリの Git 追跡ゼロ保証
  */
 
 import fs from 'node:fs';
@@ -494,7 +494,7 @@ export function extractAddedBacktickIdentifiersFromDiff(unifiedDiffText) {
 }
 
 /**
- * Markdown ドキュメントの破損（正規表現 $1 残存・文字化け U+FFFD・孤立テーブル行・未決事項のIssue番号欠落）を検査する純粋関数
+ * Markdown ドキュメントの破損（正規表現 $1 残存・文字化け U+FFFD・孤立テーブル行・未完了ステータスタグおよび内部Issue参照混入）を検査する純粋関数
  */
 export function inspectMarkdownIntegrity(relDoc, content) {
   const docErrors = [];
@@ -527,10 +527,22 @@ export function inspectMarkdownIntegrity(relDoc, content) {
     }
 
     const lineWithoutInlineCode = trimmed.replace(/`[^`]*`/g, '');
-    if (isWebSpecDoc && /(?:【未決事項】|【要確認】|【改修予定】)/.test(lineWithoutInlineCode)) {
-      if (!/(?:Issue\s*)?#\d+/i.test(lineWithoutInlineCode)) {
+    if (isWebSpecDoc) {
+      const unresolvedMarkerMatch = lineWithoutInlineCode.match(
+        /(?:【未決事項】|【要確認】|【改修予定】|【実装予定】|【将来案[^】]*】)/
+      );
+      if (unresolvedMarkerMatch) {
         docErrors.push(
-          `[Missing Issue Reference] ${relDoc}:${i + 1} contains 【未決事項】 / 【要確認】 / 【改修予定】 without a linked GitHub Issue number (e.g., Issue #82).`
+          `[Prohibited Unresolved Spec Marker] ${relDoc}:${i + 1} contains prohibited unresolved marker "${unresolvedMarkerMatch[0]}". Manage unstarted or pending items in Private GitHub Issues and write only confirmed specifications.`
+        );
+      }
+
+      const privateIssueRefMatch = lineWithoutInlineCode.match(
+        /(?:\bIssue\s*#\d+\b|[（(]#\d+[）),、]|[,、]\s*#\d+[）)])/i
+      );
+      if (privateIssueRefMatch) {
+        docErrors.push(
+          `[Private Issue Reference Prohibited] ${relDoc}:${i + 1} references a Private GitHub Issue number ("${privateIssueRefMatch[0].trim()}") inside public specification. Keep Issue numbers out of docs/Web_Project/.`
         );
       }
     }
@@ -1428,10 +1440,10 @@ function runVerification() {
   }
 
   // -------------------------------------------------------------------------
-  // 9. Doc Corruption, Open-Item Issue Link & Legacy Asset Isolation Gate
+  // 9. Doc Corruption, Prohibited Unresolved Marker & Legacy Asset Isolation Gate
   //    - 正規表現置換ミスによる "$1" 等の単独行破損・文字化け (U+FFFD) を検出
   //    - フェンスコードブロック外の孤立した1行 Markdown テーブル行を検出
-  //    - 仕様書内の「【未決事項】」「【要確認】」に Issue 番号が併記されていることを検証
+  //    - 仕様書（docs/Web_Project/）内の未完了ステータスタグおよび内部 Issue 番号混入を検出
   //    - 旧VBA資料・旧スクリーンショット・個人メモが Git インデックスに含まれていないことを検証
   // -------------------------------------------------------------------------
   for (const docFile of docFiles) {
@@ -1460,7 +1472,7 @@ function runVerification() {
     }
   }
   console.log(
-    `✅ [PASS] Check 9: Doc corruption guard (zero regex placeholders / mojibake / orphaned table rows / unlinked open items) & legacy VBA asset isolation verified.`
+    `✅ [PASS] Check 9: Doc corruption guard (zero regex placeholders / mojibake / orphaned table rows / prohibited unresolved markers / private issue refs) & legacy VBA asset isolation verified.`
   );
 
   // -------------------------------------------------------------------------

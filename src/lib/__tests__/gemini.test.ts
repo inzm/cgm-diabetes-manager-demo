@@ -569,23 +569,36 @@ describe('gemini (方式1: BFFプロキシ連携 & 日本食品標準成分表�
       expect(extracted.has('syncEngine.ts')).toBe(false);
     });
 
-    it('inspectMarkdownIntegrity が $1 破損・U+FFFD 文字化け・孤立テーブル行・Issue番号なしの未決事項を確実に検出すること', () => {
+    it('inspectMarkdownIntegrity が $1 破損・U+FFFD 文字化け・孤立テーブル行・未完了ステータスタグ・内部Issue参照を確実に検出すること', () => {
       expect(
         inspectMarkdownIntegrity(
           'docs/Web_Project/ARCHITECTURE.md',
-          '# 正常見出し\n- 【未決事項】仕様の確認（Issue #82）\n- `【未決事項】` の説明引用は除外\n\n| A | B |\n|---|---|\n| 1 | 2 |\n'
+          '# 正常見出し\n- 確定した仕様を断定形で記述する（課題 #7 対応）\n- `【未決事項】` や `Issue #XX` のインラインコード説明引用は除外\n\n| A | B |\n|---|---|\n| 1 | 2 |\n'
+        )
+      ).toEqual([]);
+
+      // .agents/ 配下のルール文書では Issue 例示を許容すること
+      expect(
+        inspectMarkdownIntegrity(
+          '.agents/AGENTS.md',
+          '# ルール\n- 人の手が必要な項目は Issue #80 のように Private Issue で管理する\n'
         )
       ).toEqual([]);
 
       const corrupted = inspectMarkdownIntegrity(
         'docs/Web_Project/ARCHITECTURE.md',
-        '# 異常サンプル\n$1\n文字化け\uFFFDテスト\n- 【要確認】Issue番号なしの項目\n\n| 孤立した行 |\n'
+        '# 異常サンプル\n$1\n文字化け\uFFFDテスト\n- 【未決事項】仕様の確認（Issue #82）\n- 【実装予定】バックアップ促進表示\n- オンライン復帰同期（#84）\n\n| 孤立した行 |\n'
       );
       expect(corrupted.some((e) => e.includes('[Doc Corruption Detected]'))).toBe(true);
       expect(corrupted.some((e) => e.includes('[Mojibake / Encoding Corruption Detected]'))).toBe(
         true
       );
-      expect(corrupted.some((e) => e.includes('[Missing Issue Reference]'))).toBe(true);
+      expect(
+        corrupted.filter((e) => e.includes('[Prohibited Unresolved Spec Marker]')).length
+      ).toBe(2);
+      expect(
+        corrupted.filter((e) => e.includes('[Private Issue Reference Prohibited]')).length
+      ).toBe(2);
       expect(corrupted.some((e) => e.includes('[Orphaned Markdown Table Row]'))).toBe(true);
     });
 
