@@ -83,11 +83,11 @@ load: 常時。詳細は「参照」の該当ファイルを必要時のみ読�
 - 指定されたスコープ外のファイルを修正しない。
 
 ## 手順: 開発 (この順序を守る。コードを先に書かない)
-1. 4軸で評価する。仕様書・USER_GUIDE.md・型定義・受け入れ条件・図面を先に更新する。
+1. 4軸で評価する。仕様書 (`docs/Web_Project/SPEC_*.md`, `docs/Web_Project/ARCHITECTURE.md`)・`docs/Web_Project/USER_GUIDE.md`・`docs/Web_Project/TEST_PLAN.md`・図面を先に更新する。
 2. 評価結果と更新した仕様書をユーザーに提示し、合意を得る。
-3. 合意した仕様のとおりに実装する。推測コードとハリボテを入れない。
-4. 検証: npm run pipeline:verify。
-5. 出荷: 仕様書・テスト・コードを同一コミットにする。npm run pipeline:ship:personal -- --message "<メッセージ>" で検証・コミット・Pushし、GitHub Actions で Cloudflare Pages へ自動デプロイする（公開デモは pipeline:ship:demo）。ブランチ運用は skill: ai-orchestrator-pipeline に従う。
+3. 仕様先行の記録 (第1コミット): 合意した仕様書・図面のみを `docs(spec): <要約>` でコミットする (Git履歴上で仕様先行を証明する)。
+4. 実装: 合意した仕様のとおりにコード・型定義・DDL・テストを実装する。推測コードとハリボテを入れない。
+5. 検証と出荷 (第2コミット): `npm run pipeline:verify` で検証し、`npm run pipeline:ship:personal -- --message "feat(personal): <要約>"` (または `fix` / `refactor`) で実装コミットを作成・Pushし、GitHub Actions で Cloudflare Pages へ自動デプロイする（公開デモは `pipeline:ship:demo`）。ブランチ運用は skill: ai-orchestrator-pipeline に従う。
 
 ## 完了条件 (すべて成功すること)
 - npm run test:docs

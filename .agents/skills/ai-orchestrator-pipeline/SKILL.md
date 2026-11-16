@@ -56,8 +56,14 @@ npm run pipeline:verify
 実行後、.agents/scratch/screenshots/ の対象PNGを read_file で確認する。
 
 ### 出荷: 本番 (Private origin -> GitHub Actions CD -> Cloudflare Pages: cgm-diabetes-manager-personal)
+Git 履歴上で「仕様先行」を証明するため、先に `docs(spec)` コミットを記録してから実装・出荷を実行する。
 ```powershell
-npm run pipeline:ship:personal -- --message "feat(personal): 変更内容の要約"
+# 1. 仕様先行コミット (ユーザー合意後、実装着手の前)
+git add docs/Web_Project
+git commit -m "docs(spec): 仕様変更内容の要約"
+
+# 2. 実装・テスト完了後、全ゲート検証＋実装コミット＋Push
+npm run pipeline:ship:personal -- --message "feat(personal): 実装内容の要約"
 ```
 
 ### 出荷: デモ公開 (Public public-demo -> GitHub Actions CD -> Cloudflare Pages: cgm-diabetes-manager-demo)
@@ -71,9 +77,9 @@ git push --force public-demo demo-public:main
 git push --force origin demo-public
 git checkout main
 
-# B. 既存のクリーンな demo-public に差分コミットを取り込む場合
+# B. 既存のクリーンな demo-public に2段階の差分コミットを取り込む場合
 git checkout demo-public
-git cherry-pick <commit-sha>
+git cherry-pick <spec-commit-sha> <feat-commit-sha>
 npm run pipeline:ship:demo -- --message "feat(demo): 変更内容の要約"
 git checkout main
 ```
@@ -93,10 +99,11 @@ git checkout main
 | demo-public | Public: public-demo/main / cgm-diabetes-manager-demo | 公開ポートフォリオ専用。`scripts/rebuild-demo-branch.mjs` により過去コミット履歴および旧VBA関連資産（legacy_vba/・docs/VBA_Project/・docs/screenshot/・docs/動画作成用資料/）を完全除外した孤立ブランチ。pipeline:ship:demo で出荷 |
 | feature/*, fix/*, docs/*, refactor/* | Private: origin/<branch> | 並行開発・PRレビュー用のトピックブランチ。Push 時に GitHub Actions `verify` ジョブ（CIのみ、デプロイなし）が自動実行される |
 
-## コミット
-- 実装コード (src/, functions/, supabase/)・仕様書と図面 (docs/Web_Project/)・テストを同一コミットにする。
-- コミットメッセージに変更種別を付ける。例: `feat(personal): enforce BFF JWT/Same-Origin auth and DDL parity gate`
-- git commit 時に .git/hooks/pre-commit が npm run test:docs (--staged)、npm run typecheck、npm test を実行する。
+## コミット (2段階記録: Spec-First の証明)
+- 第1コミット (仕様先行): 仕様書・図面 (`docs/Web_Project/`) を先に更新し、`docs(spec): <仕様変更の要約>` でコミットする（実装コード `src/`・`functions/`・`supabase/` は含めない）。
+- 第2コミット (実装・検証): 合意した仕様のとおりに実装コード・型定義・DDL・テストを更新し、`feat(personal): <実装の要約>`（または `fix` / `refactor`）でコミットする（実装中に判明した仕様書の微調整を含めてよい）。
+- トピックブランチを `main` へ統合する際は、Squash マージを行わず2コミットの履歴を保持する。
+- git commit 時に `.git/hooks/pre-commit` が `npm run test:docs` (`--staged`)、`npm run typecheck`、`npm test` を実行する（第2コミット時は直前の連続する純粋 `docs(spec):` コミットの更新仕様書も Spec-First 同期済みとして自動照合する）。
 
 ## 人の手が必要な項目のIssue記録
 対象と禁止事項は AGENTS.md の「ルール: 人の手が必要な項目」に従う。

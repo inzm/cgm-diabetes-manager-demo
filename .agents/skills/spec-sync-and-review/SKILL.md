@@ -5,10 +5,10 @@ description: 画面デザイン修正・機能追加・仕様変更の際に、4
 
 # spec-sync-and-review
 
-目的: コード変更のたびに、仕様書 (SSOT: docs/Web_Project/) を同一変更セットで更新する。
+目的: コード変更の前に仕様書 (SSOT: docs/Web_Project/) を先行更新・コミット (`docs(spec): ...`) し、続く実装コミット (`feat: ...` / `fix: ...`) との2段階記録によって Git 履歴上で「仕様先行」と完全同期を証明する。
 
 ## 原則
-1. UIデザイン (配置・ボタン構成・レスポンシブ・色・ラベル) や機能ロジックを変更したら、対応する SPEC_*.md を同じコミットで更新する。
+1. UIデザイン (配置・ボタン構成・レスポンシブ・色・ラベル) や機能ロジックを変更するときは、対応する SPEC_*.md 等を先に更新して `docs(spec): ...` コミットを記録し、その後コードを実装して `feat: ...` コミットを記録する（実装中に仕様の微調整が生じた場合は `feat` コミットに仕様書の追補を含めてよい）。
 2. Web版DB設計 (docs/Web_Project/ARCHITECTURE.md, src/types/database.ts, src/lib/db.ts) と旧VBAのデータ構造が異なる場合、Web版を優先する。
 3. 画面テキストに開発者用語を出さない。
    - 禁止語: マスタ / IndexedDB / Dexie.js / Web Worker / 並列パース / バインド / 物理テーブル名 (libre_readings 等)
@@ -40,9 +40,10 @@ description: 画面デザイン修正・機能追加・仕様変更の際に、4
 | src/lib/db.ts, src/types/database.ts, src/lib/uuidUtils.ts, src/lib/backupRestore.ts | ARCHITECTURE.md, SPEC_SETTINGS.md, diagrams/SEQUENCE_AND_ERD.md |
 | 新規仕様書の追加・名称変更 | README.md |
 
-## 手順
-1. 4軸評価。問題があればユーザーに相談する。
-2. 仕様書、図面 (diagrams/*)、操作・招待手順を変えた場合は USER_GUIDE.md を先に更新する。
-3. 実装と、単体・統合テストの追加。
-4. 検証: npm run verify:all または npm run pipeline:verify。
-5. 同一コミットにして出荷: npm run pipeline:ship:personal / npm run pipeline:ship:demo (詳細は skill: ai-orchestrator-pipeline)。
+## 手順 (2段階記録: Spec-First の証明)
+1. 4軸評価。問題・トレードオフがあればユーザーに相談する。
+2. 仕様書、図面 (diagrams/*)、操作・招待手順を変えた場合は USER_GUIDE.md、テスト計画 TEST_PLAN.md を先に更新してユーザー合意を得る。
+3. 第1コミット (仕様先行の証明): `git add docs/Web_Project && git commit -m "docs(spec): <仕様変更の要約>"` で仕様変更のみを先に記録する。
+4. 実装と、単体・統合・E2Eテストの追加。
+5. 検証: `npm run verify:all` または `npm run pipeline:verify`。
+6. 第2コミットと出荷: `npm run pipeline:ship:personal -- --message "feat(personal): <実装の要約>"` / `npm run pipeline:ship:demo` (詳細は skill: ai-orchestrator-pipeline)。

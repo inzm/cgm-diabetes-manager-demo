@@ -188,29 +188,8 @@ Excel固有の仕様や大量データ処理など、Web化において技術的
     - 食前血糖値 (`pre_meal_glucose`): $[T - 15\text{分},\ T + 5\text{分}]$ の範囲内で、食事時刻 $T$ との時間差の絶対値が最小となる測定値を採用。
     - 食後ピーク血糖値 (`post_meal_glucose`): $[T + 60\text{分},\ T + 180\text{分}]$（食後1〜3時間）の範囲内における最高血糖値（Max）を採用。
     - 【未決事項】食後1〜3時間の窓内に次の食事やインスリン追加がある場合の扱い（除外・参考値の注記・別指標）は未定義である。現行仕様は区別せず最大値を採用する。臨床上の取り扱いを決定して追記する（Issue #82）。
-  - クラウド側 (Supabase / PostgreSQL)【将来案・未実装】: 下記のSQLはコードおよびマイグレーションから使われていない。PostgreSQLでは `UPDATE` の対象テーブルを `FROM` 句内の `LATERAL` から参照できないため、そのままでは実行できない。実装する場合は書き換えが必要である。
-    CSV一括インポート時などのサーバーサイド補完には、PostgreSQLの `LATERAL JOIN` を用いて食前（$-15\text{min} \sim +5\text{min}$ 最寄り値）および食後ピーク（$+60\text{min} \sim +180\text{min}$ 最高値）の高速バッチ更新を実行：
-    ```sql
-    UPDATE events e
-    SET pre_meal_glucose = pre_q.glucose_value,
-        post_meal_glucose = post_q.max_glucose
-    FROM (
-      SELECT DISTINCT ON (e2.id) e2.id, lr.glucose_value
-      FROM events e2
-      JOIN libre_readings lr ON lr.user_id = e2.user_id
-        AND lr.timestamp BETWEEN (e2.event_datetime - INTERVAL '15 minutes')
-                             AND (e2.event_datetime + INTERVAL '5 minutes')
-      ORDER BY e2.id, ABS(EXTRACT(EPOCH FROM (lr.timestamp - e2.event_datetime)))
-    ) AS pre_q
-    LEFT JOIN LATERAL (
-      SELECT MAX(lr2.glucose_value) AS max_glucose
-      FROM libre_readings lr2
-      WHERE lr2.user_id = e.user_id
-        AND lr2.timestamp BETWEEN (e.event_datetime + INTERVAL '60 minutes')
-                              AND (e.event_datetime + INTERVAL '180 minutes')
-    ) AS post_q ON TRUE
-    WHERE e.id = pre_q.id AND e.event_type = '食事';
-    ```
+  - クラウド同期との責務分担:
+    食前・食後ピーク血糖値の探索・補完は Local-First 原則に基づきクライアント側（`bindMealGlucoseFromReadings`）で一元実行し、算出済みの `pre_meal_glucose` / `post_meal_glucose` を含む `events` レコードを `syncPatientDataWithCloud`（`src/lib/syncEngine.ts`）で Supabase へ双方向同期する（サーバーサイドでの重複バッチSQLは実行しない）。
 
 ---
 
@@ -895,8 +874,8 @@ END $$;
   - 閲覧者による追加・編集・削除はそのページの閲覧セッション中のみオンメモリ上で有効であり、ブラウザを再読み込み（リロード）するか、設定画面の「デモ環境のデータ管理」カードにある「デモデータを初期状態に戻す」ボタンを押すと、食品・活動・カテゴリ・記録・設定のすべてが初期シード状態へリセットされます。
   - さらに、デモアプリとしての完成度とセキュリティを担保するため、設定画面の未実装・通常バックアップ・クライアント側ロール切替セクションおよび食事記録・食品登録モーダル内の糖質自動推定ボタンを非表示とし、ECharts カスタムツールチップの動的文字列は `escapeHtml`（`src/lib/utils.ts`）でサニタイズし、Cloudflare Pages 配信ヘッダー（`public/_headers`）で標準セキュリティヘッダーを強制します。
 - Git デュアルリモート管理 & 2系統 CI/CD パイプライン (`scripts/orchestrate-pipeline.mjs`, `.github/workflows/deploy-pages.yml`):
-  - ランタイム統一と CI/CD 責務分離:
-    - 開発環境とリモートCI/CDを Node.js 24 LTS（`.nvmrc` および `package.json` の `engines`）に統一し、ローカルの `npm run pipeline:ship:*` は全品質ゲート検証・原子的コミット・リモートへの `git push` までを担当します。Cloudflare Pages（`wrangler.toml` 準拠）へのデプロイは GitHub Actions の `deploy` ジョブに一本化し、ローカルとCIの二重デプロイ競合を排除します（GitHub Secrets 設定完了前の緊急フォールバック時のみ、`main` / `demo-public` ブランチ強制ガード付きの `--local-deploy` オプションを許可）。
+  - ランタイム統一・2段階 Spec-First コミット記録・CI/CD 責務分離:
+    - 開発環境とリモートCI/CDを Node.js 24 LTS（`.nvmrc` および `package.json` の `engines`）に統一します。Git 履歴上で「仕様先行（Spec-First）」を証明するため、①仕様書・図面・テスト計画を先に更新して記録する先行コミット（`docs(spec): ...`）と、②合意後に実装・テストを記録する実装コミット（`feat(...): ...` / `fix(...): ...`）の **2段階記録** を標準とし、ローカルの `npm run pipeline:ship:*` は全品質ゲート検証・実装コミット・リモートへの `git push` までを担当します。Cloudflare Pages（`wrangler.toml` 準拠）へのデプロイは GitHub Actions の `deploy` ジョブに一本化し、ローカルとCIの二重デプロイ競合を排除します（GitHub Secrets 設定完了前の緊急フォールバック時のみ、`main` / `demo-public` ブランチ強制ガード付きの `--local-deploy` オプションを許可）。
   - 本番開発リポジトリ (`origin`: Private):
     - `main` ブランチへの Push 時、GitHub Actions の `verify` ジョブ通過後に `deploy` ジョブが `REQUIRE_SUPABASE_ENV=1` を付与して `VITE_APP_MODE=personal` ビルド（`enforceProductionEnvGuard` により `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` 未設定時はビルド・デプロイを即時遮断し Auth Gate 無効化を防止）を実行し、本番用 Cloudflare Pages（`cgm-diabetes-manager-personal`）へ自動デプロイします（【要確認】GitHub Secrets への本番環境変数登録と動作確認: Issue #87）。
   - デモ公開リポジトリ (`public-demo`: Public):
