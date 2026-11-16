@@ -824,6 +824,32 @@ async function upsertRowsInChunks<TRow extends object>(
   return total;
 }
 
+/**
+ * Supabase テーブルから指定した ID 集合のレコードをチャンク単位で削除する
+ */
+async function deleteRowsByIdsInChunks(
+  client: SupabaseClient,
+  tableName: string,
+  patientId: string,
+  ids: readonly string[]
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const chunks = chunkArray(ids, DEFAULT_CHUNK_SIZE);
+  let total = 0;
+  for (const idChunk of chunks) {
+    const { error } = await client
+      .from(tableName)
+      .delete()
+      .eq('user_id', patientId)
+      .in('id', idChunk);
+    if (error) {
+      throw new Error(`${tableName} の不要レコード削除に失敗しました: ${error.message}`);
+    }
+    total += idChunk.length;
+  }
+  return total;
+}
+
 // セッション内で最後に同期完了した libre_readings のシグネチャを保持し、不要な再送を防ぐ
 const syncedReadingsSignatureByPatient = new Map<string, string>();
 
@@ -1277,32 +1303,41 @@ async function executeSyncPatientData(
       .toArray();
 
     // 課題 #6 対応: 閾値変更やCSV取込直後の同期（replaceRemoteAnomalies === true）では、
-    // リモート上の古い異常値レコードを一括削除し、ローカルで再計算された最新の異常値集合で置換する
-    const staleRemoteAnomalyIds = new Set<string>();
-    if (canEdit && options.replaceRemoteAnomalies) {
-      const { error: delErr } = await client
-        .from('events')
-        .delete()
-        .eq('user_id', patientId)
-        .in('event_type', ['低血糖', '高血糖']);
-      if (delErr) {
-        throw new Error(`古い異常値イベントの削除に失敗しました: ${delErr.message}`);
-      }
+    // 通信中断による異常値消失を防ぐため、①ローカルの最新異常値集合を先に冪等 upsert し、
+    // ②登録完了後にのみ、新集合に含まれないリモート上の旧異常値 ID 群を削除する（登録→削除の順）
+    const isAnomalyEvent = (ev: Pick<HealthEvent, 'event_type'>): boolean =>
+      ev.event_type === '低血糖' || ev.event_type === '高血糖';
+
+    const shouldReplaceAnomalies = Boolean(canEdit && options.replaceRemoteAnomalies);
+    const obsoleteRemoteAnomalyIds = new Set<string>();
+
+    if (shouldReplaceAnomalies) {
+      const desiredLocalAnomalyIds = new Set<string>(
+        localEvents
+          .filter((lev) => isAnomalyEvent(lev) && !lev.is_deleted)
+          .map((lev) => lev.id)
+      );
       for (const rev of remoteEvents) {
-        if (rev.event_type === '低血糖' || rev.event_type === '高血糖') {
-          staleRemoteAnomalyIds.add(rev.id);
+        if (isAnomalyEvent(rev) && !desiredLocalAnomalyIds.has(rev.id)) {
+          obsoleteRemoteAnomalyIds.add(rev.id);
         }
       }
     }
 
-    const activeRemoteEvents = remoteEvents.filter(
-      (rev) => !staleRemoteAnomalyIds.has(rev.id)
-    );
+    // replaceRemoteAnomalies 時はリモート上の既存異常値を比較対象から外し、
+    // ローカルの有効な異常値集合が確実に全件 upsert され、旧異常値が Pull されないようにする
+    const activeRemoteEvents = shouldReplaceAnomalies
+      ? remoteEvents.filter((rev) => !isAnomalyEvent(rev))
+      : remoteEvents;
+
     const { toPush: eventsToPush, toPull: eventsToPull } = computeLwwDiff(
       localEvents,
       activeRemoteEvents,
       {
         canEdit,
+        filterLocal: shouldReplaceAnomalies
+          ? (lev) => !(isAnomalyEvent(lev) && Boolean(lev.is_deleted))
+          : undefined,
         transformBeforePush: (lev) => ({
           ...lev,
           event_datetime: normalizeToWallClockIso(lev.event_datetime),
@@ -1338,6 +1373,14 @@ async function executeSyncPatientData(
           updated_at: ev.updated_at,
         })),
         'id'
+      );
+    }
+    if (shouldReplaceAnomalies && obsoleteRemoteAnomalyIds.size > 0) {
+      await deleteRowsByIdsInChunks(
+        client,
+        'events',
+        patientId,
+        Array.from(obsoleteRemoteAnomalyIds)
       );
     }
 

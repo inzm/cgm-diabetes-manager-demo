@@ -1113,6 +1113,8 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       };
 
       let upsertCallCount = 0;
+      let failEventsUpsertOnce = false;
+      const eventsOperationOrder: string[] = [];
       const mockClient = {
         from(table: string) {
           return {
@@ -1140,6 +1142,13 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
               return builder;
             },
             async upsert(payload: Record<string, unknown> | Array<Record<string, unknown>>) {
+              if (table === 'events') {
+                eventsOperationOrder.push('upsert:events');
+                if (failEventsUpsertOnce) {
+                  failEventsUpsertOnce = false;
+                  return { error: { message: 'Network timeout during events upsert' } };
+                }
+              }
               upsertCallCount++;
               const rows = Array.isArray(payload) ? payload : [payload];
               const list = remoteStore[table] || [];
@@ -1159,9 +1168,12 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
               return {
                 eq(_col: string, val: unknown) {
                   return {
-                    in: async (_inCol: string, types: string[]) => {
+                    in: async (inCol: string, values: string[]) => {
+                      if (table === 'events') {
+                        eventsOperationOrder.push('delete:events');
+                      }
                       remoteStore[table] = (remoteStore[table] || []).filter(
-                        (r) => !(r.user_id === val && types.includes(String(r.event_type)))
+                        (r) => !(r.user_id === val && values.includes(String(r[inCol])))
                       );
                       return { error: null };
                     },
@@ -1173,7 +1185,24 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
         },
       };
 
-      // 1. replaceRemoteAnomalies: true で双方向同期を実行
+      // 0. 登録→削除の安全性検証: events の upsert が途中で失敗した場合、クラウド上の旧異常値が消えずに残ること
+      failEventsUpsertOnce = true;
+      const failedSyncResult = await syncPatientDataWithCloud(syncUserId, {
+        canEdit: true,
+        replaceRemoteAnomalies: true,
+        includeReadings: true,
+        clientOverride: mockClient as unknown as NonNullable<
+          Parameters<typeof syncPatientDataWithCloud>[1]
+        >['clientOverride'],
+      });
+      expect(failedSyncResult.status).toBe('error');
+      expect(
+        remoteStore.events.some((e) => e.id === staleRemoteAnomalyId)
+      ).toBe(true);
+      expect(eventsOperationOrder).toEqual(['upsert:events']);
+      eventsOperationOrder.length = 0;
+
+      // 1. 再実行時: 新しい異常値と食事が先に upsert された後、不要な旧異常値のみが削除されて最新集合へ収束すること
       const syncResult = await syncPatientDataWithCloud(syncUserId, {
         canEdit: true,
         replaceRemoteAnomalies: true,
@@ -1185,6 +1214,7 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
 
       expect(syncResult.status).toBe('success');
       expect(upsertCallCount).toBeGreaterThan(0);
+      expect(eventsOperationOrder).toEqual(['upsert:events', 'delete:events']);
 
       // 課題 #6: リモートの古い異常値エピソードが削除され、新しい異常値と食事がリモートへPushされていること
       expect(
