@@ -177,8 +177,7 @@ Excel固有の仕様や大量データ処理など、Web化において技術的
 - 解決方針:
   - ローカルのIndexedDBに全期間の生データが存在するため、`src/lib/anomalyExtractor.ts` の `reevaluatePatientAnomalyEvents` により全期間のステートマシンを再実行。
   - 手動登録イベント（食事・活動）を残し、自動抽出イベント（低血糖・高血糖）のみを正規UUID（`deterministicUuid`）で差し替え。
-  - Supabaseへは、新しい異常値イベントを先に `upsert` し、その後で新しい集合に含まれない旧自動抽出イベント（低血糖・高血糖）だけを削除する（登録→削除の順）。UUIDは決定論的なので `upsert` は冪等であり、途中で失敗しても旧データは残り、再実行で収束する。
-  - 【改修予定】現行コード（`src/lib/syncEngine.ts` の `replaceRemoteAnomalies`）は削除→登録の順であり、登録に失敗すると異常値が失われる。上記の順序に改める。
+  - Supabase（`src/lib/syncEngine.ts` の `replaceRemoteAnomalies: true` 同期時）へは、新しい異常値イベントを先にチャンク単位で `upsert`（`upsertRowsInChunks`）し、登録がすべて成功した後でのみ新しい集合に含まれない旧自動抽出イベント（低血糖・高血糖）の ID 群をチャンク削除（`deleteRowsByIdsInChunks`）する（登録→削除の順）。UUIDは決定論的なので `upsert` は冪等であり、途中で通信エラー等により失敗しても旧データは失われずに残り、再実行で確実に最新集合へ収束する。
 
 ### 3.5 食前・食後ピーク血糖値の近傍探索ロジック (`src/lib/anomalyExtractor.ts`)
 - 課題: 食事開始時刻 $T$ に対する食前血糖値、および食後ピーク血糖値を実測CGMデータから高速かつ正確に探索・補完する。
@@ -894,7 +893,7 @@ END $$;
    - 7テーブル一括 Push & Pull と汎用LWW差分計算 (`computeLwwDiff`): `user_settings`, `categories`, `food_master`, `event_master`, `events`, `meal_details`, `libre_readings` の全7テーブルについて、ジェネリック純粋関数 `computeLwwDiff<T>` によりローカル（Dexie.js）とクラウド（Supabase PostgreSQL）の Last-Write-Wins (LWW) 差分を算出し、双方向同期を実行します。
    - 24文字ウォールクロックISO時刻正規化（課題 #7 対応）: Supabase (`TIMESTAMPTZ`) から Pull した `timestamp` および `event_datetime`（`+00:00` オフセット等）は、`normalizeToWallClockIso` により必ず24文字の `"YYYY-MM-DDTHH:mm:ss.000Z"` 形式へ正規化してからローカルDBへ格納し、複合インデックス `.between()` 検索の整合性を担保します。
    - 1,000件単位のバッチチャンク処理 (`chunkArray`): `libre_readings` 等の大量レコードは 1,000件単位のチャンクに分割して `upsert` およびページネーション取得します。
-   - 異常値エピソードのクラウド再計算整合性（課題 #6 対応）: 目標血糖閾値の変更時やCSV取込時には `replaceRemoteAnomalies: true` を指定し、Supabase 側の古い自動抽出エピソード（`低血糖` / `高血糖`）をクリーンアップした上で最新の異常値エピソードへ置き換えます。置換は登録→削除の順で行う（§3.4。現行コードは未対応）。
+   - 異常値エピソードのクラウド再計算整合性（課題 #6 対応）: 目標血糖閾値の変更時やCSV取込時には `replaceRemoteAnomalies: true` を指定し、最新の異常値エピソード集合を先に冪等 `upsert` した上で、新集合に含まれないクラウド側の旧自動抽出エピソード（`低血糖` / `高血糖`）のみを `deleteRowsByIdsInChunks` で後削除します（登録→削除の順によるデータ消失防止：§3.4）。
    - 未ログイン時ローカルデータの自動引き継ぎ (`migrateAnonymousLocalDataToUser`): 未ログイン状態（`DEFAULT_PATIENT_ID`）で記録されたローカルデータは、初回ログイン時に自動的に認証済み `auth.uid()` へマイグレーションされ、そのままクラウドへ同期されます。
    - 家族共有権限の自動解決 & Realtime 同期 (`resolveUserAccessFromPermissions`, `subscribeToPatientRealtime`): `family_permissions` テーブルを `family_user_id = auth.uid()` または `LOWER(family_email) = LOWER(user.email)` で照会し、招待元の `patient_id` とロール（`viewer` は閲覧専用ロック `isReadOnly = true`、`editor` は代理記録可能）を解決します。初回ログイン時に `family_user_id` が未設定の場合は自身の `auth.uid()` と `accepted_at` を自動紐づけし、Realtime 購読および同期完了時に全4種メモリキャッシュを即時破棄してUIを更新します。
 3. Cloudflare Pages Functions BFF (`functions/api/gemini.ts`):
