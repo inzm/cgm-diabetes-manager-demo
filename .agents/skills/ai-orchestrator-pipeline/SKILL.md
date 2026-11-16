@@ -128,5 +128,5 @@ git checkout main
    ```powershell
    gh issue create --repo inzm/cgm-diabates-manager-web --title "[要対応] <内容>" --label "human-action,question" --body-file .agents/scratch/issue_human_action.md
    ```
-4. 出力されたIssue番号を、ユーザーへの報告と、仕様書の「【未決事項】」「【要確認】」に書く。
-5. 完了したらIssueをクローズし、仕様書の注記を更新する。
+4. 出力されたIssue番号をユーザーへ報告する（仕様書には `【未決事項】` / `【要確認】` タグや内部 Issue 番号を書かず、必須環境要件または確定動作のみを記述する）。
+5. 完了したらIssueをクローズする（仕様・実装変更を伴う場合は `docs(spec)` → `feat` / `fix` の2段階記録で反映する）。

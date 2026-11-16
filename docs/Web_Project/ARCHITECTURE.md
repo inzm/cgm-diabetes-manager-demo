@@ -88,11 +88,11 @@ flowchart TD
    - アプリ起動・再読み込み・ログイン（`src/contexts/PatientContext.tsx` の `getSession` / `SIGNED_IN`）。
    - 他端末によるクラウド更新の Realtime 通知（600ms デバウンス）。オフライン中に届かなかった通知は再送されない。
    - 設定画面の「今すぐ同期」（`syncNow`）。
-   - オンライン復帰時（`online` イベント）と、オンライン状態で画面が再表示されたとき（`visibilitychange` で `visible`）（#84、詳細は [SPEC_PWA.md](SPEC_PWA.md) 4.3）。
+   - オンライン復帰時（`online` イベント）と、オンライン状態で画面が再表示されたとき（`visibilitychange` で `visible`）（詳細は [SPEC_PWA.md](SPEC_PWA.md) 4.3）。
    - 同期は毎回全レコードを比較し直す方式（送信待ちキューを持たない）のため、オフライン中に保存した変更は、次にいずれかのきっかけが発生した時点でまとめて送受信される。
 4. 別端末での同じ食事区分の重複:
    - 新規登録の記録には端末ごとに別の UUID が付くため、LWW は同じ記録を両端末で編集した場合にしか働かない。別端末で同じ日・同じ食事区分（朝食・昼食・夕食）を新規登録すると、同期後に2件並ぶ。
-   - 自動では削除・統合しない。カレンダーの日付マスの色と日次詳細で重複を知らせ、利用者の操作で1つにまとめる（#85、[SPEC_MEAL_RECORD.md](SPEC_MEAL_RECORD.md) 3.7）。
+   - 自動では削除・統合しない。カレンダーの日付マスの色と日次詳細で重複を知らせ、利用者の操作で1つにまとめる（[SPEC_MEAL_RECORD.md](SPEC_MEAL_RECORD.md) 3.7）。
 
 ### 2.2 データ種別ごとの同期戦略
 
@@ -135,7 +135,6 @@ flowchart TD
     ```
   - 万が一IndexedDBがクリアされた場合でも、ログイン時にSupabaseから自動再同期するリカバリ処理を常設。
   - 上記の自動再同期はログイン済み（クラウド接続）の場合に限る。クラウド未接続の運用では、復旧手段は手動のJSONバックアップのみである。
-  - 【実装予定】クラウド未接続の場合、最終バックアップから一定日数（設定値）が経過したら、バックアップを促す表示を出す。
 
 ---
 
@@ -185,8 +184,7 @@ Excel固有の仕様や大量データ処理など、Web化において技術的
   - ローカル側 (`computeBoundGlucoseForMeal` & `bindMealGlucoseFromReadings` in `src/lib/anomalyExtractor.ts` / `src/lib/analysisCalculators.ts` / `src/components/records/MealRecordModal.tsx`):
     - 単一真実源（SSOT）関数 `computeBoundGlucoseForMeal(mealMs, candidateReadings)` により、保存時・CSV取込時・食品インパクト分析時の全箇所で同一の近傍探索ロジックを共通利用する：
     - 食前血糖値 (`pre_meal_glucose`): $[T - 15\text{分},\ T + 5\text{分}]$ の範囲内で、食事時刻 $T$ との時間差の絶対値が最小となる測定値を採用。
-    - 食後ピーク血糖値 (`post_meal_glucose`): $[T + 60\text{分},\ T + 180\text{分}]$（食後1〜3時間）の範囲内における最高血糖値（Max）を採用。
-    - 【未決事項】食後1〜3時間の窓内に次の食事やインスリン追加がある場合の扱い（除外・参考値の注記・別指標）は未定義である。現行仕様は区別せず最大値を採用する。臨床上の取り扱いを決定して追記する（Issue #82）。
+    - 食後ピーク血糖値 (`post_meal_glucose`): $[T + 60\text{分},\ T + 180\text{分}]$（食後1〜3時間）の範囲内における最高血糖値（Max）を採用（当該窓内に後続の食事やインスリン記録がある場合も区別せず最大値を採用する）。
   - クラウド同期との責務分担:
     食前・食後ピーク血糖値の探索・補完は Local-First 原則に基づきクライアント側（`bindMealGlucoseFromReadings`）で一元実行し、算出済みの `pre_meal_glucose` / `post_meal_glucose` を含む `events` レコードを `syncPatientDataWithCloud`（`src/lib/syncEngine.ts`）で Supabase へ双方向同期する（サーバーサイドでの重複バッチSQLは実行しない）。
 
@@ -237,7 +235,6 @@ CREATE INDEX IF NOT EXISTS idx_family_email_lookup ON family_permissions (LOWER(
   - システムを操作・閲覧できるのは ①オーナー（最初に登録された患者本人、または既に全7業務テーブルのいずれかにレコードを有する患者本人） と、②そのオーナーが `family_permissions` テーブルに招待登録した家族（`family_user_id` または `LOWER(family_email)` が一致するユーザー） のみに厳格制限する。
   - `auth.users` に対する `BEFORE INSERT` トリガー（`trg_enforce_invited_or_owner_signup`）により、既にオーナーが存在する状態で `family_permissions` に招待されていないメールアドレスがサインアップを試みた場合は PostgreSQL レベルで即座に拒否する。
   - クライアント側でもログイン・セッション復元時に `verifyUserAccessWithCloud`（`src/lib/syncEngine.ts`）を実行し、未招待の第三者アカウントであった場合は同期やローカルデータ移行を一切行わず即座に `signOut()` してローカルキャッシュを全消去する。
-  - 【要確認】RLS関数の実行権限（Issue #78）、オーナー登録後の公開サインアップ停止（Issue #79）、RLS関数のlibre_readings取得時の速度（Issue #81）。
 
 ```sql
 -- 1. 閲覧権限チェック用セキュリティ関数 (未招待第三者は FALSE)
@@ -335,7 +332,7 @@ USING (can_edit_patient_data(user_id));
   2. Supabase JWT 検証 (`HTTP 401 Unauthorized`): `Authorization: Bearer <token>` が送信された場合、JWT 構造・`sub` クレーム・有効期限（`exp`）を検証し、さらに `SUPABASE_URL` および `SUPABASE_ANON_KEY` が環境変数に設定されている場合は Supabase Auth（`/auth/v1/user`）へ照会してトークンの正当性を検証する（不正・期限切れトークンは同一オリジンであっても 401 で拒否）。
   3. 本番モード（`APP_MODE !== 'portfolio'` かつ `VITE_APP_MODE !== 'portfolio'`）では、Supabase Auth で検証済みの有効な Supabase JWT を必須とする（未送信・不正・期限切れ・署名未検証時はすべて `HTTP 401 Unauthorized`）。同一 Origin 検証は Cross-Origin の遮断を目的とする補助的な検査とし、本番モードでは単独の認証として扱わない（`Origin` / `Referer` / `Sec-Fetch-Site` はブラウザ以外のクライアントが任意に設定できるため）。
   4. Workers メモリ内スライディングウィンドウ方式（`checkBffUserRateLimit`）によりユーザー（JWT の `sub`、デモモード時は接続元IP）単位のレート制限を行い、超過時は `Retry-After` ヘッダー付きで `HTTP 429 Too Many Requests` を返す。上限回数とウィンドウ秒数は環境変数（`BFF_RATE_LIMIT_MAX` / `BFF_RATE_LIMIT_WINDOW_SEC`）で設定し、未指定時は安全側既定値（`DEFAULT_BFF_RATE_LIMIT_MAX` / `DEFAULT_BFF_RATE_LIMIT_WINDOW_SEC`）を使用する。
-  5. `SUPABASE_URL` と `SUPABASE_ANON_KEY` が未設定の場合、JWT は構造と有効期限しか検証されず署名が検証されないため、`remoteVerified === false` として本番モードでは通過させない。本番デプロイでは両方を必須の設定とする（設定の確認: Issue #80）。
+  5. `SUPABASE_URL` と `SUPABASE_ANON_KEY` が未設定の場合、JWT は構造と有効期限しか検証されず署名が検証されないため、`remoteVerified === false` として本番モードでは通過させない。本番デプロイでは両方を必須の環境変数要件とする。
 
 ### 4.6 ローカル端末（IndexedDB & メモリキャッシュ）の保護とログアウト時完全消去 (`src/lib/syncEngine.ts`, `src/contexts/PatientContext.tsx`, `src/components/settings/CloudSyncFamilySection.tsx`)
 - 共有端末やスマホ・PCでの情報漏洩を防止するため、ユーザーが「ログアウト」を実行した際（または未招待アカウントが遮断された際）は、`purgeAllLocalPatientCaches`（`src/lib/syncEngine.ts`）により IndexedDB 内の全7テーブル（`user_settings`, `categories`, `food_master`, `event_master`, `events`, `meal_details`, `libre_readings`）および全4種のメモリキャッシュ（カレンダー月次集計・分析集計・期間局所スライス・直近メモリキャッシュ）を完全消去してログイン画面（`AuthGateScreen`）へ戻す。
@@ -348,7 +345,6 @@ USING (can_edit_patient_data(user_id));
 ## 5. データベース物理スキーマ（Supabase PostgreSQL 本番完全版: `supabase/migrations/0001_initial_schema.sql`）
 
 以下のDDLスクリプトは、マルチデバイスオフライン採番（UUID）、高速近傍探索（`event_datetime TIMESTAMPTZ`）、カテゴリ参照整合性、招待専用サインアップトリガー、および全テーブルのRow Level Security (RLS) を完備した本番直結スクリプト（[`supabase/migrations/0001_initial_schema.sql`](../../supabase/migrations/0001_initial_schema.sql) と同一のSSOT）です。SupabaseのSQLエディタでそのまま実行可能です。
-- 【要確認】既に構築済みの本番 Supabase 環境に対する `events.timing_category` の `VARCHAR(50)` 拡張適用（Issue #86）。
 
 ```sql
 -- ==============================================================================
@@ -874,10 +870,10 @@ END $$;
   - ランタイム統一・2段階 Spec-First コミット記録・CI/CD 責務分離:
     - 開発環境とリモートCI/CDを Node.js 24 LTS（`.nvmrc` および `package.json` の `engines`）に統一します。Git 履歴上で「仕様先行（Spec-First）」を証明するため、①仕様書・図面・テスト計画を先に更新して記録する先行コミット（`docs(spec): ...`）と、②合意後に実装・テストを記録する実装コミット（`feat(...): ...` / `fix(...): ...`）の **2段階記録** を標準とし、ローカルの `npm run pipeline:ship:*` は全品質ゲート検証・実装コミット・リモートへの `git push` までを担当します。Cloudflare Pages（`wrangler.toml` 準拠）へのデプロイは GitHub Actions の `deploy` ジョブに一本化し、ローカルとCIの二重デプロイ競合を排除します（GitHub Secrets 設定完了前の緊急フォールバック時のみ、`main` / `demo-public` ブランチ強制ガード付きの `--local-deploy` オプションを許可）。
   - 本番開発リポジトリ (`origin`: Private):
-    - `main` ブランチへの Push 時、GitHub Actions の `verify` ジョブ通過後に `deploy` ジョブが `REQUIRE_SUPABASE_ENV=1` を付与して `VITE_APP_MODE=personal` ビルド（`enforceProductionEnvGuard` により `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` 未設定時はビルド・デプロイを即時遮断し Auth Gate 無効化を防止）を実行し、本番用 Cloudflare Pages（`cgm-diabetes-manager-personal`）へ自動デプロイします（【要確認】GitHub Secrets への本番環境変数登録と動作確認: Issue #87）。
+    - `main` ブランチへの Push 時、GitHub Actions の `verify` ジョブ通過後に `deploy` ジョブが `REQUIRE_SUPABASE_ENV=1` を付与して `VITE_APP_MODE=personal` ビルド（`enforceProductionEnvGuard` により `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` 未設定時はビルド・デプロイを即時遮断し Auth Gate 無効化を防止）を実行し、本番用 Cloudflare Pages（`cgm-diabetes-manager-personal`）へ自動デプロイします（GitHub Secrets への `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` / `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 設定を必須要件とします）。
   - デモ公開リポジトリ (`public-demo`: Public):
     - ワーキングツリー上のローカル専用資産を維持したまま一時インデックスと `git commit-tree` で親コミットを持たない単一コミット（過去コミット履歴ゼロ）を生成する `scripts/rebuild-demo-branch.mjs`（`npm run demo:rebuild-branch`）および自動検証ゲート（`scripts/verify-docs-sync.mjs` / `scripts/orchestrate-pipeline.mjs` の `PHASE-0-GUARD`）により、旧VBA資産（`legacy_vba/`、`docs/VBA_Project/`、`docs/screenshot/`、`docs/動画作成用資料/`）と個人PCパスを履歴ごと完全除外した孤立ブランチ `demo-public` を構築します。
-    - `npm run pipeline:ship:demo`（`--target=demo`）で `VITE_APP_MODE=portfolio` の全検証を通過させた上で Public リポジトリ（`public-demo` の `main` ブランチ）へ Push し、GitHub Actions がデモ公開用 Cloudflare Pages（`cgm-diabetes-manager-demo`）へ自動デプロイします（【要確認】公開ブランチ履歴のクリーン置換反映: Issue #86、デモ用 Cloudflare Secrets 登録とブランチ保護設定: Issue #87）。
+    - `npm run pipeline:ship:demo`（`--target=demo`）で `VITE_APP_MODE=portfolio` の全検証を通過させた上で Public リポジトリ（`public-demo` の `main` ブランチ）へ Push し、GitHub Actions がデモ公開用 Cloudflare Pages（`cgm-diabetes-manager-demo`）へ自動デプロイします（公開リポジトリの GitHub Secrets へのデモ専用 Cloudflare 認証情報設定および `main` ブランチ保護ルール適用を前提とします）。
     - 日常の差分反映は `git cherry-pick <commit-sha>` または `npm run demo:rebuild-branch` により `main` から `demo-public` へ反映し、本番専用の非公開資産を一切露出させずにデモアプリを更新します。
 
 ---

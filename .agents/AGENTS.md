@@ -27,7 +27,8 @@ load: 常時。詳細は「参照」の該当ファイルを必要時のみ読�
 
 ## ルール: 仕様
 - 仕様書とコードが食い違う場合、仕様書を正とする。
-- 仕様変更・実装では、仕様書を先に更新する。
+- 仕様変更・実装では、仕様書を先に更新する。ただし `docs(spec)` 先行コミットは必ず対になる `feat` / `fix` 実装コミットと同一出荷サイクルで完結させる（未実装の将来仕様だけを `main` に残さない）。
+- 禁止: 仕様書 (`docs/Web_Project/`) への未完了ステータスタグ (`【未決事項】` / `【要確認】` / `【改修予定】` / `【実装予定】` / `【将来案】`) および内部 `Issue #XX` 番号の記載。仕様書には確定した現行動作と必須環境要件のみを断定形で書き、未着手の課題・改善案・設定確認作業は Private の GitHub Issue のみで管理する（UI上の `（未実装）` disabled 表示仕様と構成図の未接続外部基盤明示は維持する）。
 - UUID主キー / categories.target_type / 論理削除 / マルチテナント構造は Web版を採用する。旧VBA資産と異なる場合も同様。
 - legacy_vba/ は参照専用。臨床計算ロジックと画面動線の確認にのみ使う。編集しない。Excel COM を実行しない。
 
@@ -76,14 +77,14 @@ load: 常時。詳細は「参照」の該当ファイルを必要時のみ読�
 - 禁止: public-demo (Public) への作成。
 - 禁止: 秘密情報・実測データ・個人情報をIssueに書くこと。
 - 報告: 作成したIssue番号をユーザーに報告する。
-- 連携: 仕様書の「【未決事項】」「【要確認】」にはIssue番号を併記する。
+- 分離: 仕様書には未決・要確認タグや内部 Issue 番号を書かず（必須環境要件のみ記述）、人の作業・判断ステータスは Private の GitHub Issue のみで管理する。
 - 形式とコマンド: skill: ai-orchestrator-pipeline
 
 ## ルール: サブエージェント
 - 指定されたスコープ外のファイルを修正しない。
 
 ## 手順: 開発 (この順序を守る。コードを先に書かない)
-1. 4軸で評価する。仕様書 (`docs/Web_Project/SPEC_*.md`, `docs/Web_Project/ARCHITECTURE.md`)・`docs/Web_Project/USER_GUIDE.md`・`docs/Web_Project/TEST_PLAN.md`・図面を先に更新する。
+1. 対象領域に関連する Open Issue (`gh issue list --repo inzm/cgm-diabates-manager-web --state open`) を事前確認し（オフライン・未認証環境を除く）、4軸で評価する。未決の論点がある場合は仕様書を編集する前にユーザーへ確認して確定させる。確定後、仕様書 (`docs/Web_Project/SPEC_*.md`, `docs/Web_Project/ARCHITECTURE.md`)・`docs/Web_Project/USER_GUIDE.md`・`docs/Web_Project/TEST_PLAN.md`・図面を先に更新する。
 2. 評価結果と更新した仕様書をユーザーに提示し、合意を得る。
 3. 仕様先行の記録 (第1コミット): 合意した仕様書・図面のみを `docs(spec): <要約>` でコミットする (Git履歴上で仕様先行を証明する)。
 4. 実装: 合意した仕様のとおりにコード・型定義・DDL・テストを実装する。推測コードとハリボテを入れない。

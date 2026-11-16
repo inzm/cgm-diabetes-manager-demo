@@ -87,7 +87,7 @@
 - ブラウザの `beforeinstallprompt` イベントを `usePwaInstallPrompt()` フック（`src/lib/pwa.ts`）で捕捉。
 - 日常のヘッダー領域を圧迫しないよう、ヘッダー上には配置せず、**設定画面（`SettingsView.tsx` / `VerificationPwaSection.tsx` の「5. 動作検証・アプリ追加」）内に「ホーム画面にアプリを追加」ボタン**として配置（`isInstallable === true` の場合のみ表示）。
 
-### 4.3 オンライン復帰時の自動同期（`src/contexts/PatientContext.tsx` / `src/lib/pwa.ts`、#84）
+### 4.3 オンライン復帰時の自動同期（`src/contexts/PatientContext.tsx` / `src/lib/pwa.ts`）
 - 目的: オフライン中に保存した記録を、利用者の操作を待たずにクラウドへ送り、他端末の変更を受け取る。
 - きっかけ:
   - `window` の `online` イベント。
@@ -112,7 +112,7 @@
   - オフライン切断時に、ユーザーへ安心感を与えるオフラインバナー（`OfflineBanner.tsx`）が表示されること。
 - [x] **DoD-5: PWAインストールプロンプト対応（通常モード）**
   - `beforeinstallprompt` イベントを検知し、通常モードの設定画面（`SettingsView.tsx`）のインストール案内ボタンが適切に制御されること（デモアプリでは該当セクションを非表示化）。
-- [x] **DoD-7: オンライン復帰時の自動同期（#84）**
+- [x] **DoD-7: オンライン復帰時の自動同期**
   - オフラインで食事を保存した後にオンラインへ戻すと、保存・再読み込み・「今すぐ同期」を行わなくてもクラウドへ送信され、「最終同期」時刻が更新されること。閲覧のみでは送信されず受信のみ行われ、デモアプリでは同期処理が呼ばれないこと。
 - [x] **DoD-6: セキュリティレスポンスヘッダー (`public/_headers`)・コンソール出力クリーンアップ & ビルド品質**
   - `public/_headers` により `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy`、`Permissions-Policy` が配信され、`public/sw.js` や `src/lib/pwa.ts` 等から不要な `console.log` が除去され、TypeScript 型検査（`npm run typecheck`）および本番ビルド（`npm run build`）がエラーゼロでパスすること。

@@ -20,8 +20,8 @@ description: 画面デザイン修正・機能追加・仕様変更の際に、4
    - 未実装機能のボタンは、テキストに「（未実装）」を含めて disabled にする。
    - localStorage 等に APIキー・秘密情報を保存しない。「安全に保管」など事実と異なる表示をしない。
    - Gemini API連携は BFFプロキシ /api/gemini と内蔵の標準辞書フォールバックに統一する。
-6. 変更の前後で4軸 (セキュリティ・拡張性・保守性・ユーザビリティ) を評価する。問題やトレードオフがあればユーザーに相談する。
-7. npm run test:docs (scripts/verify-docs-sync.mjs) を通す。検出対象: ソースと仕様書の対応、localStorageへのAPIキー保存、虚偽文言、window.confirm、UIへの開発者用語。
+6. 変更の前後で関連する Open Issue (`gh issue list --repo inzm/cgm-diabates-manager-web --state open`) を確認のうえ4軸 (セキュリティ・拡張性・保守性・ユーザビリティ) を評価する。未決の論点やトレードオフは仕様書を編集する前にユーザーに相談して確定させる（仕様書内に `【未決事項】` / `【要確認】` / `【改修予定】` / `【実装予定】` / `【将来案】` タグや内部 `Issue #XX` 番号を書かず、未着手項目は Private Issue のみで管理する）。
+7. npm run test:docs (scripts/verify-docs-sync.mjs) を通す。検出対象: ソースと仕様書の対応、未完了ステータスタグ混入、localStorageへのAPIキー保存、虚偽文言、window.confirm、UIへの開発者用語。
 
 ## 対応表: 変更したソース → 同時に更新する仕様書
 (特記のない仕様書は docs/Web_Project/ 配下)
@@ -41,9 +41,9 @@ description: 画面デザイン修正・機能追加・仕様変更の際に、4
 | 新規仕様書の追加・名称変更 | README.md |
 
 ## 手順 (2段階記録: Spec-First の証明)
-1. 4軸評価。問題・トレードオフがあればユーザーに相談する。
-2. 仕様書、図面 (diagrams/*)、操作・招待手順を変えた場合は USER_GUIDE.md、テスト計画 TEST_PLAN.md を先に更新してユーザー合意を得る。
-3. 第1コミット (仕様先行の証明): `git add docs/Web_Project && git commit -m "docs(spec): <仕様変更の要約>"` で仕様変更のみを先に記録する。
+1. Open Issue (`gh issue list --repo inzm/cgm-diabates-manager-web --state open`) の確認と4軸評価。未決の論点・トレードオフがあれば仕様書を編集する前にユーザーに相談して確定させる。
+2. 確定した仕様に基づき、仕様書、図面 (diagrams/*)、操作・招待手順を変えた場合は USER_GUIDE.md、テスト計画 TEST_PLAN.md を先に更新してユーザー合意を得る。
+3. 第1コミット (仕様先行の証明): `git add docs/Web_Project && git commit -m "docs(spec): <仕様変更の要約>"` で仕様変更のみを先に記録する（同一サイクル内で必ず続く実装コミットと対にする）。
 4. 実装と、単体・統合・E2Eテストの追加。
 5. 検証: `npm run verify:all` または `npm run pipeline:verify`。
 6. 第2コミットと出荷: `npm run pipeline:ship:personal -- --message "feat(personal): <実装の要約>"` / `npm run pipeline:ship:demo` (詳細は skill: ai-orchestrator-pipeline)。
