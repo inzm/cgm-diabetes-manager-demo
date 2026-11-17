@@ -515,17 +515,14 @@ describe('gemini (方式1: BFFプロキシ連携 & 日本食品標準成分表�
     });
 
     it('INITIAL_FOODS（初期登録食品）と一致する料理がマスタ定義値・単位通りに推定されること', () => {
-      expect(estimateCarbsLocally('オレンジジュース(100%)', 1, '杯').carbs_g).toBe(21.0);
-      expect(estimateCarbsLocally('オレンジジュース', 1, '杯').carbs_g).toBe(21.0);
-      expect(estimateCarbsLocally('野菜・果実ミックスジュース', 1, '本').carbs_g).toBe(15.4);
-      expect(estimateCarbsLocally('コーンスープ', 1, '杯').carbs_g).toBe(12.5);
-      expect(estimateCarbsLocally('サバの味噌煮', 1, '切れ').carbs_g).toBe(11.2);
-      expect(estimateCarbsLocally('豚肉の生姜焼き', 1, '人前').carbs_g).toBe(6.5);
-      expect(estimateCarbsLocally('ロールパン(2個)', 2, '個(60g)').carbs_g).toBe(28.0);
+      expect(estimateCarbsLocally('天ぷらうどん', 1, '人前').carbs_g).toBe(58.0);
+      expect(estimateCarbsLocally('おろしそば', 1, '人前').carbs_g).toBe(48.0);
+      expect(estimateCarbsLocally('豚の生姜焼き', 1, '人前').carbs_g).toBe(6.5);
+      expect(estimateCarbsLocally('ロールパン', 2, '個').carbs_g).toBe(28.0);
       expect(estimateCarbsLocally('ロールパン', 1, '個').carbs_g).toBe(14.0);
-      expect(estimateCarbsLocally('握り寿司', 5, '貫').carbs_g).toBe(39.0);
-      expect(estimateCarbsLocally('焼き餃子', 3, '個').carbs_g).toBe(14.0);
-      expect(estimateCarbsLocally('鶏の唐揚げ', 2, '個').carbs_g).toBe(4.4);
+      expect(estimateCarbsLocally('焼き餃子', 1, '人前').carbs_g).toBe(28.0);
+      expect(estimateCarbsLocally('鶏の唐揚げ', 1, '人前').carbs_g).toBe(8.8);
+      expect(estimateCarbsLocally('カフェラテ', 1, '杯').carbs_g).toBe(6.8);
     });
   });
 

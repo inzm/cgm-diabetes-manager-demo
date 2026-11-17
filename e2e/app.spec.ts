@@ -317,36 +317,40 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     await expect(page.getByText('特製カツ丼E2E')).toBeVisible();
 
-    // 2. よく使う活動の新規登録 & 0分活動（持効型インスリン投与）の編集オープン時に '0' が30分で上書きされないこと・未変更キャンセルで即閉じることを検証
+    // 2. よく使う活動の新規登録 & 既存活動の編集オープン時に標準時間が保持され・未変更キャンセルで即閉じること、および0分活動が30分で上書きされないことを検証
     await page.getByRole('button', { name: /よく使う活動/ }).click();
-    await page.getByText('持効型インスリン投与').first().click();
+    await page.getByText('ウォーキング').first().click();
     await expect(page.getByRole('heading', { name: '活動を編集' })).toBeVisible();
-    await expect(page.locator('input[type="number"][step="5"]')).toHaveValue('0');
+    await expect(page.locator('input[type="number"][step="5"]')).toHaveValue('30');
     await page.getByRole('button', { name: 'キャンセル' }).click();
     await expect(page.getByRole('heading', { name: '活動を編集' })).toBeHidden();
 
     await page.getByRole('button', { name: '活動を追加' }).click();
     await expect(page.getByRole('heading', { name: '活動を登録' })).toBeVisible();
-    await page.getByPlaceholder('例: ウォーキング, 入浴, ブドウ糖補食').fill('エアロバイクE2E');
+    await page.getByPlaceholder('例: ウォーキング, 入浴, 筋力トレーニング').fill('エアロバイクE2E');
+    await page.locator('input[type="number"][step="5"]').fill('0');
     await page.getByRole('button', { name: '保存する' }).click();
     await expect(page.getByText('エアロバイクE2E')).toBeVisible();
+    await page.getByText('エアロバイクE2E').first().click();
+    await expect(page.locator('input[type="number"][step="5"]')).toHaveValue('0');
+    await page.getByRole('button', { name: 'キャンセル' }).click();
 
     // 3. カテゴリ削除時の「未分類」自動移動（孤児データ防止）
     await page.getByRole('button', { name: /よく使う食品/ }).click();
     await page.getByRole('button', { name: 'カテゴリを編集' }).click();
     await expect(page.getByRole('heading', { name: '食品カテゴリ管理' })).toBeVisible();
 
-    // 「調味料・その他」カテゴリの行にある削除ボタンをクリック
-    const seasoningRow = page.locator('div.justify-between', {
-      has: page.getByText('調味料・その他', { exact: true }),
+    // 「飲料」カテゴリの行にある削除ボタンをクリック
+    const drinkRow = page.locator('div.justify-between', {
+      has: page.getByText('飲料', { exact: true }),
     });
-    await seasoningRow.locator('button[title="削除"]').click();
+    await drinkRow.locator('button[title="削除"]').click();
     await page.getByRole('button', { name: '削除する' }).click();
     await page.getByRole('button', { name: '閉じる' }).click();
 
-    // 調味料だった「はちみつ」が消えずに残っていることを確認
-    await page.getByPlaceholder(/食品名で検索/).fill('はちみつ');
-    await expect(page.getByText('はちみつ')).toBeVisible();
+    // 飲料だった「緑茶」が消えずに残っていることを確認
+    await page.getByPlaceholder(/食品名で検索/).fill('緑茶');
+    await expect(page.getByText('緑茶')).toBeVisible();
     await page.getByLabel('検索クリア').click();
 
     // 4. カレンダーに戻り、食事記録・活動記録モーダルの選択肢に反映されていることを確認
@@ -412,18 +416,18 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     // ドロワー内の24時間血糖推移グラフ（ECharts SVG Renderer）が描画されていることを確認
     await expect(page.locator('.echarts-for-react svg').first()).toBeVisible();
 
-    // 食事記録モーダルを開き、ごはん 1.5杯 (55.2 * 1.5 = 82.8g) + 豚肉の生姜焼き 1人前 (6.5g) = 89.3g を追加
+    // 食事記録モーダルを開き、ごはん 1.5杯 (55.2 * 1.5 = 82.8g) + 豚の生姜焼き 1人前 (6.5g) = 89.3g を追加
     await page.getByRole('button', { name: '食事を記録' }).click();
     const masterSelect = page.getByLabel('登録済みの食品から選ぶ');
     await expect(masterSelect.locator('option')).not.toHaveCount(1);
 
-    await masterSelect.selectOption({ label: 'ごはん (1杯(150g) / 糖質55.2g)' });
+    await masterSelect.selectOption({ label: 'ごはん (1杯 / 糖質55.2g)' });
     const qtyInput = page.locator('input[type="number"]').nth(1);
     await qtyInput.fill('1.5');
     await expect(page.getByText('糖質 82.8 g')).toBeVisible();
     await page.getByRole('button', { name: '＋ リストに追加' }).click();
 
-    await masterSelect.selectOption({ label: '豚肉の生姜焼き (1人前(130g) / 糖質6.5g)' });
+    await masterSelect.selectOption({ label: '豚の生姜焼き (1人前 / 糖質6.5g)' });
     await qtyInput.fill('1');
     await page.getByRole('button', { name: '＋ リストに追加' }).click();
 
@@ -1356,19 +1360,19 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await page.getByRole('button', { name: 'カテゴリを編集' }).click();
     await expect(page.getByRole('heading', { name: '食品カテゴリ管理' })).toBeVisible();
 
-    const seasoningRow = page.locator('div.justify-between', {
-      has: page.getByText('調味料・その他', { exact: true }),
+    const drinkRow = page.locator('div.justify-between', {
+      has: page.getByText('飲料', { exact: true }),
     });
-    await seasoningRow.locator('button[title="削除"]').click();
+    await drinkRow.locator('button[title="削除"]').click();
     await page.getByRole('button', { name: '削除する' }).click();
-    await expect(seasoningRow).toHaveCount(0);
+    await expect(drinkRow).toHaveCount(0);
 
-    // 同じ「調味料・その他」を再追加して復活することを確認
-    await page.getByPlaceholder('新しいカテゴリ名を入力...').fill('調味料・その他');
+    // 同じ「飲料」を再追加して復活することを確認
+    await page.getByPlaceholder('新しいカテゴリ名を入力...').fill('飲料');
     await page.getByRole('button', { name: '追加', exact: true }).click();
     await expect(
       page.locator('div.justify-between', {
-        has: page.getByText('調味料・その他', { exact: true }),
+        has: page.getByText('飲料', { exact: true }),
       })
     ).toBeVisible();
     await page.getByRole('button', { name: '閉じる' }).click();

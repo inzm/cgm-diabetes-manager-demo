@@ -334,23 +334,23 @@ test.describe('AI Orchestration Visual Design & Multimodal Screenshot Suite @vis
       auditLog
     );
 
-    // Verify mobile food serving weights (e.g., "1 玉(250g)") do not truncate with ellipsis
-    const udonServingMetrics = await page.evaluate(() => {
-      const udonTextEl = Array.from(document.querySelectorAll('div, span')).find(
-        (el) => el.children.length === 0 && el.textContent?.trim() === '1 玉(250g)'
+    // Verify mobile food serving labels (e.g., "1 パック") do not truncate with ellipsis
+    const packServingMetrics = await page.evaluate(() => {
+      const packTextEl = Array.from(document.querySelectorAll('div, span')).find(
+        (el) => el.children.length === 0 && el.textContent?.trim() === '1 パック'
       );
-      if (!udonTextEl) return null;
+      if (!packTextEl) return null;
       return {
-        scrollWidth: udonTextEl.scrollWidth,
-        clientWidth: udonTextEl.clientWidth,
-        isTruncated: udonTextEl.scrollWidth > udonTextEl.clientWidth + 1,
+        scrollWidth: packTextEl.scrollWidth,
+        clientWidth: packTextEl.clientWidth,
+        isTruncated: packTextEl.scrollWidth > packTextEl.clientWidth + 1,
       };
     });
-    expect.soft(udonServingMetrics).not.toBeNull();
+    expect.soft(packServingMetrics).not.toBeNull();
     expect
       .soft(
-        udonServingMetrics?.isTruncated,
-        `Mobile food serving weight '1 玉(250g)' should not be truncated: ${JSON.stringify(udonServingMetrics)}`
+        packServingMetrics?.isTruncated,
+        `Mobile food serving label '1 パック' should not be truncated: ${JSON.stringify(packServingMetrics)}`
       )
       .toBe(false);
     } catch (err) {

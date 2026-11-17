@@ -26,7 +26,7 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
   // ==================== 朝食 (Low / Standard <= 100g) ====================
   {
     id: 'bf_west_toast_egg',
-    label: '洋食モーニング（トースト・ベーコンエッグ）',
+    label: '洋食モーニング（食パン・目玉焼き・ベーコン）',
     mealTime: '朝食',
     tier: 'low',
     cuisine: 'western',
@@ -54,35 +54,35 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
   },
   {
     id: 'bf_west_roll_milk',
-    label: '洋食モーニング（ロールパン・牛乳・りんご）',
+    label: '洋食モーニング（ロールパン・牛乳・バナナ）',
     mealTime: '朝食',
     tier: 'standard',
     cuisine: 'western',
     items: [
-      { foodKey: 'food_roll_bread', quantity: 1 },
+      { foodKey: 'food_roll_bread', quantity: 2 },
       { foodKey: 'food_bacon_egg', quantity: 1 },
       { foodKey: 'food_green_salad', quantity: 1 },
       { foodKey: 'food_milk', quantity: 1 },
-      { foodKey: 'food_apple', quantity: 1 },
-    ], // 28.0 + 0.5 + 3.5 + 9.6 + 17.5 = 59.1g
+      { foodKey: 'food_banana', quantity: 1 },
+    ], // 28.0 + 0.5 + 3.5 + 9.6 + 21.4 = 63.0g
   },
   {
     id: 'bf_jp_salmon_set',
-    label: '和朝食（焼き鮭定食）',
+    label: '和朝食（鮭の塩焼き定食）',
     mealTime: '朝食',
     tier: 'standard',
     cuisine: 'japanese',
     items: [
       { foodKey: 'food_rice', quantity: 1 },
       { foodKey: 'food_grilled_salmon', quantity: 1 },
-      { foodKey: 'food_spinach_ohitashi', quantity: 1 },
+      { foodKey: 'food_tamagoyaki', quantity: 1 },
       { foodKey: 'food_miso_soup', quantity: 1 },
       { foodKey: 'food_green_tea', quantity: 1 },
-    ], // 55.2 + 0.1 + 0.8 + 3.8 + 0 = 59.9g
+    ], // 55.2 + 0.1 + 2.5 + 3.8 + 0 = 61.6g
   },
   {
     id: 'bf_west_toast_banana_latte',
-    label: '洋食モーニング（トースト・バナナ・カフェラテ）',
+    label: '洋食モーニング（食パン・バナナ・カフェラテ）',
     mealTime: '朝食',
     tier: 'standard',
     cuisine: 'western',
@@ -94,90 +94,61 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
       { foodKey: 'food_cafe_latte', quantity: 1 },
     ], // 39.9 + 0.5 + 3.5 + 21.4 + 6.8 = 72.1g
   },
+  // ==================== 朝食 (High Spike ~1.1x) ====================
   {
-    id: 'bf_jp_full_set',
-    label: '和朝食（焼き鮭・卵焼き・ひじき小鉢）',
-    mealTime: '朝食',
-    tier: 'standard',
-    cuisine: 'japanese',
-    items: [
-      { foodKey: 'food_rice', quantity: 1.2 },
-      { foodKey: 'food_grilled_salmon', quantity: 1 },
-      { foodKey: 'food_tamagoyaki', quantity: 1 },
-      { foodKey: 'food_hijiki', quantity: 1 },
-      { foodKey: 'food_miso_soup', quantity: 1 },
-    ], // 66.2 + 0.1 + 2.5 + 5.2 + 3.8 = 77.8g
-  },
-  // ==================== 朝食 (High Spike ~1.15x) ====================
-  {
-    id: 'bf_high_honey_toast_juice',
-    label: '洋食モーニング（はちみつトースト2枚・バナナ・オレンジジュース）',
+    id: 'bf_high_toast_banana_milk',
+    label: '洋食モーニング（食パン2枚・バナナ2本・牛乳）',
     mealTime: '朝食',
     tier: 'high_spike',
     cuisine: 'western',
     items: [
       { foodKey: 'food_toast_6', quantity: 2 },
-      { foodKey: 'food_honey_tbsp', quantity: 1 },
       { foodKey: 'food_bacon_egg', quantity: 1 },
-      { foodKey: 'food_banana', quantity: 1 },
-      { foodKey: 'food_orange_juice', quantity: 1 },
-    ], // 53.2 + 17.0 + 0.5 + 21.4 + 21.0 = 113.1g
+      { foodKey: 'food_banana', quantity: 2 },
+      { foodKey: 'food_milk', quantity: 1 },
+      { foodKey: 'food_yogurt_plain', quantity: 1 },
+    ], // 53.2 + 0.5 + 42.8 + 9.6 + 4.9 = 111.0g
   },
 
   // ==================== 昼食 (Low / Standard <= 100g) ====================
   {
-    id: 'ln_soba_tofu',
-    label: 'かけそば＆冷奴セット',
+    id: 'ln_soba_salad',
+    label: 'おろしそば＆卵焼きセット',
     mealTime: '昼食',
     tier: 'low',
     cuisine: 'noodle_chinese',
     items: [
-      { foodKey: 'food_soba', quantity: 1 },
-      { foodKey: 'food_tofu', quantity: 1 },
-      { foodKey: 'food_spinach_ohitashi', quantity: 1 },
-      { foodKey: 'food_green_tea', quantity: 1 },
-    ], // 48.0 + 2.0 + 0.8 + 0 = 50.8g
-  },
-  {
-    id: 'ln_west_chicken_roll',
-    label: '鶏むね肉ハーブソテー＆ロールパンランチ',
-    mealTime: '昼食',
-    tier: 'low',
-    cuisine: 'western',
-    items: [
-      { foodKey: 'food_roll_bread', quantity: 1 },
-      { foodKey: 'food_chicken_saute', quantity: 1 },
-      { foodKey: 'food_potato_salad', quantity: 1 },
-      { foodKey: 'food_corn_soup', quantity: 1 },
-      { foodKey: 'food_black_coffee', quantity: 1 },
-    ], // 28.0 + 0.5 + 13.5 + 12.5 + 0 = 54.5g
-  },
-  {
-    id: 'ln_udon_salad',
-    label: 'うどん＆卵焼き・サラダセット',
-    mealTime: '昼食',
-    tier: 'low',
-    cuisine: 'noodle_chinese',
-    items: [
-      { foodKey: 'food_udon', quantity: 1 },
+      { foodKey: 'food_oroshi_soba', quantity: 1 },
       { foodKey: 'food_tamagoyaki', quantity: 1 },
       { foodKey: 'food_green_salad', quantity: 1 },
       { foodKey: 'food_green_tea', quantity: 1 },
-    ], // 52.0 + 2.5 + 3.5 + 0 = 58.0g
+    ], // 48.0 + 2.5 + 3.5 + 0 = 54.0g
+  },
+  {
+    id: 'ln_udon_salad',
+    label: '天ぷらうどん＆サラダセット',
+    mealTime: '昼食',
+    tier: 'low',
+    cuisine: 'noodle_chinese',
+    items: [
+      { foodKey: 'food_tempura_udon', quantity: 1 },
+      { foodKey: 'food_green_salad', quantity: 1 },
+      { foodKey: 'food_green_tea', quantity: 1 },
+    ], // 58.0 + 3.5 + 0 = 61.5g
   },
   {
     id: 'ln_jp_ginger_pork',
-    label: '豚肉の生姜焼き定食',
+    label: '豚の生姜焼き定食',
     mealTime: '昼食',
     tier: 'standard',
     cuisine: 'japanese',
     items: [
       { foodKey: 'food_rice', quantity: 1 },
       { foodKey: 'food_ginger_pork', quantity: 1 },
-      { foodKey: 'food_kinpira', quantity: 1 },
+      { foodKey: 'food_green_salad', quantity: 1 },
       { foodKey: 'food_miso_soup', quantity: 1 },
       { foodKey: 'food_green_tea', quantity: 1 },
-    ], // 55.2 + 6.5 + 9.5 + 3.8 + 0 = 75.0g
+    ], // 55.2 + 6.5 + 3.5 + 3.8 + 0 = 69.0g
   },
   {
     id: 'ln_ramen_half_gyoza',
@@ -200,9 +171,8 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
     items: [
       { foodKey: 'food_pasta', quantity: 1 },
       { foodKey: 'food_green_salad', quantity: 1 },
-      { foodKey: 'food_corn_soup', quantity: 1 },
-      { foodKey: 'food_black_coffee', quantity: 1 },
-    ], // 70.0 + 3.5 + 12.5 + 0 = 86.0g
+      { foodKey: 'food_cafe_latte', quantity: 1 },
+    ], // 70.0 + 3.5 + 6.8 = 80.3g
   },
   {
     id: 'ln_jp_onigiri_bento',
@@ -217,35 +187,22 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
       { foodKey: 'food_green_tea', quantity: 1 },
     ], // 76.0 + 8.8 + 2.5 + 0 = 87.3g
   },
-  // ==================== 昼食 (High Spike ~1.2x - 1.3x) ====================
-  {
-    id: 'ln_high_tendon_set',
-    label: '天丼＆みそ汁セット（外食）',
-    mealTime: '昼食',
-    tier: 'high_spike',
-    cuisine: 'japanese',
-    items: [
-      { foodKey: 'food_tendon', quantity: 1 },
-      { foodKey: 'food_miso_soup', quantity: 1 },
-      { foodKey: 'food_spinach_ohitashi', quantity: 1 },
-      { foodKey: 'food_green_tea', quantity: 1 },
-    ], // 115.0 + 3.8 + 0.8 + 0 = 119.6g
-  },
+  // ==================== 昼食 (High Spike ~1.1x - 1.25x) ====================
   {
     id: 'ln_high_curry_set',
-    label: '大盛ビーフカレー＆ポテトサラダ・カフェラテ',
+    label: '大盛カレーライス＆カフェラテ',
     mealTime: '昼食',
     tier: 'high_spike',
     cuisine: 'western',
     items: [
       { foodKey: 'food_curry_rice', quantity: 1.2 },
-      { foodKey: 'food_potato_salad', quantity: 1 },
+      { foodKey: 'food_green_salad', quantity: 1 },
       { foodKey: 'food_cafe_latte', quantity: 1 },
-    ], // 102.0 + 13.5 + 6.8 = 122.3g
+    ], // 102.0 + 3.5 + 6.8 = 112.3g
   },
   {
     id: 'ln_high_ramen_gyoza',
-    label: '大盛醤油ラーメン＆焼き餃子6個（外食）',
+    label: '大盛醤油ラーメン＆焼き餃子（外食）',
     mealTime: '昼食',
     tier: 'high_spike',
     cuisine: 'noodle_chinese',
@@ -257,48 +214,35 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
 
   // ==================== 夕食 (Low / Standard <= 100g) ====================
   {
-    id: 'dn_jp_salmon_tofu',
-    label: '焼き鮭と冷奴の和食膳',
+    id: 'dn_jp_salmon_miso',
+    label: '鮭の塩焼き和食膳',
     mealTime: '夕食',
     tier: 'low',
     cuisine: 'japanese',
     items: [
       { foodKey: 'food_rice', quantity: 0.8 },
       { foodKey: 'food_grilled_salmon', quantity: 1 },
-      { foodKey: 'food_tofu', quantity: 1 },
-      { foodKey: 'food_hijiki', quantity: 1 },
+      { foodKey: 'food_tamagoyaki', quantity: 1 },
+      { foodKey: 'food_green_salad', quantity: 1 },
       { foodKey: 'food_miso_soup', quantity: 1 },
-    ], // 44.2 + 0.1 + 2.0 + 5.2 + 3.8 = 55.3g
+    ], // 44.2 + 0.1 + 2.5 + 3.5 + 3.8 = 54.1g
   },
   {
     id: 'dn_jp_ginger_tonjiru',
-    label: '豚肉の生姜焼き＆豚汁定食',
+    label: '豚の生姜焼き＆豚汁定食',
     mealTime: '夕食',
     tier: 'low',
     cuisine: 'japanese',
     items: [
       { foodKey: 'food_rice', quantity: 0.9 },
       { foodKey: 'food_ginger_pork', quantity: 1 },
-      { foodKey: 'food_spinach_ohitashi', quantity: 1 },
+      { foodKey: 'food_green_salad', quantity: 1 },
       { foodKey: 'food_tonjiru', quantity: 1 },
-    ], // 49.7 + 6.5 + 0.8 + 6.5 = 63.5g
-  },
-  {
-    id: 'dn_jp_saba_misoni',
-    label: 'サバの味噌煮定食',
-    mealTime: '夕食',
-    tier: 'standard',
-    cuisine: 'japanese',
-    items: [
-      { foodKey: 'food_rice', quantity: 1 },
-      { foodKey: 'food_saba_misoni', quantity: 1 },
-      { foodKey: 'food_kinpira', quantity: 1 },
-      { foodKey: 'food_miso_soup', quantity: 1 },
-    ], // 55.2 + 11.2 + 9.5 + 3.8 = 79.7g
+    ], // 49.7 + 6.5 + 3.5 + 6.5 = 66.2g
   },
   {
     id: 'dn_west_hamburg_set',
-    label: 'ハンバーグ＆コーンスープ洋食セット',
+    label: 'ハンバーグ洋食セット',
     mealTime: '夕食',
     tier: 'standard',
     cuisine: 'western',
@@ -306,21 +250,8 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
       { foodKey: 'food_rice', quantity: 1 },
       { foodKey: 'food_hamburg', quantity: 1 },
       { foodKey: 'food_green_salad', quantity: 1 },
-      { foodKey: 'food_corn_soup', quantity: 1 },
-    ], // 55.2 + 12.5 + 3.5 + 12.5 = 83.7g
-  },
-  {
-    id: 'dn_jp_sushi_set',
-    label: '握り寿司(10貫)＆みそ汁セット',
-    mealTime: '夕食',
-    tier: 'standard',
-    cuisine: 'japanese',
-    items: [
-      { foodKey: 'food_sushi_10', quantity: 1 },
-      { foodKey: 'food_tamagoyaki', quantity: 1 },
-      { foodKey: 'food_miso_soup', quantity: 1 },
-      { foodKey: 'food_green_tea', quantity: 1 },
-    ], // 78.0 + 2.5 + 3.8 + 0 = 84.3g
+      { foodKey: 'food_black_coffee', quantity: 1 },
+    ], // 55.2 + 12.5 + 3.5 + 0 = 71.2g
   },
   {
     id: 'dn_jp_karaage_tonjiru',
@@ -331,24 +262,11 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
     items: [
       { foodKey: 'food_rice', quantity: 1.1 },
       { foodKey: 'food_karaage', quantity: 1 },
-      { foodKey: 'food_potato_salad', quantity: 1 },
+      { foodKey: 'food_green_salad', quantity: 1 },
       { foodKey: 'food_tonjiru', quantity: 1 },
-    ], // 60.7 + 8.8 + 13.5 + 6.5 = 89.5g
+    ], // 60.7 + 8.8 + 3.5 + 6.5 = 79.5g
   },
-  // ==================== 夕食 (High Spike ~1.2x - 1.4x) ====================
-  {
-    id: 'dn_high_sushi_dango',
-    label: '特上握り寿司(12貫)＆みたらし団子',
-    mealTime: '夕食',
-    tier: 'high_spike',
-    cuisine: 'japanese',
-    items: [
-      { foodKey: 'food_sushi_10', quantity: 1.2 },
-      { foodKey: 'food_miso_soup', quantity: 1 },
-      { foodKey: 'food_mitarashi_dango', quantity: 1 },
-      { foodKey: 'food_green_tea', quantity: 1 },
-    ], // 93.6 + 3.8 + 24.0 + 0 = 121.4g
-  },
+  // ==================== 夕食 (High Spike ~1.2x) ====================
   {
     id: 'dn_high_gyoza_karaage_dinner',
     label: '中華ディナー（大盛ごはん・焼き餃子・唐揚げ）',
@@ -359,46 +277,33 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
       { foodKey: 'food_rice', quantity: 1.4 },
       { foodKey: 'food_gyoza', quantity: 1 },
       { foodKey: 'food_karaage', quantity: 1 },
-      { foodKey: 'food_potato_salad', quantity: 1 },
-    ], // 77.3 + 28.0 + 8.8 + 13.5 = 127.6g
+      { foodKey: 'food_green_salad', quantity: 1 },
+    ], // 77.3 + 28.0 + 8.8 + 3.5 = 117.6g
   },
   {
-    id: 'dn_high_pasta_shortcake',
-    label: 'イタリアンディナー（大盛パスタ・コーンスープ・ショートケーキ）',
+    id: 'dn_high_pasta_ice',
+    label: 'イタリアンディナー（大盛パスタ・アイスクリーム）',
     mealTime: '夕食',
     tier: 'high_spike',
     cuisine: 'western',
     items: [
-      { foodKey: 'food_pasta', quantity: 1.2 },
+      { foodKey: 'food_pasta', quantity: 1.3 },
       { foodKey: 'food_green_salad', quantity: 1 },
-      { foodKey: 'food_corn_soup', quantity: 1 },
-      { foodKey: 'food_shortcake', quantity: 1 },
-    ], // 84.0 + 3.5 + 12.5 + 38.5 = 138.5g
+      { foodKey: 'food_ice_cream', quantity: 1 },
+    ], // 91.0 + 3.5 + 23.2 = 117.7g
   },
 
   // ==================== 週末の間食・夜食 (間食) ====================
   {
-    id: 'sn_nuts_choco',
-    label: '素焼きナッツ＆高カカオチョコ',
+    id: 'sn_yogurt_coffee',
+    label: 'ヨーグルト＆ブラックコーヒー',
     mealTime: '間食',
     tier: 'low',
     cuisine: 'snack',
     items: [
-      { foodKey: 'food_mixed_nuts', quantity: 1 },
-      { foodKey: 'food_high_cacao_choco', quantity: 1 },
+      { foodKey: 'food_yogurt_plain', quantity: 1 },
       { foodKey: 'food_black_coffee', quantity: 1 },
-    ], // 3.2 + 4.2 + 0 = 7.4g
-  },
-  {
-    id: 'sn_cheesecake_coffee',
-    label: 'ベイクドチーズケーキ＆コーヒー',
-    mealTime: '間食',
-    tier: 'standard',
-    cuisine: 'snack',
-    items: [
-      { foodKey: 'food_cheesecake', quantity: 1 },
-      { foodKey: 'food_black_coffee', quantity: 1 },
-    ], // 22.0g
+    ], // 4.9g
   },
   {
     id: 'sn_cream_puff_latte',
@@ -421,17 +326,6 @@ export const MEAL_TEMPLATES: MealTemplate[] = [
       { foodKey: 'food_ice_cream', quantity: 1 },
       { foodKey: 'food_green_tea', quantity: 1 },
     ], // 23.2g
-  },
-  {
-    id: 'sn_night_potato_chips',
-    label: '夜食ポテトチップス',
-    mealTime: '間食',
-    tier: 'standard',
-    cuisine: 'snack',
-    items: [
-      { foodKey: 'food_potato_chips', quantity: 1 },
-      { foodKey: 'food_green_tea', quantity: 1 },
-    ], // 32.8g
   },
 ];
 
@@ -764,22 +658,7 @@ export function generateRealisticEventsFromReadings(
       });
     }
 
-    // 3. 毎晩の持効型インスリン投与（22:00 定時 10U）
-    mealAndActivityEvents.push({
-      id: deterministicUuid(`${patientId}_basal_${dateStr}`),
-      user_id: patientId,
-      event_datetime: `${dateStr}T22:00:00.000Z`,
-      event_type: '活動',
-      timing_category: 'インスリン',
-      memo: '持効型インスリン投与 (就寝前)',
-      insulin_units: 10,
-      duration_minutes: 0,
-      is_deleted: false,
-      created_at: nowIso,
-      updated_at: nowIso,
-    });
-
-    // 4. 週3回程度の有酸素運動・ストレッチ記録
+    // 3. 週3回程度の有酸素運動・ストレッチ記録
     const exerciseHash = deterministicHash(`${dateStr}_exercise`);
     if (exerciseHash % 7 < 3) {
       const exType =

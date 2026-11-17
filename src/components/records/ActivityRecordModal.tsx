@@ -521,7 +521,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="例: ウォーキング、ジョギング、入浴、持効型インスリン投与"
+              placeholder="例: ウォーキング、ジョギング、入浴、筋力トレーニング"
               value={eventName}
               disabled={isReadOnly}
               onChange={(e) => setEventName(e.target.value)}

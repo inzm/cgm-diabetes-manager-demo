@@ -275,8 +275,8 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       // 代表的食品の日本食品標準成分表との一致確認
       const rice = INITIAL_FOODS.find((f) => f.key === 'food_rice')!;
       expect(rice.carbs_per_unit).toBe(55.2);
-      const udon = INITIAL_FOODS.find((f) => f.key === 'food_udon')!;
-      expect(udon.carbs_per_unit).toBe(52.0);
+      const udon = INITIAL_FOODS.find((f) => f.key === 'food_tempura_udon')!;
+      expect(udon.carbs_per_unit).toBe(58.0);
     });
   });
 
@@ -284,24 +284,20 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
     const foodMap = new Map(INITIAL_FOODS.map((f) => [f.key, f]));
     const stapleKeys = new Set([
       'food_rice',
+      'food_onigiri',
       'food_toast_6',
       'food_roll_bread',
-      'food_udon',
-      'food_soba',
+      'food_tempura_udon',
+      'food_oroshi_soba',
       'food_ramen',
       'food_pasta',
       'food_curry_rice',
-      'food_tendon',
-      'food_sushi_10',
-      'food_onigiri',
     ]);
     const breadKeys = new Set(['food_toast_6', 'food_roll_bread']);
     const misoAndJpSideKeys = new Set([
       'food_miso_soup',
       'food_tonjiru',
       'food_natto',
-      'food_hijiki',
-      'food_kinpira',
     ]);
 
     it('全献立テンプレートで主食の重複がなく、パンとみそ汁・納豆等の不自然な食べ合わせが存在しないこと', () => {
@@ -409,9 +405,8 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       expect(initialEvents).toHaveLength(INITIAL_EVENTS.length);
       expect(initialCats).toHaveLength(INITIAL_CATEGORIES.length);
 
-      // 0分活動（持効型インスリン投与・ブドウ糖補食）の default_duration === 0 が正確に保持されていること
-      const zeroDurationEvents = initialEvents.filter((e) => e.default_duration === 0);
-      expect(zeroDurationEvents.length).toBeGreaterThanOrEqual(2);
+      // 各初期活動の標準実施時間（default_duration > 0）が正確に保持されていること
+      expect(initialEvents.every((e) => (e.default_duration ?? 0) > 0)).toBe(true);
 
       // 食品の追加・既存食品の削除・カテゴリの削除を実行
       await db.food_master.add({

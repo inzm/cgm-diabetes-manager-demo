@@ -196,7 +196,7 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
               value={eventName}
               disabled={isReadOnly}
               onChange={(e) => setEventName(e.target.value)}
-              placeholder="例: ウォーキング, 入浴, ブドウ糖補食"
+              placeholder="例: ウォーキング, 入浴, 筋力トレーニング"
               className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
               required
             />
