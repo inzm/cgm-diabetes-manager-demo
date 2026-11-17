@@ -28,12 +28,16 @@ export function enforceProductionEnvGuard(mode: string): Plugin {
 }
 
 export function stampServiceWorkerRevision(): Plugin {
+  let resolvedOutDir = path.resolve(__dirname, 'dist-personal');
   return {
     name: 'stamp-service-worker-revision',
     apply: 'build',
+    configResolved(config) {
+      resolvedOutDir = path.resolve(config.root, config.build.outDir);
+    },
     closeBundle() {
-      const distIndex = path.resolve(__dirname, 'dist', 'index.html');
-      const distSw = path.resolve(__dirname, 'dist', 'sw.js');
+      const distIndex = path.join(resolvedOutDir, 'index.html');
+      const distSw = path.join(resolvedOutDir, 'sw.js');
       if (!fs.existsSync(distIndex) || !fs.existsSync(distSw)) {
         return;
       }
@@ -50,8 +54,12 @@ export function stampServiceWorkerRevision(): Plugin {
 }
 
 function excludeDemoDataInPersonalMode(mode: string): Plugin {
+  let resolvedOutDir = path.resolve(__dirname, 'dist-personal');
   return {
     name: 'exclude-demo-data-in-personal-mode',
+    configResolved(config) {
+      resolvedOutDir = path.resolve(config.root, config.build.outDir);
+    },
     transformIndexHtml(html) {
       if (mode === 'portfolio') {
         return html.replace(
@@ -63,7 +71,7 @@ function excludeDemoDataInPersonalMode(mode: string): Plugin {
     },
     closeBundle() {
       if (mode !== 'personal') return;
-      const distDataDir = path.resolve(__dirname, 'dist', 'data');
+      const distDataDir = path.join(resolvedOutDir, 'data');
       if (!fs.existsSync(distDataDir)) return;
 
       for (const entry of fs.readdirSync(distDataDir)) {
@@ -153,6 +161,7 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
+    outDir: mode === 'portfolio' ? 'dist-portfolio' : 'dist-personal',
     chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {

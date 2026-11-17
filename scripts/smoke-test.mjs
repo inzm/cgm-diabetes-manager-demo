@@ -1,79 +1,60 @@
 /**
- * 開発サーバー（Vite dev server）ランタイム・スモークテスト
- * 
- * 目的:
- * - 静的ビルド（tsc / vite build）では検知できない、Vite dev server の
- *   Pre-transform error, Failed to resolve import, モジュール解決エラー、
- *   HTTP 500 等のランタイムエラーを自動検出し、ブラウザでの画面クラッシュを防ぐ。
- * - 検査対象の全エンドポイントがローカルディスク上にも実在することを検証し、
- *   Vite SPA フォールバックによるパス間違いのすり抜けを防止する。
+ * 開発サーバー（Vite dev server）8並列ランタイム・スモークテスト
+ *
+ * 強化点:
+ * - ハードコード配列を廃止し、src/ ファイルシステム走査から検査対象エンドポイントを単一自動導出
+ * - 無関係な localhost:3000 プロセスの無検証流用を廃止し、毎回ポート 0 (OS 空きポート自動割当) の隔離エフェメラル Vite サーバーを起動
+ * - 8並列ワーカープールで全エンドポイントを検証 (約20s -> 約2〜3s)
  */
 
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 
-const DEFAULT_DEV_SERVER_URL = process.env.DEV_SERVER_URL || 'http://localhost:3000';
-const ROOT_DIR = process.cwd();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, '..');
+const CONCURRENCY = 8;
 
-export const ENDPOINTS_TO_CHECK = [
-  '/',
-  '/src/main.tsx',
-  '/src/App.tsx',
-  '/src/components/common/Header.tsx',
-  '/src/components/common/OfflineBanner.tsx',
-  '/src/components/common/BottomNav.tsx',
-  '/src/components/common/ConfirmDialog.tsx',
-  '/src/components/common/DemoWelcomeModal.tsx',
-  '/src/components/common/AuthGateScreen.tsx',
-  '/src/components/common/PasswordStrengthChecklist.tsx',
-  '/src/components/calendar/CalendarView.tsx',
-  '/src/components/calendar/CalendarGrid.tsx',
-  '/src/components/calendar/CalendarDayCell.tsx',
-  '/src/components/calendar/SelectedDaySummary.tsx',
-  '/src/components/calendar/Sparkline.tsx',
-  '/src/components/daily/DailyDetailDrawer.tsx',
-  '/src/components/daily/DailyGlucoseChart.tsx',
-  '/src/components/analysis/AnalysisView.tsx',
-  '/src/components/analysis/FoodImpactTab.tsx',
-  '/src/components/analysis/TimeAnomalyTab.tsx',
-  '/src/components/analysis/WeekdayTrendsTab.tsx',
-  '/src/components/analysis/CarbInsulinTrendTab.tsx',
-  '/src/components/foods/FoodMasterView.tsx',
-  '/src/components/foods/FoodCard.tsx',
-  '/src/components/foods/FoodEditModal.tsx',
-  '/src/components/foods/EventEditModal.tsx',
-  '/src/components/foods/CategoryManageModal.tsx',
-  '/src/components/records/MealRecordModal.tsx',
-  '/src/components/records/ActivityRecordModal.tsx',
-  '/src/components/import/CsvImportModal.tsx',
-  '/src/components/settings/SettingsView.tsx',
-  '/src/components/settings/TargetRangeSection.tsx',
-  '/src/components/settings/DefaultInsulinSection.tsx',
-  '/src/components/settings/DataBackupSection.tsx',
-  '/src/components/settings/CloudSyncFamilySection.tsx',
-  '/src/components/settings/VerificationPwaSection.tsx',
-  '/src/contexts/PatientContext.tsx',
-  '/src/lib/aggregates.ts',
-  '/src/lib/analysisCalculators.ts',
-  '/src/lib/anomalyExtractor.ts',
-  '/src/lib/backupRestore.ts',
-  '/src/lib/dateUtils.ts',
-  '/src/lib/db.ts',
-  '/src/lib/demoMealGenerator.ts',
-  '/src/lib/echartsCore.ts',
-  '/src/lib/foodSeed.ts',
-  '/src/lib/gemini.ts',
-  '/src/lib/pwa.ts',
-  '/src/lib/realGlucoseLoader.ts',
-  '/src/lib/supabase.ts',
-  '/src/lib/syncEngine.ts',
-  '/src/lib/useAnimatedModal.ts',
-  '/src/lib/utils.ts',
-  '/src/lib/uuidUtils.ts',
-  '/src/types/database.ts',
-  '/src/workers/csvParser.worker.ts',
-];
+function walkSrcModules(dir, extFilter) {
+  let results = [];
+  if (!fs.existsSync(dir)) return results;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === '__tests__' || entry.name === 'test') continue;
+      results = results.concat(walkSrcModules(full, extFilter));
+    } else if (
+      extFilter.some((ext) => full.endsWith(ext)) &&
+      !full.endsWith('.test.ts') &&
+      !full.endsWith('.test.tsx') &&
+      !full.endsWith('.d.ts')
+    ) {
+      results.push('/' + path.relative(ROOT_DIR, full).split(path.sep).join('/'));
+    }
+  }
+  return results.sort();
+}
+
+export function deriveSmokeEndpoints(rootDir = ROOT_DIR) {
+  const srcRoot = path.join(rootDir, 'src');
+  const discovered = new Set(['/']);
+  for (const entry of ['/src/main.tsx', '/src/App.tsx']) {
+    if (fs.existsSync(path.join(rootDir, entry.slice(1)))) {
+      discovered.add(entry);
+    }
+  }
+  for (const sub of ['components', 'contexts', 'lib', 'types', 'workers']) {
+    for (const mod of walkSrcModules(path.join(srcRoot, sub), ['.ts', '.tsx'])) {
+      discovered.add(mod);
+    }
+  }
+  return Array.from(discovered);
+}
+
+export const ENDPOINTS_TO_CHECK = deriveSmokeEndpoints();
 
 const ERROR_PATTERNS = [
   'Failed to resolve import',
@@ -84,109 +65,151 @@ const ERROR_PATTERNS = [
   'Cannot find module',
 ];
 
-async function isServerListening(baseUrl) {
+async function checkSingleEndpoint(activeBaseUrl, endpoint, timeoutMs = 20_000) {
+  if (endpoint !== '/') {
+    const localPath = path.join(ROOT_DIR, endpoint.replace(/^\//, ''));
+    if (!fs.existsSync(localPath)) {
+      return {
+        endpoint,
+        status: 'MISSING_FILE',
+        error: `${endpoint} does NOT exist on disk (${localPath})`,
+      };
+    }
+  }
+
+  const targetUrl = `${activeBaseUrl}${endpoint}`;
   try {
-    const res = await fetch(`${baseUrl}/`, { signal: AbortSignal.timeout(1500) });
-    return res.status === 200;
-  } catch {
-    return false;
+    const response = await fetch(targetUrl, { signal: AbortSignal.timeout(timeoutMs) });
+    const text = await response.text();
+
+    if (response.status !== 200) {
+      return {
+        endpoint,
+        status: 'FAIL',
+        code: response.status,
+        error: `HTTP ${response.status}: ${text.slice(0, 240)}`,
+      };
+    }
+
+    if (endpoint !== '/' && text.trimStart().toLowerCase().startsWith('<!doctype html>')) {
+      return {
+        endpoint,
+        status: 'SPA_FALLBACK_ERR',
+        error: 'Returned HTML fallback instead of transformed JS module',
+      };
+    }
+
+    const foundError = ERROR_PATTERNS.find((pattern) => text.includes(pattern));
+    if (foundError) {
+      return {
+        endpoint,
+        status: 'FAIL',
+        pattern: foundError,
+        error: `Contains error pattern "${foundError}": ${text.slice(0, 240)}`,
+      };
+    }
+
+    return { endpoint, status: 'PASS', code: 200 };
+  } catch (err) {
+    return {
+      endpoint,
+      status: 'CONN_ERR',
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
-async function runSmokeTest() {
-  let activeBaseUrl = DEFAULT_DEV_SERVER_URL;
+export function allocateEphemeralPort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      srv.close((err) => (err ? reject(err) : resolve(port)));
+    });
+    srv.on('error', reject);
+  });
+}
+
+export async function runSmokeTest() {
+  const explicitUrl = (process.env.SMOKE_BASE_URL || '').trim();
+  let activeBaseUrl = explicitUrl;
   let ephemeralServer = null;
+  const startedAt = Date.now();
 
   try {
-    const alreadyRunning = await isServerListening(activeBaseUrl);
-    if (!alreadyRunning) {
+    if (!activeBaseUrl) {
+      const ephemeralPort = await allocateEphemeralPort();
       ephemeralServer = await createServer({
         root: ROOT_DIR,
         mode: 'personal',
         logLevel: 'error',
+        optimizeDeps: {
+          noDiscovery: true,
+          include: [],
+        },
         server: {
           host: '127.0.0.1',
-          port: 0,
-          strictPort: false,
+          port: ephemeralPort,
+          strictPort: true,
         },
       });
       await ephemeralServer.listen();
       const address = ephemeralServer.httpServer?.address();
-      const port = typeof address === 'object' && address ? address.port : 3000;
-      activeBaseUrl = `http://127.0.0.1:${port}`;
+      if (!address || typeof address !== 'object') {
+        throw new Error('Failed to bind ephemeral Vite dev server port.');
+      }
+      activeBaseUrl = `http://127.0.0.1:${address.port}`;
     }
 
+    const endpoints = deriveSmokeEndpoints();
     console.log(`\n======================================================`);
-    console.log(`🚀 Starting Runtime Smoke Test on ${activeBaseUrl} (${ephemeralServer ? 'ephemeral Vite dev server' : 'existing dev server'})`);
+    console.log(
+      `🚀 Starting ${CONCURRENCY}-Parallel Runtime Smoke Test on ${activeBaseUrl} (${endpoints.length} endpoints)`
+    );
     console.log(`======================================================\n`);
 
-    let hasError = false;
-    const results = [];
+    const results = new Array(endpoints.length);
+    // Warm up Vite esbuild dependency pre-bundling on entrypoints first so parallel workers never block on cold optimizeDeps lock
+    const warmupCount = Math.min(2, endpoints.length);
+    for (let i = 0; i < warmupCount; i++) {
+      results[i] = await checkSingleEndpoint(activeBaseUrl, endpoints[i], 45_000);
+    }
 
-    for (const endpoint of ENDPOINTS_TO_CHECK) {
-      // 1. 実ファイル存在確認 ('/' 以外)
-      if (endpoint !== '/') {
-        const localPath = path.join(ROOT_DIR, endpoint.replace(/^\//, ''));
-        if (!fs.existsSync(localPath)) {
-          console.error(`❌ [FAIL] ${endpoint} does NOT exist on disk (${localPath})`);
-          hasError = true;
-          results.push({ endpoint, status: 'MISSING_FILE' });
-          continue;
-        }
-      }
+    let cursor = warmupCount;
 
-      const targetUrl = `${activeBaseUrl}${endpoint}`;
-      try {
-        const response = await fetch(targetUrl);
-        const text = await response.text();
-
-        if (response.status !== 200) {
-          console.error(`❌ [FAIL] ${endpoint} returned HTTP ${response.status}`);
-          console.error(`   Error Snippet: ${text.slice(0, 300)}...`);
-          hasError = true;
-          results.push({ endpoint, status: 'FAIL', code: response.status });
-          continue;
-        }
-
-        // 2. Vite SPA フォールバック検知 ('/' 以外のモジュールリクエストに <!DOCTYPE html> が返った場合は404相当)
-        if (endpoint !== '/' && text.trimStart().toLowerCase().startsWith('<!doctype html>')) {
-          console.error(`❌ [FAIL] ${endpoint} returned HTML fallback instead of transformed JS module`);
-          hasError = true;
-          results.push({ endpoint, status: 'SPA_FALLBACK_ERR' });
-          continue;
-        }
-
-        // 3. エラーパターンの検出
-        const foundError = ERROR_PATTERNS.find((pattern) => text.includes(pattern));
-        if (foundError) {
-          console.error(`❌ [FAIL] ${endpoint} contains error pattern: "${foundError}"`);
-          console.error(`   Error Snippet: ${text.slice(0, 300)}...`);
-          hasError = true;
-          results.push({ endpoint, status: 'FAIL', pattern: foundError });
-          continue;
-        }
-
-        console.log(`✅ [PASS] ${endpoint} (HTTP 200, clean module response)`);
-        results.push({ endpoint, status: 'PASS', code: 200 });
-      } catch (err) {
-        console.error(`❌ [ERROR] Could not connect to ${targetUrl}:`, err.message);
-        hasError = true;
-        results.push({ endpoint, status: 'CONN_ERR', message: err.message });
+    async function worker() {
+      while (true) {
+        const idx = cursor++;
+        if (idx >= endpoints.length) break;
+        results[idx] = await checkSingleEndpoint(activeBaseUrl, endpoints[idx], 20_000);
       }
     }
 
-    console.log(`\n======================================================`);
-    console.log(`📊 Smoke Test Summary:`);
-    console.log(`   Total Endpoints: ${ENDPOINTS_TO_CHECK.length}`);
-    console.log(`   Passed: ${results.filter((r) => r.status === 'PASS').length}`);
-    console.log(`   Failed: ${results.filter((r) => r.status !== 'PASS').length}`);
-    console.log(`======================================================\n`);
+    if (cursor < endpoints.length) {
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, endpoints.length - warmupCount) }, () =>
+          worker()
+        )
+      );
+    }
 
-    if (hasError) {
-      console.error(`💥 Runtime Smoke Test FAILED! Fix module resolution or restart Vite dev server before proceeding.`);
+    const failed = results.filter((r) => r.status !== 'PASS');
+    for (const f of failed) {
+      console.error(`❌ [FAIL] ${f.endpoint} (${f.status}): ${f.error}`);
+    }
+
+    const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(2);
+    console.log(`📊 Smoke Test Summary (${elapsedSec}s):`);
+    console.log(`   Total Endpoints: ${endpoints.length}`);
+    console.log(`   Passed: ${results.length - failed.length}`);
+    console.log(`   Failed: ${failed.length}\n`);
+
+    if (failed.length > 0) {
+      console.error(`💥 Runtime Smoke Test FAILED!`);
       process.exitCode = 1;
     } else {
-      console.log(`🎉 All runtime endpoints passed with ZERO errors! Dev server is fully healthy.\n`);
+      console.log(`🎉 All ${endpoints.length} runtime endpoints passed with ZERO errors in ${elapsedSec}s!\n`);
       process.exitCode = 0;
     }
   } finally {
@@ -196,4 +219,10 @@ async function runSmokeTest() {
   }
 }
 
-runSmokeTest();
+const isExecutedDirectly =
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isExecutedDirectly) {
+  runSmokeTest();
+}

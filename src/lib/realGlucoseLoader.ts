@@ -74,14 +74,7 @@ export function isPortfolioMode(): boolean {
 }
 
 export function isDemoCsvImportDisabled(): boolean {
-  if (!isPortfolioMode()) return false;
-  if (
-    typeof window !== 'undefined' &&
-    (window as unknown as Record<string, unknown>).__CGM_E2E_ALLOW_CSV_IMPORT__ === true
-  ) {
-    return false;
-  }
-  return true;
+  return isPortfolioMode();
 }
 
 /**

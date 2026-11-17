@@ -1,41 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { isPortfolioMode } from './realGlucoseLoader';
 
-/**
- * E2Eテストで本番認証ゲート（AuthGateScreen）の動作を強制有効化するためのウィンドウフラグ判定
- */
-export function isCloudAuthForcedForE2E(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  const win = window as Window & {
-    __CGM_E2E_ENABLE_CLOUD_AUTH__?: boolean;
-  };
-  return Boolean(win.__CGM_E2E_ENABLE_CLOUD_AUTH__);
-}
-
-/**
- * E2Eテストやユニットテストでローカル単体動作へ強制フォールバックさせるためのウィンドウフラグ判定
- */
-function isLocalOnlyForced(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  if (isCloudAuthForcedForE2E()) {
-    return false;
-  }
-  const win = window as Window & {
-    __CGM_E2E_FORCE_LOCAL_ONLY__?: boolean;
-    __CGM_E2E_ALLOW_CSV_IMPORT__?: boolean;
-    __CGM_E2E_SUPPRESS_WELCOME__?: boolean;
-  };
-  return Boolean(
-    win.__CGM_E2E_FORCE_LOCAL_ONLY__ ||
-      win.__CGM_E2E_ALLOW_CSV_IMPORT__ ||
-      win.__CGM_E2E_SUPPRESS_WELCOME__
-  );
-}
-
 let cachedClient: SupabaseClient | null | undefined = undefined;
 let testClientOverride: SupabaseClient | null | undefined = undefined;
 
@@ -48,26 +13,18 @@ export function __setSupabaseClientForTest(client: SupabaseClient | null | undef
 
 /**
  * 現在の実行環境において Supabase クラウド連携が有効かどうかを判定する。
- * - E2E クラウド認証検証フラグ（__CGM_E2E_ENABLE_CLOUD_AUTH__）が立っている場合は true
- * - portfolio モードでは常に false（ローカル単体動作）
+ * - portfolio モードでは常に false（ローカルオンメモリ単体動作）
  * - Vitest 単体テスト環境（MODE === 'test'）では testClientOverride 未設定時は false
- * - E2E ローカル強制フラグ（__CGM_E2E_FORCE_LOCAL_ONLY__ 等）が立っている場合は false
  * - VITE_SUPABASE_URL と VITE_SUPABASE_ANON_KEY の両方が設定されている場合のみ true
  */
 export function isSupabaseConfigured(): boolean {
   if (testClientOverride !== undefined) {
     return testClientOverride !== null;
   }
-  if (isCloudAuthForcedForE2E()) {
-    return true;
-  }
   if (isPortfolioMode()) {
     return false;
   }
   if (import.meta.env.MODE === 'test') {
-    return false;
-  }
-  if (isLocalOnlyForced()) {
     return false;
   }
 
@@ -79,7 +36,7 @@ export function isSupabaseConfigured(): boolean {
 
 /**
  * Supabase クライアントインスタンスを取得する。
- * 未設定時や portfolio モード、E2E ローカルモード時は null を返す。
+ * 未設定時や portfolio モード時は null を返す。
  */
 export function getSupabaseClient(): SupabaseClient | null {
   if (testClientOverride !== undefined) {
@@ -165,4 +122,3 @@ export function validateStrongPassword(password: string): PasswordStrengthResult
     errorMessage: `パスワードは8文字以上で、英大文字・英小文字・数字・記号の4種類すべてを含めてください（未達成: ${missing.join('、')}）。`,
   };
 }
-

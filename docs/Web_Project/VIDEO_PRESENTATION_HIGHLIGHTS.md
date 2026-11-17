@@ -85,7 +85,7 @@
 
 ### ① 4層の自動テストピラミッド（何を守るテストか）
 1. **Layer 1: 仕様書・図面・DDL同期・セキュリティ・UI用語の自動監査ゲート（[`scripts/verify-docs-sync.mjs`](../../scripts/verify-docs-sync.mjs) / `npm run test:docs`）**
-   - **仕様書・図面・DDLとコードの乖離ゼロ強制**: ソースコード（`src/**`, `functions/**`, `supabase/**`）を変更した際、対応する仕様書（`SPEC_*.md`, `ARCHITECTURE.md`, `USER_GUIDE.md`, `diagrams/*`）が同一変更セット内で更新されていなければエラーとして検出し、`0001_initial_schema.sql` と `ARCHITECTURE.md` Section 5 のDDL完全一致も機械的に検証します。
+   - **仕様書・図面・DDLとコードの乖離ゼロ強制**: ソースコード（`src/**`, `functions/**`, `supabase/**`）を変更した際、対応する仕様書（`SPEC_*.md`, `ARCHITECTURE.md`, `USER_GUIDE.md`, `diagrams/*`）が先行 `docs(spec):` コミットまたは同一変更セット内で更新されていなければエラーとして検出し、連番マイグレーション（`supabase/migrations/*.sql`）と4層スキーマ・ER図の完全一致も機械的に検証します。
    - **セキュリティ・アンチハリボテ・ユーザー目線用語の機械的検査**: 全ソースファイルを走査し、「APIキーを `localStorage` に保存する危険なコードがないか」「機能しないダミーボタン（ハリボテUI）がないか」「画面上に『マスタ』『IndexedDB』『Web Worker』などの開発者用語が露出していないか」を自動検査します。
 2. **Layer 2: 臨床計算アルゴリズム＆画面間データ整合性の単体・統合テスト（[`analysisCalculators.test.ts`](../../src/lib/__tests__/analysisCalculators.test.ts) / [`dataIntegrity.test.ts`](../../src/lib/__tests__/dataIntegrity.test.ts) / [`gemini.test.ts`](../../src/lib/__tests__/gemini.test.ts)）**
    - **医療計算ロジックの厳密検証**: 28分継続復帰ルール（および45分センサー欠損ギャップ確定ルール）に基づく異常値エピソード抽出ステートマシン、食前（-15〜+5分）・食後ピーク（+60〜+180分）探索と血糖上昇幅（$\Delta$）、4時間帯集計、79,479件実測データの食べ合わせ整合性、BFF認証検証（案2）、招待専用クラウド同期・RLS認可ロジック、および「設定画面の目標閾値変更 $\rightarrow$ カレンダー・日次詳細・分析画面の再計算連動」を Vitest でミリ秒単位で検証しています。

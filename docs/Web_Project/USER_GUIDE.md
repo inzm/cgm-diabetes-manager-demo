@@ -131,7 +131,7 @@
 ### 4.4 （管理者向け補足）Supabase 側の認証設定ポイント
 ご家族を新しく招待する際、Supabase Dashboard（`Authentication` ➔ `Providers` ➔ `Email`）の設定は以下の通りにしておきます：
 - **Allow new users to sign up（新規サインアップ許可）**：**ON（有効）** にします（これが招待家族の自己登録を可能にする正式な運用設定です）。
-  - 本システムのデータベースには **未招待サインアップ遮断トリガー（`trg_enforce_invited_or_owner_signup`）** および匿名呼び出しを遮断した **認可検証関数（`is_authorized_system_user` / `verify_user_authorization`）** が組み込まれているため、オーナー登録後に `family_permissions` テーブルへ事前招待されていない第三者がサインアップを試みてもデータベース層で即座に拒否されます。
+  - 本システムのデータベースには **未招待サインアップ遮断トリガー（`trg_enforce_invited_or_owner_signup`）** および非公開スキーマ `app_private` に隔離された **認可検証関数（`app_private.is_authorized_system_user` / `verify_user_authorization`）** が組み込まれているため、オーナー登録後に `family_permissions` テーブルへ事前招待されていない第三者がサインアップを試みてもデータベース層で即座に拒否されます。
 - **Minimum password length（最小パスワード文字数）**：**`8`**（8文字以上）に設定します。
 - **Password Requirements（パスワード要件）**：**`Lowercase, uppercase letters, digits and symbols`**（英小文字・英大文字・数字・記号の4種類すべて必須）を選択します。アプリ側の検証ロジック（`validateStrongPassword`：`src/lib/supabase.ts`）とクラウド認証基盤の双方で同一の強固なパスワードポリシーを強制します（あわせて `Prevent use of leaked passwords` も有効化を推奨します）。
 - **Confirm email（メール確認）**：

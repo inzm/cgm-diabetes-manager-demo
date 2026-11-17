@@ -8,7 +8,7 @@
 
 - 役割: システム全体構成・同期方式・セキュリティ・DB物理スキーマの設計書 (SSOT)。
 - 優先: コードと食い違う場合は本書を正とする。
-- 読み方: 下の節索引から該当節だけ読む。第5章は `supabase/migrations/0001_initial_schema.sql` と同一内容のDDL(約480行)であり、DDLを扱うときだけ読む。
+- 読み方: 下の節索引から該当節だけ読む。物理DDL全文の単一真実源は連番マイグレーション `supabase/migrations/*.sql` と宣言的スナップショット `supabase/schema_snapshot.json` にある。
 
 | 節 | 内容 | 読む場面 |
 | :--- | :--- | :--- |
@@ -18,7 +18,7 @@
 | 2.4 | ブラウザによるIndexedDB自動削除(Eviction)対策 | 永続化の変更 |
 | 3.1〜3.5 | 高難度機能の設計(散布図、42日表示、CSV取込、再判定、食前・食後血糖の探索) | 該当機能の変更 |
 | 4 | ロール、家族共有、RLS、Auth Gate、BFF、ログアウト時の消去 | 認証・権限・秘密情報の変更 |
-| 5 | Supabase DDL(SQL全文) | テーブル・RLSの変更 |
+| 5 | Supabase 物理スキーマ一覧・連番マイグレーション構成・RLS要約 | テーブル・RLSの変更 |
 | 5.1 | Dexie.js のテーブル定義と複合インデックス | ローカルDBのクエリ追加 |
 | 6 | 本番(`personal`)とデモ(`portfolio`)の分離、2系統デプロイ | モード差・デプロイの変更 |
 | 7 | 同期エンジンとBFFの実装仕様 | `syncEngine.ts` / `functions/api/gemini.ts` の変更 |
@@ -105,7 +105,7 @@ flowchart TD
 
 ### 2.3 環境別起動データ戦略 & ポートフォリオ用 Memory-First 3段階段階的オンメモリ展開 (`src/lib/realGlucoseLoader.ts`, `src/lib/demoMealGenerator.ts`)
 - 本番モード (`VITE_APP_MODE=personal`) におけるクリーン起動・データ保護:
-  - 本番モードでは `public/data/real_glucose_recent.json` および `public/data/real_glucose_readings.json` のプリフェッチ・ハイドレーションや既存ユーザーデータの削除を一切行いません（ビルド時にも `vite.config.ts` のプラグインにより `dist/data/real_glucose_*.json` を出力から完全除外）。
+  - 本番モードでは `public/data/real_glucose_recent.json` および `public/data/real_glucose_readings.json` のプリフェッチ・ハイドレーションや既存ユーザーデータの削除を一切行いません（ビルド時にも `vite.config.ts` の `configResolved` 動的 `outDir` 解決プラグインにより `dist-personal/data/real_glucose_*.json` を出力から完全除外）。
   - 初回起動時は `seedFoodMasterIfEmpty(patientId)`（`src/lib/foodSeed.ts`）のみを実行してよく使う食品・活動・カテゴリの初期プリセット（決定論的UUID：`src/lib/uuidUtils.ts`）を投入し、血糖・食事・活動記録は0件のクリーンな状態からユーザー本人の手動記録およびFreeStyleリブレCSV取込を開始します。
 - ポートフォリオモード (`VITE_APP_MODE=portfolio`) における Memory-First 3段階段階的同期:
   - デモ公開環境での初回アクセスやリロード時に、2年分（79,479件・2.14MB）の全データを一括ダウンロードして全件をインデックス付きデータストアへ書き込むのを待ってから画面を描画すると初期表示に10〜18秒を要してしまうため、献立・イベント生成ドメインロジックを `src/lib/demoMealGenerator.ts` に分離した上で、以下の 「Memory-First 3段階段階的同期」 により初期表示を 0.3〜0.8秒以内 に完結させます。
@@ -115,7 +115,7 @@ flowchart TD
    - 取得した直近タプルからメモリ上で測定データ・異常値エピソード・食事/活動記録・食事明細を正規UUID（`deterministicUuid`：`src/lib/uuidUtils.ts`）で生成（約15ms）し、オンメモリキャッシュ（`inMemoryRecentCache`）に格納して即座に `ensureRealGlucoseDataLoaded` を完了させる。
    - `src/components/calendar/CalendarView.tsx`（`getInMemoryRecentSlice`）および `src/components/daily/DailyDetailDrawer.tsx`（`getInMemoryRecentMealDetails`）は、書き込み完了を待たずにメモリから 0ms でデータを読み取って初期カレンダー（2026年8月）を描画する。
 2. Stage 2：直近データ＆初期食品データのデータストア書込（First Paint 完了後）:
-   - 【重要・端末ストレージ非使用】 ポートフォリオモードでは `isDemoMemoryOnlyMode()`（`src/lib/db.ts`）が `true` となり、以下の Stage 2・Stage 3 で呼ぶ `db.*` の読み書きはすべて RAM 上の `InMemoryTable` に対して行われます。閲覧者の端末の物理 IndexedDB（`cgm_diabetes_manager_db`）・`localStorage`・Cache Storage には一切書き込まず、過去の残存分も起動時・`pagehide` 時・手動リセット時に `purgeDemoPhysicalIndexedDB` で削除します。以下で言う「永続化」「投入」は、ページ表示中のオンメモリDBへの格納を指し、リロードで消えます（物理 IndexedDB を使うのは `personal` モードおよび E2E の CSV取込検証モードのみ）。
+   - 【重要・端末ストレージ非使用】 ポートフォリオモードでは `isDemoMemoryOnlyMode()`（`src/lib/db.ts`）が `true` となり、以下の Stage 2・Stage 3 で呼ぶ `db.*` の読み書きはすべて RAM 上の `InMemoryTable` に対して行われます。閲覧者の端末の物理 IndexedDB（`cgm_diabetes_manager_db`）・`localStorage`・Cache Storage には一切書き込まず、過去の残存分も起動時・`pagehide` 時・手動リセット時に `purgeDemoPhysicalIndexedDB` で削除します。以下で言う「永続化」「投入」は、ページ表示中のオンメモリDBへの格納を指し、リロードで消えます（物理 IndexedDB を使うのは `personal` モードのみであり、クライアント本番コード内にテスト用ウィンドウフラグは一切置きません）。
    - 初期カレンダーの DOM 描画が完了した直後（60ms 待機後）、裏側で `seedFoodMasterIfEmpty`（`src/lib/foodSeed.ts`）および直近データの保存を実行する。
    - 永続化完了と同時に `inMemoryRecentCache.persisted = true` へ切り替え、以降のユーザー操作（記録追加・編集・削除）はすべて `src/lib/db.ts` の複合インデックス（`[user_id+timestamp]`, `[user_id+event_datetime]`, `[user_id+event_id]`）を参照する。
 3. Stage 3：過去7.6万件データのチャンク分割バックグラウンド展開（オンメモリDBへ）:
@@ -232,23 +232,23 @@ CREATE INDEX IF NOT EXISTS idx_family_lookup ON family_permissions (family_user_
 CREATE INDEX IF NOT EXISTS idx_family_email_lookup ON family_permissions (LOWER(family_email), patient_id);
 ```
 
-### 4.3 Supabase RLS (Row Level Security) & 招待専用アクセスガード設計 (`supabase/migrations/0001_initial_schema.sql`)
-データベース層で不正アクセスや未招待第三者のサインアップ・利用・招待メール推測を遮断し、かつ 8.4万行の `libre_readings` 取得時にも高速に応答させるため、PostgreSQLの `STABLE SECURITY DEFINER SET search_path = public, auth` 関数、最小権限 `REVOKE`/`GRANT`、`auth.users` トリガー、および InitPlan 最適化された RLS を活用します。
+### 4.3 Supabase RLS (Row Level Security) & 招待専用アクセスガード設計 (`supabase/migrations/`)
+データベース層で不正アクセスや未招待第三者のサインアップ・利用・招待メール推測を遮断し、かつ 8.4万行の `libre_readings` 取得時にも高速に応答させるため、非公開スキーマ `app_private` への `SECURITY DEFINER` 関数隔離、`public.verify_user_authorization()` の `SECURITY INVOKER` ラッパー化、`auth.users` トリガー、および InitPlan 最適化された単一アクション RLS ポリシーを連番マイグレーション（`supabase/migrations/*.sql`）で管理します。
 
-- 招待専用アクセス判定と公開サインアップ運用 (`public.is_authorized_system_user`, `public.verify_user_authorization`, `trg_enforce_invited_or_owner_signup`):
+- 招待専用アクセス判定と公開サインアップ運用 (`app_private.is_authorized_system_user`, `public.verify_user_authorization`, `trg_enforce_invited_or_owner_signup`):
   - システムを操作・閲覧できるのは ①オーナー（最初に登録された患者本人、または既に全7業務テーブルのいずれかにレコードを有する患者本人） と、②そのオーナーが `family_permissions` テーブルに招待登録した家族（`family_user_id` または `LOWER(family_email)` が一致するユーザー） のみに厳格制限する。
-  - Supabase Auth のメールサインアップ設定自体は招待家族の自己登録導線を維持するため有効（メール確認必須）とした上で、`auth.users` に対する `BEFORE INSERT` トリガー（`trg_enforce_invited_or_owner_signup`）により、既にオーナーが存在する状態で `family_permissions` に招待されていないメールアドレスがサインアップを試みた場合は PostgreSQL レベルで即座にロールバック遮断する。
+  - Supabase Auth のメールサインアップ設定自体は招待家族の自己登録導線を維持するため有効（メール確認必須）とした上で、`auth.users` に対する `BEFORE INSERT` トリガー（`trg_enforce_invited_or_owner_signup` → `app_private.enforce_invited_or_owner_signup()`）により、既にオーナーが存在する状態で `family_permissions` に招待されていないメールアドレスがサインアップを試みた場合は PostgreSQL レベルで即座にロールバック遮断する。
   - クライアント側でもログイン・セッション復元時に `verifyUserAccessWithCloud`（`src/lib/syncEngine.ts`）を実行し、未招待の第三者アカウントであった場合は同期やローカルデータ移行を一切行わず即座に `signOut()` してローカルキャッシュを全消去する。
-- RPC 実行権限の最小化（匿名ユーザーからの探索完全遮断）:
-  - `public` スキーマ上の全セキュリティ関数から `PUBLIC` および `anon` ロールの `EXECUTE` 権限を明示的に剥奪（`REVOKE ALL ON FUNCTION ... FROM PUBLIC, anon`）し、未ログインの匿名キーから `/rest/v1/rpc/*` 経由で招待済みメールアドレス等を探索できない構造とする。
-  - フロントエンド（ログイン後の Auth Gate）から直接呼び出す `public.verify_user_authorization()` および RLS 評価で参照される判定関数は `authenticated` ロールのみに `EXECUTE` を許可し、さらに `is_system_owner` / `is_authorized_system_user` 内では呼び出し元 `auth.uid()` と異なる任意の他者 UID 指定を即時 `FALSE` として拒否する。`enforce_invited_or_owner_signup()` トリガー関数は `authenticated` からも `REVOKE` し、認証基盤ロールのみに限定する。
-- 大量データ（8.4万行）に対する `STABLE` 宣言 ＆ RLS InitPlan 最適化:
-  - 認可判定関数群（`is_system_owner`, `is_authorized_system_user`, `verify_user_authorization`, `can_view_patient_data`, `can_edit_patient_data`）をすべて `STABLE` として宣言し、`can_view_patient_data` / `can_edit_patient_data` 内の重複 `is_system_owner` 呼び出しを単一評価に統合する。
-  - 各業務テーブルの RLS ポリシーは `TO authenticated` に限定した上で、`((user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner())) OR public.can_view_patient_data(user_id))` 形式（および `family_permissions` での `(SELECT auth.uid())` / `(SELECT auth.jwt())` ラップと単一アクションポリシー統合、`food_master(category_id)` / `event_master(category_id)` 外部キーインデックス付与）を採用することで、患者オーナー本人の 8.4万行取得時に認可関数をクエリあたり1回の初期評価計画（InitPlan）に抑え、複合インデックス（`idx_libre_user_time`）を直接利用させる。
+- 非公開スキーマ `app_private` 隔離と Data API (`public`) からの `SECURITY DEFINER` 露出ゼロ化:
+  - RLS 内部ヘルパー関数群（`is_system_owner`, `is_authorized_system_user`, `can_view_patient_data`, `can_edit_patient_data`, `verify_user_authorization`, `enforce_invited_or_owner_signup`）はすべて PostgREST 非公開の `app_private` スキーマに `STABLE SECURITY DEFINER SET search_path = app_private, public, auth` として配置し、`public` スキーマ上の同名 `SECURITY DEFINER` 関数は削除する。これにより `/rest/v1/rpc/*` 経由での任意引数呼び出し・招待メール推測オラクルを物理的に根絶する（Supabase Security Advisor Lint `0029` 警告ゼロ）。
+  - フロントエンド（ログイン後の Auth Gate）から呼び出す `public.verify_user_authorization()` は引数なしの `STABLE SECURITY INVOKER` SQL ラッパーとして `app_private.verify_user_authorization()` へ委譲し、`authenticated` ロールのみに `EXECUTE` を許可する（`PUBLIC` / `anon` からは `REVOKE`）。
+- 大量データ（8.4万行）に対する `STABLE` 宣言 ＆ RLS InitPlan・単一ポリシー最適化:
+  - 認可判定関数群をすべて `STABLE` として宣言し、`app_private.can_view_patient_data` / `app_private.can_edit_patient_data` 内の重複オーナー判定を単一評価に統合する。
+  - `family_permissions` を含む全8テーブルの RLS ポリシーはアクション別（`SELECT` / `INSERT` / `UPDATE` / `DELETE`）の単一 Permissive ポリシーに統合（旧 `family_permissions_all` / `family_permissions_accept_invite` の重複評価 Lint `0006` を排除）し、`((user_id = (SELECT auth.uid()) AND (SELECT app_private.is_system_owner())) OR app_private.can_view_patient_data(user_id))` 形式および外部キーインデックス（`idx_food_master_category`, `idx_event_master_category`）により、8.4万行取得時も複合インデックス（`idx_libre_user_time`）を直接利用させる。
 
 ```sql
--- 1. 閲覧権限チェック用セキュリティ関数 (STABLE 宣言・二重評価排除・anon 実行遮断)
-CREATE OR REPLACE FUNCTION can_view_patient_data(target_patient_id UUID)
+-- 非公開スキーマ app_private 内の閲覧権限チェック関数 (Data API 非露出・STABLE InitPlan 対応)
+CREATE OR REPLACE FUNCTION app_private.can_view_patient_data(target_patient_id UUID)
 RETURNS BOOLEAN AS $$
 DECLARE
     uid UUID := auth.uid();
@@ -258,7 +258,7 @@ BEGIN
     IF uid IS NULL THEN
         RETURN FALSE;
     END IF;
-    IF uid = target_patient_id AND public.is_system_owner(uid, uemail) THEN
+    IF uid = target_patient_id AND app_private.is_system_owner(uid, uemail) THEN
         RETURN TRUE;
     END IF;
     RETURN EXISTS (
@@ -274,66 +274,18 @@ BEGIN
           )
     );
 END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = app_private, public, auth;
 
--- 2. 編集・登録権限チェック用セキュリティ関数 (STABLE 宣言・anon 実行遮断)
-CREATE OR REPLACE FUNCTION can_edit_patient_data(target_patient_id UUID)
-RETURNS BOOLEAN AS $$
-DECLARE
-    uid UUID := auth.uid();
-    uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
-    normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
-BEGIN
-    IF uid IS NULL THEN
-        RETURN FALSE;
-    END IF;
-    IF uid = target_patient_id AND public.is_system_owner(uid, uemail) THEN
-        RETURN TRUE;
-    END IF;
-    RETURN EXISTS (
-        SELECT 1 FROM public.family_permissions
-        WHERE patient_id = target_patient_id
-          AND role = 'editor'
-          AND (
-              family_user_id = uid
-              OR (
-                  normalized_email IS NOT NULL
-                  AND family_email IS NOT NULL
-                  AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-              )
-          )
-    );
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
-
-REVOKE ALL ON FUNCTION public.can_view_patient_data(UUID) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.can_view_patient_data(UUID) TO authenticated;
-REVOKE ALL ON FUNCTION public.can_edit_patient_data(UUID) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.can_edit_patient_data(UUID) TO authenticated;
-
--- テーブル別ポリシー適用例: libre_readings (TO authenticated + オーナー初期評価最適化)
-ALTER TABLE libre_readings ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "libre_readings_select"
-ON libre_readings FOR SELECT TO authenticated
-USING (
-    (user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', ''))))
-    OR public.can_view_patient_data(user_id)
-);
-
-CREATE POLICY "libre_readings_insert"
-ON libre_readings FOR INSERT TO authenticated
-WITH CHECK (
-    (user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', ''))))
-    OR public.can_edit_patient_data(user_id)
-);
-
-CREATE POLICY "libre_readings_delete"
-ON libre_readings FOR DELETE TO authenticated
-USING (
-    (user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', ''))))
-    OR public.can_edit_patient_data(user_id)
-);
+-- 公開スキーマ側の認可確認 RPC は引数なし SECURITY INVOKER ラッパーのみ配置
+CREATE OR REPLACE FUNCTION public.verify_user_authorization()
+RETURNS JSONB
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = app_private, public
+AS $$
+    SELECT app_private.verify_user_authorization();
+$$;
 ```
 
 ### 4.4 フロントエンドにおける「専用ログイン画面（Auth Gate）」と「患者コンテキスト（PatientContext）」設計 (`src/components/common/AuthGateScreen.tsx`, `src/contexts/PatientContext.tsx`, `src/App.tsx`)
@@ -365,551 +317,28 @@ USING (
 
 ---
 
-## 5. データベース物理スキーマ（Supabase PostgreSQL 本番完全版: `supabase/migrations/0001_initial_schema.sql`）
+## 5. データベース物理スキーマ（連番マイグレーション & スナップショット管理）
 
-以下のDDLスクリプトは、マルチデバイスオフライン採番（UUID）、高速近傍探索（`event_datetime TIMESTAMPTZ`）、カテゴリ参照整合性、招待専用サインアップトリガー、最小権限 `REVOKE`/`GRANT`、および `STABLE`・InitPlan 最適化された全テーブルの Row Level Security (RLS) を完備した本番直結スクリプト（[`supabase/migrations/0001_initial_schema.sql`](../../supabase/migrations/0001_initial_schema.sql) と同一のSSOT）です。新規構築時はそのまま実行可能であり、稼働中の本番環境への差分反映は `0001_initial_schema.sql` と本セクションの完全一致を自動検証ゲート（`scripts/verify-docs-sync.mjs`）で保った上で、Supabase のマイグレーション履歴テーブルへ記録して適用します。
+物理 DDL 全文の単一真実源（SSOT）は `supabase/migrations/` 配下の連番 SQL マイグレーション群および自動検証用スナップショット [`supabase/schema_snapshot.json`](../../supabase/schema_snapshot.json) に集約し、本書への SQL 全文重複転記は行いません（`scripts/gates/schema-parity.ts` が全マイグレーションを順番に解析し、`supabase/schema_snapshot.json`・[`src/types/database.ts`](../../src/types/database.ts)・[`src/lib/db.ts`](../../src/lib/db.ts)・[`diagrams/SEQUENCE_AND_ERD.md`](diagrams/SEQUENCE_AND_ERD.md) の完全一致を強制検証します）。
 
-```sql
--- ==============================================================================
--- 血糖値・食事・インスリン統合管理システム 本番用データベーススキーマ (完全版)
--- 実行方法: Supabase Dashboard -> SQL Editor -> New Query に貼り付けて「Run」をクリック
--- ==============================================================================
+### 5.0.1 連番マイグレーション履歴 (`supabase/migrations/`)
+1. [`0001_initial_schema.sql`](../../supabase/migrations/0001_initial_schema.sql): 全8テーブル・複合/部分ユニークインデックス・基本 RLS 定義。
+2. [`20261116205848_harden_rls_functions_and_fk_indexes.sql`](../../supabase/migrations/20261116205848_harden_rls_functions_and_fk_indexes.sql): 認可関数の `STABLE` 化・他者 UID 探索拒否・匿名 `EXECUTE` 剥奪・外部キーインデックス追加。
+3. [`20261116205957_expand_timing_category_and_alter_rls_policies_initplan.sql`](../../supabase/migrations/20261116205957_expand_timing_category_and_alter_rls_policies_initplan.sql): `events.timing_category` の `VARCHAR(50)` 拡張および InitPlan (`(SELECT auth.uid())`) 最適化。
+4. [`20261117030000_isolate_security_definer_helpers_and_consolidate_family_rls.sql`](../../supabase/migrations/20261117030000_isolate_security_definer_helpers_and_consolidate_family_rls.sql): 内部 `SECURITY DEFINER` 関数群の非公開スキーマ `app_private` 隔離（Lint `0029` 解消、`SET search_path = app_private, public, auth, pg_temp` 固定、および `ALTER FUNCTION ... SET SCHEMA app_private` による `auth.users` トリガー OID 無停止移行）、`public.verify_user_authorization()` の `SECURITY INVOKER` ラッパー化、ならびに `family_permissions` 単一アクション RLS 統合（Lint `0006` 解消）。
 
--- 拡張機能の有効化
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+### 5.0.2 PostgreSQL 全8テーブル・RLS 設計一覧
 
--- ------------------------------------------------------------------------------
--- 1. 家族共有・権限管理テーブル (UUID直接指定 & メールアドレス招待の双方に対応)
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS family_permissions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    patient_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    family_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-    family_email VARCHAR(255),
-    role VARCHAR(20) NOT NULL DEFAULT 'viewer' CHECK (role IN ('viewer', 'editor')),
-    invited_at TIMESTAMPTZ DEFAULT NOW(),
-    accepted_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_patient_family_uid
-    ON family_permissions (patient_id, family_user_id)
-    WHERE family_user_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_patient_family_email
-    ON family_permissions (patient_id, LOWER(family_email))
-    WHERE family_email IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_family_lookup ON family_permissions (family_user_id, patient_id);
-CREATE INDEX IF NOT EXISTS idx_family_email_lookup ON family_permissions (LOWER(family_email), patient_id);
-
--- ------------------------------------------------------------------------------
--- 2. 権限判定・未招待第三者遮断ヘルパー関数 (RLS & Auth Gate 用)
--- ------------------------------------------------------------------------------
-
--- システムのオーナー（患者本人）であるかを判定する（招待されただけの家族は FALSE）
-CREATE OR REPLACE FUNCTION public.is_system_owner(
-    check_uid UUID DEFAULT auth.uid(),
-    check_email TEXT DEFAULT COALESCE(auth.jwt() ->> 'email', '')
-)
-RETURNS BOOLEAN AS $$
-DECLARE
-    normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(check_email, '')), ''));
-    has_any_owner_data BOOLEAN;
-    first_auth_user_id UUID;
-BEGIN
-    IF check_uid IS NULL THEN
-        RETURN FALSE;
-    END IF;
-
-    -- 認証済みセッションからの直接RPC呼び出しで他者のUID・メールアドレスを探索することを防止
-    IF auth.uid() IS NOT NULL AND check_uid IS DISTINCT FROM auth.uid() THEN
-        RETURN FALSE;
-    END IF;
-
-    -- 1. 既にオーナーとして招待を発行しているか、または自身の患者データが存在する場合はオーナーと判定
-    IF EXISTS (SELECT 1 FROM public.family_permissions WHERE patient_id = check_uid)
-       OR EXISTS (SELECT 1 FROM public.user_settings WHERE user_id = check_uid)
-       OR EXISTS (SELECT 1 FROM public.categories WHERE user_id = check_uid)
-       OR EXISTS (SELECT 1 FROM public.food_master WHERE user_id = check_uid)
-       OR EXISTS (SELECT 1 FROM public.event_master WHERE user_id = check_uid)
-       OR EXISTS (SELECT 1 FROM public.events WHERE user_id = check_uid)
-       OR EXISTS (SELECT 1 FROM public.libre_readings WHERE user_id = check_uid)
-    THEN
-        RETURN TRUE;
-    END IF;
-
-    -- 2. 他オーナーから招待された家族メンバーである場合はオーナーではない
-    IF EXISTS (
-        SELECT 1 FROM public.family_permissions
-        WHERE patient_id <> check_uid
-          AND (
-              family_user_id = check_uid
-              OR (
-                  normalized_email IS NOT NULL
-                  AND family_email IS NOT NULL
-                  AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-              )
-          )
-    ) THEN
-        RETURN FALSE;
-    END IF;
-
-    -- 3. 初回セットアップ時（業務テーブルにまだ1件もオーナーデータが存在しない場合）:
-    --    auth.users の最初に登録されたアカウントのみをシステムオーナーとして許可する
-    SELECT EXISTS (
-        SELECT 1 FROM public.user_settings
-        UNION ALL
-        SELECT 1 FROM public.family_permissions
-        UNION ALL
-        SELECT 1 FROM public.categories
-        UNION ALL
-        SELECT 1 FROM public.food_master
-        UNION ALL
-        SELECT 1 FROM public.event_master
-        UNION ALL
-        SELECT 1 FROM public.events
-        UNION ALL
-        SELECT 1 FROM public.libre_readings
-    ) INTO has_any_owner_data;
-
-    IF NOT has_any_owner_data THEN
-        SELECT id INTO first_auth_user_id
-        FROM auth.users
-        ORDER BY created_at ASC, id ASC
-        LIMIT 1;
-
-        IF first_auth_user_id IS NULL OR first_auth_user_id = check_uid THEN
-            RETURN TRUE;
-        END IF;
-    END IF;
-
-    RETURN FALSE;
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
-
--- システムの利用を許可されたユーザー（初期オーナー本人 または 招待済み家族）であるかを判定する
-CREATE OR REPLACE FUNCTION public.is_authorized_system_user(
-    check_uid UUID DEFAULT auth.uid(),
-    check_email TEXT DEFAULT COALESCE(auth.jwt() ->> 'email', '')
-)
-RETURNS BOOLEAN AS $$
-DECLARE
-    normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(check_email, '')), ''));
-BEGIN
-    IF check_uid IS NULL THEN
-        RETURN FALSE;
-    END IF;
-
-    -- 認証済みセッションからの直接RPC呼び出しで他者のUID・メールアドレスを探索することを防止
-    IF auth.uid() IS NOT NULL AND check_uid IS DISTINCT FROM auth.uid() THEN
-        RETURN FALSE;
-    END IF;
-
-    IF public.is_system_owner(check_uid, check_email) THEN
-        RETURN TRUE;
-    END IF;
-
-    -- 招待済み家族（family_user_id または family_email が一致）であれば許可
-    IF EXISTS (
-        SELECT 1 FROM public.family_permissions
-        WHERE family_user_id = check_uid
-           OR (
-               normalized_email IS NOT NULL
-               AND family_email IS NOT NULL
-               AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-           )
-    ) THEN
-        RETURN TRUE;
-    END IF;
-
-    RETURN FALSE;
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
-
--- クライアント（Auth Gate）から呼び出し可能な認可確認 RPC（authenticated ロール限定）
-CREATE OR REPLACE FUNCTION public.verify_user_authorization()
-RETURNS JSONB AS $$
-DECLARE
-    uid UUID := auth.uid();
-    uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
-    normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
-    is_owner BOOLEAN := FALSE;
-    is_invited BOOLEAN := FALSE;
-    is_auth BOOLEAN := FALSE;
-BEGIN
-    IF uid IS NOT NULL THEN
-        is_owner := public.is_system_owner(uid, uemail);
-        SELECT EXISTS (
-            SELECT 1 FROM public.family_permissions
-            WHERE patient_id <> uid
-              AND (
-                  family_user_id = uid
-                  OR (
-                      normalized_email IS NOT NULL
-                      AND family_email IS NOT NULL
-                      AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-                  )
-              )
-        ) INTO is_invited;
-        is_auth := (is_owner OR is_invited);
-    END IF;
-
-    RETURN jsonb_build_object(
-        'authorized', is_auth,
-        'is_owner', is_owner,
-        'is_invited_family', is_invited,
-        'user_id', uid,
-        'email', uemail
-    );
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
-
-REVOKE ALL ON FUNCTION public.is_system_owner(UUID, TEXT) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.is_system_owner(UUID, TEXT) TO authenticated;
-REVOKE ALL ON FUNCTION public.is_authorized_system_user(UUID, TEXT) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.is_authorized_system_user(UUID, TEXT) TO authenticated;
-REVOKE ALL ON FUNCTION public.verify_user_authorization() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.verify_user_authorization() TO authenticated;
-
--- 未招待の第三者による勝手なアカウント作成（Sign Up）を DB 層で遮断するトリガー関数
-CREATE OR REPLACE FUNCTION public.enforce_invited_or_owner_signup()
-RETURNS TRIGGER AS $$
-DECLARE
-    normalized_new_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(NEW.email, '')), ''));
-BEGIN
-    -- 1人目のユーザー（患者オーナー本人の初回登録）は許可
-    IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id <> NEW.id) THEN
-        RETURN NEW;
-    END IF;
-
-    -- 2人目以降のサインアップは、family_permissions に事前招待された有効なメールアドレスのみ許可
-    IF normalized_new_email IS NOT NULL AND EXISTS (
-        SELECT 1 FROM public.family_permissions
-        WHERE family_email IS NOT NULL
-          AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_new_email
-    ) THEN
-        RETURN NEW;
-    END IF;
-
-    RAISE EXCEPTION 'このメールアドレスは招待されていません。患者本人からの招待登録が必要です。';
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
-
-REVOKE ALL ON FUNCTION public.enforce_invited_or_owner_signup() FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.enforce_invited_or_owner_signup() TO service_role;
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
-        GRANT EXECUTE ON FUNCTION public.enforce_invited_or_owner_signup() TO supabase_auth_admin;
-    END IF;
-    IF EXISTS (
-        SELECT 1 FROM pg_proc p
-        JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname = 'public' AND p.proname = 'rls_auto_enable' AND p.pronargs = 0
-    ) THEN
-        EXECUTE 'REVOKE ALL ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon, authenticated';
-    END IF;
-END $$;
-
-DO $$
-BEGIN
-    DROP TRIGGER IF EXISTS trg_enforce_invited_or_owner_signup ON auth.users;
-    CREATE TRIGGER trg_enforce_invited_or_owner_signup
-        BEFORE INSERT ON auth.users
-        FOR EACH ROW
-        EXECUTE FUNCTION public.enforce_invited_or_owner_signup();
-EXCEPTION
-    WHEN insufficient_privilege THEN
-        RAISE NOTICE 'Skipped auth.users trigger creation due to privilege level; RLS and RPC guards remain active.';
-END $$;
-
-CREATE OR REPLACE FUNCTION can_view_patient_data(target_patient_id UUID)
-RETURNS BOOLEAN AS $$
-DECLARE
-    uid UUID := auth.uid();
-    uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
-    normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
-BEGIN
-    IF uid IS NULL THEN
-        RETURN FALSE;
-    END IF;
-    IF uid = target_patient_id AND public.is_system_owner(uid, uemail) THEN
-        RETURN TRUE;
-    END IF;
-    RETURN EXISTS (
-        SELECT 1 FROM public.family_permissions
-        WHERE patient_id = target_patient_id
-          AND (
-              family_user_id = uid
-              OR (
-                  normalized_email IS NOT NULL
-                  AND family_email IS NOT NULL
-                  AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-              )
-          )
-    );
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
-
-CREATE OR REPLACE FUNCTION can_edit_patient_data(target_patient_id UUID)
-RETURNS BOOLEAN AS $$
-DECLARE
-    uid UUID := auth.uid();
-    uemail TEXT := COALESCE(auth.jwt() ->> 'email', '');
-    normalized_email TEXT := LOWER(NULLIF(BTRIM(COALESCE(auth.jwt() ->> 'email', '')), ''));
-BEGIN
-    IF uid IS NULL THEN
-        RETURN FALSE;
-    END IF;
-    IF uid = target_patient_id AND public.is_system_owner(uid, uemail) THEN
-        RETURN TRUE;
-    END IF;
-    RETURN EXISTS (
-        SELECT 1 FROM public.family_permissions
-        WHERE patient_id = target_patient_id
-          AND role = 'editor'
-          AND (
-              family_user_id = uid
-              OR (
-                  normalized_email IS NOT NULL
-                  AND family_email IS NOT NULL
-                  AND LOWER(NULLIF(BTRIM(family_email), '')) = normalized_email
-              )
-          )
-    );
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, auth;
-
-REVOKE ALL ON FUNCTION public.can_view_patient_data(UUID) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.can_view_patient_data(UUID) TO authenticated;
-REVOKE ALL ON FUNCTION public.can_edit_patient_data(UUID) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.can_edit_patient_data(UUID) TO authenticated;
-
--- ------------------------------------------------------------------------------
--- 3. カテゴリマスタ (論理削除対応の部分ユニークインデックス + 決定論的UUID)
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS categories (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    target_type VARCHAR(20) NOT NULL CHECK (target_type IN ('food', 'event')),
-    category_name VARCHAR(50) NOT NULL,
-    display_order INTEGER DEFAULT 0,
-    is_protected BOOLEAN DEFAULT FALSE,
-    is_deleted BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_user_type_cat_active
-    ON categories (user_id, target_type, category_name)
-    WHERE is_deleted = false;
-CREATE INDEX IF NOT EXISTS idx_categories_user ON categories (user_id, target_type);
-
--- ------------------------------------------------------------------------------
--- 4. 食品マスタ
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS food_master (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
-    food_name VARCHAR(100) NOT NULL,
-    base_amount NUMERIC(6,1) NOT NULL DEFAULT 1,
-    unit VARCHAR(20) NOT NULL DEFAULT '個',
-    carbs_per_unit NUMERIC(6,1) NOT NULL,
-    is_deleted BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_food_master_user ON food_master (user_id, is_deleted);
-CREATE INDEX IF NOT EXISTS idx_food_master_category ON food_master (category_id);
-
--- ------------------------------------------------------------------------------
--- 5. 活動マスタ
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS event_master (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
-    event_name VARCHAR(100) NOT NULL,
-    default_duration INTEGER NOT NULL DEFAULT 30,
-    memo TEXT,
-    is_deleted BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_event_master_user ON event_master (user_id, is_deleted);
-CREATE INDEX IF NOT EXISTS idx_event_master_category ON event_master (category_id);
-
--- ------------------------------------------------------------------------------
--- 6. リブレ生データ (8.4万〜10万行/人)
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS libre_readings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    timestamp TIMESTAMPTZ NOT NULL,
-    glucose_value NUMERIC(5,1) NOT NULL,
-    scan_type VARCHAR(20) DEFAULT 'Historic',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT uq_user_libre_time UNIQUE (user_id, timestamp)
-);
-CREATE INDEX IF NOT EXISTS idx_libre_user_time ON libre_readings (user_id, timestamp DESC);
-
--- ------------------------------------------------------------------------------
--- 7. イベント記録 (親テーブル) ★UUID化 & 統合日時
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    event_datetime TIMESTAMPTZ NOT NULL,
-    event_type VARCHAR(20) NOT NULL CHECK (event_type IN ('食事', '活動', '低血糖', '高血糖')),
-    timing_category VARCHAR(50),
-    total_carbs NUMERIC(6,1),
-    insulin_units NUMERIC(5,1),
-    pre_meal_glucose NUMERIC(5,1),
-    post_meal_glucose NUMERIC(5,1),
-    duration_minutes INTEGER,
-    memo TEXT,
-    is_deleted BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
--- 既存環境の events.timing_category を VARCHAR(50) (categories.category_name と同一上限) へ冪等拡張
-DO $$
-BEGIN
-    ALTER TABLE public.events ALTER COLUMN timing_category TYPE VARCHAR(50);
-EXCEPTION
-    WHEN undefined_table THEN NULL;
-END $$;
-CREATE INDEX IF NOT EXISTS idx_events_user_time ON events (user_id, event_datetime DESC);
-CREATE INDEX IF NOT EXISTS idx_events_sync ON events (user_id, updated_at);
-
--- ------------------------------------------------------------------------------
--- 8. 食事明細 (子テーブル)
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS meal_details (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    food_name VARCHAR(100) NOT NULL,
-    amount NUMERIC(6,1) NOT NULL,
-    unit VARCHAR(20) NOT NULL,
-    carbs NUMERIC(6,1) NOT NULL,
-    is_deleted BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_meal_details_event ON meal_details (event_id);
-CREATE INDEX IF NOT EXISTS idx_meal_details_sync ON meal_details (user_id, updated_at);
-
--- ------------------------------------------------------------------------------
--- 9. ユーザー設定
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS user_settings (
-    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    hypo_threshold NUMERIC(5,1) DEFAULT 70.0,
-    hyper_threshold NUMERIC(5,1) DEFAULT 180.0,
-    target_tir_min NUMERIC(5,1) DEFAULT 70.0,
-    target_tir_max NUMERIC(5,1) DEFAULT 180.0,
-    enable_default_insulin BOOLEAN DEFAULT FALSE,
-    default_insulin_breakfast NUMERIC(5,1),
-    default_insulin_lunch NUMERIC(5,1),
-    default_insulin_dinner NUMERIC(5,1),
-    default_insulin_snack NUMERIC(5,1),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ==============================================================================
--- 全テーブルの Row Level Security (RLS) ポリシー一括設定
--- ==============================================================================
-
-ALTER TABLE family_permissions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE food_master ENABLE ROW LEVEL SECURITY;
-ALTER TABLE event_master ENABLE ROW LEVEL SECURITY;
-ALTER TABLE libre_readings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE meal_details ENABLE ROW LEVEL SECURITY;
-ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
-
--- 家族権限テーブル: 認可されたオーナー本人のみ招待・管理可能、招待された家族は自分宛ての権限レコードを参照・初回承認可能
--- InitPlan 最適化 ((SELECT auth.uid()) / (SELECT auth.jwt())) およびアクション別単一ポリシーで重複評価を排除
-DROP POLICY IF EXISTS "family_permissions_all" ON family_permissions;
-DROP POLICY IF EXISTS "family_permissions_accept_invite" ON family_permissions;
-DROP POLICY IF EXISTS "family_permissions_select" ON family_permissions;
-DROP POLICY IF EXISTS "family_permissions_insert" ON family_permissions;
-DROP POLICY IF EXISTS "family_permissions_update" ON family_permissions;
-DROP POLICY IF EXISTS "family_permissions_delete" ON family_permissions;
-
-CREATE POLICY "family_permissions_select" ON family_permissions
-    FOR SELECT TO authenticated USING (
-        (SELECT public.is_authorized_system_user((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
-        AND (
-            (SELECT auth.uid()) = patient_id
-            OR (SELECT auth.uid()) = family_user_id
-            OR (
-                family_email IS NOT NULL
-                AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE((SELECT auth.jwt()) ->> 'email', '')), ''))
-            )
-        )
-    );
-
-CREATE POLICY "family_permissions_insert" ON family_permissions
-    FOR INSERT TO authenticated WITH CHECK (
-        (SELECT auth.uid()) = patient_id
-        AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
-    );
-
-CREATE POLICY "family_permissions_update" ON family_permissions
-    FOR UPDATE TO authenticated
-    USING (
-        (
-            (SELECT auth.uid()) = patient_id
-            AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
-        )
-        OR (
-            family_email IS NOT NULL
-            AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE((SELECT auth.jwt()) ->> 'email', '')), ''))
-        )
-    )
-    WITH CHECK (
-        (
-            (SELECT auth.uid()) = patient_id
-            AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
-        )
-        OR (
-            family_email IS NOT NULL
-            AND LOWER(NULLIF(BTRIM(family_email), '')) = LOWER(NULLIF(BTRIM(COALESCE((SELECT auth.jwt()) ->> 'email', '')), ''))
-            AND family_user_id = (SELECT auth.uid())
-        )
-    );
-
-CREATE POLICY "family_permissions_delete" ON family_permissions
-    FOR DELETE TO authenticated USING (
-        (SELECT auth.uid()) = patient_id
-        AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> 'email', '')))
-    );
-
--- 各業務テーブル: 閲覧（本人+家族）、編集（本人+代理入力）
--- オーナー本人の 8.4万行取得時は InitPlan により認可判定をクエリあたり1回に抑え、複合インデックスを直接利用させる
-DO $$
-DECLARE
-    tbl text;
-    tables text[] := ARRAY['categories', 'food_master', 'event_master', 'libre_readings', 'events', 'meal_details', 'user_settings'];
-    owner_pred text := '(user_id = (SELECT auth.uid()) AND (SELECT public.is_system_owner((SELECT auth.uid()), COALESCE((SELECT auth.jwt()) ->> ''email'', ''''))))';
-BEGIN
-    FOREACH tbl IN ARRAY tables LOOP
-        EXECUTE format('DROP POLICY IF EXISTS "%s_select" ON %I;', tbl, tbl);
-        EXECUTE format('CREATE POLICY "%s_select" ON %I FOR SELECT TO authenticated USING (%s OR public.can_view_patient_data(user_id));', tbl, tbl, owner_pred);
-
-        EXECUTE format('DROP POLICY IF EXISTS "%s_insert" ON %I;', tbl, tbl);
-        EXECUTE format('CREATE POLICY "%s_insert" ON %I FOR INSERT TO authenticated WITH CHECK (%s OR public.can_edit_patient_data(user_id));', tbl, tbl, owner_pred);
-
-        EXECUTE format('DROP POLICY IF EXISTS "%s_update" ON %I;', tbl, tbl);
-        EXECUTE format('CREATE POLICY "%s_update" ON %I FOR UPDATE TO authenticated USING (%s OR public.can_edit_patient_data(user_id)) WITH CHECK (%s OR public.can_edit_patient_data(user_id));', tbl, tbl, owner_pred, owner_pred);
-
-        EXECUTE format('DROP POLICY IF EXISTS "%s_delete" ON %I;', tbl, tbl);
-        EXECUTE format('CREATE POLICY "%s_delete" ON %I FOR DELETE TO authenticated USING (%s OR public.can_edit_patient_data(user_id));', tbl, tbl, owner_pred);
-    END LOOP;
-END $$;
-```
-
+| 物理テーブル名 | 対応TS型 (`src/types/database.ts`) | 主キー / 主要制約・上限 | 主要インデックス | RLS ポリシー設計 (`TO authenticated`) |
+| :--- | :--- | :--- | :--- | :--- |
+| `family_permissions` | `FamilyPermission` | `id UUID` / `role IN ('viewer','editor')`, `family_email VARCHAR(255)` | `uq_patient_family_uid`, `uq_patient_family_email`, `idx_family_lookup`, `idx_family_email_lookup` | 4単一ポリシー (`_select` / `_insert` / `_update` / `_delete`): オーナー管理＋招待家族の参照・初回承認のみ許可 |
+| `categories` | `Category` | `id UUID` / `target_type IN ('food','event')`, `category_name VARCHAR(50)`, 論理削除 | `uq_user_type_cat_active` (`WHERE is_deleted = false`), `idx_categories_user` | オーナー InitPlan 判定 `OR app_private.can_view_patient_data(user_id)` / `app_private.can_edit_patient_data(user_id)` |
+| `food_master` | `FoodMaster` | `id UUID` / `food_name VARCHAR(100)`, `unit VARCHAR(20)`, 論理削除 | `idx_food_master_user`, `idx_food_master_category` | 同上（閲覧: 本人+招待家族 / 更新: 本人+`editor`） |
+| `event_master` | `EventMaster` | `id UUID` / `event_name VARCHAR(100)`, 論理削除 | `idx_event_master_user`, `idx_event_master_category` | 同上 |
+| `libre_readings` | `LibreReading` | `id UUID` / `UNIQUE (user_id, timestamp)`, `scan_type VARCHAR(20)`, 追記専用 | `idx_libre_user_time (user_id, timestamp DESC)` | 同上（8.4万行範囲検索で複合インデックス直接利用） |
+| `events` | `HealthEvent` | `id UUID` / `event_type IN ('食事','活動','低血糖','高血糖')`, `timing_category VARCHAR(50)` (`MAX_CATEGORY_NAME_LENGTH` 一致), 論理削除 | `idx_events_user_time (user_id, event_datetime DESC)`, `idx_events_sync` | 同上 |
+| `meal_details` | `MealDetail` | `id UUID` / `event_id REFERENCES events(id) ON DELETE CASCADE`, `food_name VARCHAR(100)`, `unit VARCHAR(20)`, 論理削除 | `idx_meal_details_event`, `idx_meal_details_sync` | 同上 |
+| `user_settings` | `UserSettings` | `user_id UUID` / 目標閾値・区分別デフォルトインスリン | 主キー `(user_id)` | 同上 |
 
 ---
 
@@ -935,7 +364,7 @@ END $$;
 
 - 個人本番環境 (`VITE_APP_MODE=personal` / デフォルト) の完全クリーン起動 & 永続保存:
   - 本番環境ではデモ用データファイル（`public/data/real_glucose_recent.json` / `public/data/real_glucose_readings.json`）のプリフェッチやハイドレーション、および既存ユーザーデータの削除を一切行いません。
-  - `vite.config.ts` のビルドプラグインにより、`mode === 'personal'` ビルド時には `dist/data/real_glucose_*.json` を出力ディレクトリから完全除外します。
+  - `vite.config.ts` のビルドプラグイン（`configResolved` 動的 `outDir` 参照）により、出力先を `dist-personal` と `dist-portfolio` に完全分離し、`mode === 'personal'` ビルド時には `dist-personal/data/real_glucose_*.json` を出力ディレクトリから完全除外します。
   - 初回起動時は `seedFoodMasterIfEmpty(patientId)`（`src/lib/foodSeed.ts`）のみを実行し、カレンダーは常に「今日（当月・当日）」を表示して患者本人および家族による実データ登録・FreeStyleリブレCSV取込を永続保存します。
 - ポートフォリオ環境 (`VITE_APP_MODE=portfolio`) における実測CGMデモデータの自動生成 (`src/lib/realGlucoseLoader.ts`):
   - ポートフォリオ公開環境では、FreeStyleリブレの実測血糖値データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）および実測の低血糖・高血糖エピソードを使用します。
@@ -950,25 +379,23 @@ END $$;
   - 閲覧者による追加・編集・削除はそのページの閲覧セッション中のみオンメモリ上で有効であり、ブラウザを再読み込み（リロード）するか、設定画面の「デモ環境のデータ管理」カードにある「デモデータを初期状態に戻す」ボタンを押すと、食品・活動・カテゴリ・記録・設定のすべてが初期シード状態へリセットされます。
   - さらに、デモアプリとしての完成度とセキュリティを担保するため、設定画面の未実装・通常バックアップ・クライアント側ロール切替セクションおよび食事記録・食品登録モーダル内の糖質自動推定ボタンを非表示とし、ECharts カスタムツールチップの動的文字列は `escapeHtml`（`src/lib/utils.ts`）でサニタイズし、Cloudflare Pages 配信ヘッダー（`public/_headers`）で標準セキュリティヘッダーを強制します。
 - Git デュアルリモート管理 & 2系統 CI/CD パイプライン (`scripts/orchestrate-pipeline.mjs`, `.github/workflows/deploy-pages.yml`):
-  - ランタイム統一・2段階 Spec-First コミット記録・CI/CD 責務分離:
-    - 開発環境とリモートCI/CDを Node.js 24 LTS（`.nvmrc` および `package.json` の `engines`）に統一します。Git 履歴上で「仕様先行（Spec-First）」を証明するため、①仕様書・図面・テスト計画を先に更新して記録する先行コミット（`docs(spec): ...`）と、②合意後に実装・テストを記録する実装コミット（`feat(...): ...` / `fix(...): ...`）の **2段階記録** を標準とし、ローカルの `npm run pipeline:ship:*` は全品質ゲート検証・実装コミット・リモートへの `git push` までを担当します。Cloudflare Pages（`wrangler.toml` 準拠）へのデプロイは GitHub Actions の `deploy` ジョブに一本化し、ローカルとCIの二重デプロイ競合を排除します（GitHub Secrets 設定完了前の緊急フォールバック時のみ、`main` / `demo-public` ブランチ強制ガード付きの `--local-deploy` オプションを許可）。
+  - ランタイム統一・明示ステージング必須化・CI Artifact 受け渡し一本化:
+    - 開発環境とリモートCI/CDを Node.js 24 LTS（`.nvmrc` および `package.json` の `engines`）に統一します。Git 履歴上で「仕様先行（Spec-First）」を証明するため、①仕様書・図面・テスト計画を先に更新して記録する先行コミット（`docs(spec): ...`）と、②合意後に実装・テストを記録する実装コミット（`feat(...): ...` / `fix(...): ...`）の **2段階記録** を標準とします。`pipeline:ship:*` では未検査ファイル巻き込みを防ぐため `git add -A` を廃止し、明示的に `git add` された変更のみをコミットします（未ステージ変更・未追跡ファイル残存時はエラー停止）。Cloudflare Pages へのデプロイは GitHub Actions の `deploy` ジョブ（`verify` ジョブで実ブラウザ E2E 検証を通過したビルド Artifact をそのまま受け取ってデプロイ）に一本化します。
   - 本番開発リポジトリ (`origin`: Private):
-    - `main` ブランチへの Push 時、GitHub Actions の `verify` ジョブ通過後に `deploy` ジョブが `REQUIRE_SUPABASE_ENV=1` を付与して `VITE_APP_MODE=personal` ビルド（`enforceProductionEnvGuard` により `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` 未設定時はビルド・デプロイを即時遮断し Auth Gate 無効化を防止）を実行し、本番用 Cloudflare Pages（`cgm-diabetes-manager-personal`）へ自動デプロイします（GitHub Secrets への `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` / `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 設定を必須要件とします）。
-  - デモ公開リポジトリ (`public-demo`: Public):
-    - ワーキングツリー上のローカル専用資産を維持したまま一時インデックスと `git commit-tree` で親コミットを持たない単一コミット（過去コミット履歴ゼロ）を生成する `scripts/rebuild-demo-branch.mjs`（`npm run demo:rebuild-branch`）および自動検証ゲート（`scripts/verify-docs-sync.mjs` / `scripts/orchestrate-pipeline.mjs` の `PHASE-0-GUARD`）により、旧VBA資産（`legacy_vba/`、`docs/VBA_Project/`、`docs/screenshot/`、`docs/動画作成用資料/`）と個人PCパスを履歴ごと完全除外した孤立ブランチ `demo-public` を構築します。
-    - `npm run pipeline:ship:demo`（`--target=demo`）で `VITE_APP_MODE=portfolio` の全検証を通過させた上で Public リポジトリ（`public-demo` の `main` ブランチ）へ Push し、GitHub Actions がデモ公開用 Cloudflare Pages（`cgm-diabetes-manager-demo`）へ自動デプロイします（公開リポジトリの GitHub Secrets へのデモ専用 Cloudflare 認証情報設定および `main` ブランチ保護ルール適用を前提とします）。
-    - 日常の差分反映は `git cherry-pick <commit-sha>` または `npm run demo:rebuild-branch` により `main` から `demo-public` へ反映し、本番専用の非公開資産を一切露出させずにデモアプリを更新します。
+    - ローカルでは `.githooks/pre-commit`（ステージ済み Index Blob 直接検査）および `.githooks/pre-push`（未検証・Force Push 遮断）で保護し、`main` ブランチへの Push 時、GitHub Actions の `verify` ジョブ通過後に `deploy` ジョブが Supabase 環境変数完備を確認の上、検証済み `dist-personal` アーティファクトを本番用 Cloudflare Pages へ自動デプロイします。
+  - デモ公開リポジトリ (`public-demo`: Public・GitHub Ruleset 保護適合):
+    - ワーキングツリーを一切切り替えず一時インデックス（`GIT_INDEX_FILE`）と `git commit-tree -p refs/heads/demo-public` で旧VBA資産・個人PCパス・内部 Issue 番号を完全除外した Fast-Forward 子コミットを生成する `scripts/rebuild-demo-branch.mjs` により、履歴保護（`non_fast_forward`）と必須ステータスチェック（`Verify Quality Gates (DDD / Types / Vitest / Smoke / Playwright E2E)`）が有効な `public-demo` Ruleset を100%満たして公開します（ステージングブランチ `release/demo` へ Push → CI 通過確認後に `main` へ Fast-Forward 反映 → GitHub Actions が検証済み `dist-portfolio` アーティファクトをデモ用 Cloudflare Pages へ自動デプロイ）。
 
 ---
 
 ## 7. Local-First 双方向クラウド同期エンジン & BFF 実装仕様 (`src/lib/supabase.ts`, `src/lib/syncEngine.ts`, `functions/api/gemini.ts`)
 
-1. Supabase クライアント初期化とクリーンなローカルフォールバック (`src/lib/supabase.ts`):
+1. Supabase クライアント初期化とテストバックドアゼロの環境分離 (`src/lib/supabase.ts`):
    - `isPortfolioMode() === false` かつ環境変数 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` が設定されている場合のみ `@supabase/supabase-js` クライアントを初期化します。
-   - `portfolio` モード、環境変数未設定時、Vitest 単体テスト、および Playwright E2E テスト環境（`__CGM_E2E_FORCE_LOCAL_ONLY__` / `__CGM_E2E_ALLOW_CSV_IMPORT__`）では自動的にローカル専用モードへフォールバックし、オフライン単体動作およびE2E回帰テストの決定論的な動作を担保します。
+   - 本番クライアントコード内に E2E 用 `window.__CGM_E2E_*` フラグは一切保持せず、`portfolio` モード・環境変数未設定時・Vitest 単体テスト（`MODE === 'test'`）では自動的にローカル専用モードへフォールバックし、Playwright E2E では分離された実バンドル（`dist-portfolio` と `dist-personal`）の2プロジェクト構成で直接検証します。
 2. 双方向クラウド同期エンジン (`src/lib/syncEngine.ts`):
    - 7テーブル一括 Push & Pull と汎用LWW差分計算 (`computeLwwDiff`): `user_settings`, `categories`, `food_master`, `event_master`, `events`, `meal_details`, `libre_readings` の全7テーブルについて、ジェネリック純粋関数 `computeLwwDiff<T>` によりローカル（Dexie.js）とクラウド（Supabase PostgreSQL）の Last-Write-Wins (LWW) 差分を算出し、双方向同期を実行します。
-   - 24文字ウォールクロックISO時刻正規化（課題 #7 対応）: Supabase (`TIMESTAMPTZ`) から Pull した `timestamp` および `event_datetime`（`+00:00` オフセット等）は、`normalizeToWallClockIso` により必ず24文字の `"YYYY-MM-DDTHH:mm:ss.000Z"` 形式へ正規化してからローカルDBへ格納し、複合インデックス `.between()` 検索の整合性を担保します。
+   - 24文字ウォールクロックISO時刻正規化（課題 #7 対応）: Supabase (`TIMESTAMPTZ`) から Pull した `timestamp` および `event_datetime`（`+00:00` オフセット等）は、`src/lib/dateUtils.ts` に一元化された `normalizeToWallClockIso`（`src/lib/syncEngine.ts` からも再エクスポート、スラッシュ区切り等のフォールバック時も `toISOString()` による -9時間 UTC 変換を行わずローカル時刻要素をそのまま保持）により必ず24文字の `"YYYY-MM-DDTHH:mm:ss.000Z"` 形式へ正規化してからローカルDBへ格納し、複合インデックス `.between()` 検索の整合性を担保します。
    - 1,000件単位のバッチチャンク処理 (`chunkArray`): `libre_readings` 等の大量レコードは 1,000件単位のチャンクに分割して `upsert` およびページネーション取得します。
    - 異常値エピソードのクラウド再計算整合性（課題 #6 対応）: 目標血糖閾値の変更時やCSV取込時には `replaceRemoteAnomalies: true` を指定し、最新の異常値エピソード集合を先に冪等 `upsert` した上で、新集合に含まれないクラウド側の旧自動抽出エピソード（`低血糖` / `高血糖`）のみを `deleteRowsByIdsInChunks` で後削除します（登録→削除の順によるデータ消失防止：§3.4）。
    - 未ログイン時ローカルデータの自動引き継ぎ (`migrateAnonymousLocalDataToUser`): 未ログイン状態（`DEFAULT_PATIENT_ID`）で記録されたローカルデータは、初回ログイン時に自動的に認証済み `auth.uid()` へマイグレーションされ、そのままクラウドへ同期されます。

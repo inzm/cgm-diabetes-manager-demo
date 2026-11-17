@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { usePatient } from '@/contexts/PatientContext';
 import { SelectedDaySummaryData, MonthlyOverallKpi } from '@/lib/aggregates';
+import { formatCalendarDayLabels } from '@/lib/dateUtils';
 import { Droplets, Utensils, Syringe, AlertTriangle, AlertCircle, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -35,19 +36,12 @@ export const SelectedDaySummary: React.FC<SelectedDaySummaryProps> = ({
     };
   }, [isLegendOpen]);
 
-  const dateObj = new Date(`${selectedDate}T00:00:00`);
-  const dayOfWeek = !isNaN(dateObj.getTime()) ? dateObj.getDay() : -1;
-  const weekdayNames = ['日', '月', '火', '水', '木', '金', '土'];
-
-  const weekdayLabel = !isNaN(dateObj.getTime()) ? `(${weekdayNames[dayOfWeek]})` : '';
-
-  const formattedDate = !isNaN(dateObj.getTime())
-    ? `${dateObj.getMonth() + 1}月${dateObj.getDate()}日 ${weekdayLabel}`
-    : selectedDate;
-
-  const compactMobileDate = !isNaN(dateObj.getTime())
-    ? `${dateObj.getMonth() + 1}/${dateObj.getDate()}`
-    : selectedDate;
+  const {
+    dayOfWeek,
+    weekdayLabel,
+    formattedMonthDayWithWeekday: formattedDate,
+    compactMobileDate,
+  } = formatCalendarDayLabels(selectedDate);
 
   const dateBadgeStyle =
     dayOfWeek === 0

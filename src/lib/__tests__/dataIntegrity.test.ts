@@ -450,10 +450,10 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       expect(await db.food_master.count()).toBe(0);
     });
 
-    it('デモ環境案内モーダルの表示判定ヘルパーがポートフォリオモードで毎回 true を返し、通常モード・テスト抑止フラグ有効時は false を返すこと', async () => {
+    it('デモ環境案内モーダルの表示判定ヘルパーがポートフォリオモードで毎回 true を返し、本番モード時は false を返すこと', async () => {
       const { shouldShowDemoWelcomeModal } = await import('@/components/common/DemoWelcomeModal');
 
-      // 非ポートフォリオモードでは常に false
+      // 非ポートフォリオモード（personal）では常に false
       expect(shouldShowDemoWelcomeModal()).toBe(false);
 
       // ポートフォリオモード（VITE_APP_MODE = 'portfolio'）では毎回 true を返すこと（リロード時も毎回表示され初期化の目印になる）
@@ -461,22 +461,10 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       try {
         expect(shouldShowDemoWelcomeModal()).toBe(true);
         expect(shouldShowDemoWelcomeModal()).toBe(true);
-
-        // E2E CSV取込許可フラグ（通常モード相当）有効時は false
-        (window as unknown as Record<string, boolean>).__CGM_E2E_ALLOW_CSV_IMPORT__ = true;
-        expect(shouldShowDemoWelcomeModal()).toBe(false);
-        delete (window as unknown as Record<string, boolean>).__CGM_E2E_ALLOW_CSV_IMPORT__;
-
-        // E2E モーダル抑止フラグ有効時は false
-        (window as unknown as Record<string, boolean>).__CGM_E2E_SUPPRESS_WELCOME__ = true;
-        expect(shouldShowDemoWelcomeModal()).toBe(false);
-        delete (window as unknown as Record<string, boolean>).__CGM_E2E_SUPPRESS_WELCOME__;
-        expect(shouldShowDemoWelcomeModal()).toBe(true);
       } finally {
         vi.unstubAllEnvs();
-        delete (window as unknown as Record<string, boolean>).__CGM_E2E_ALLOW_CSV_IMPORT__;
-        delete (window as unknown as Record<string, boolean>).__CGM_E2E_SUPPRESS_WELCOME__;
       }
+      expect(shouldShowDemoWelcomeModal()).toBe(false);
     });
   });
 
@@ -881,6 +869,7 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
   describe('12. 双方向クラウド同期エンジン (syncEngine) & 家族権限解決 & Gemini BFF 検証', () => {
     it('normalizeToWallClockIso (課題 #7) が PostgreSQL TIMESTAMPTZ 文字列を 24文字 ISO へ正規化し、chunkArray が 1,000件単位で分割すること', async () => {
       const { normalizeToWallClockIso, chunkArray } = await import('../syncEngine');
+      const { formatCalendarDayLabels } = await import('../dateUtils');
 
       expect(normalizeToWallClockIso('2026-11-11T08:15:00+00:00')).toBe(
         '2026-11-11T08:15:00.000Z'
@@ -894,7 +883,26 @@ describe('End-to-End Cross-Screen Data Integrity (全画面データ整合性検
       expect(normalizeToWallClockIso('2026-11-11T08:15')).toBe(
         '2026-11-11T08:15:00.000Z'
       );
+      // スラッシュ形式や非ISO日時でも toISOString() の -9時間ズレを起こさずローカル時刻を保持すること
+      expect(normalizeToWallClockIso('2026/08/25 07:05:09')).toBe(
+        '2026-08-25T07:05:09.000Z'
+      );
+      expect(normalizeToWallClockIso('Aug 25, 2026 06:30:00')).toBe(
+        '2026-08-25T06:30:00.000Z'
+      );
       expect(normalizeToWallClockIso('2026-11-11T08:15:00.000Z')).toHaveLength(24);
+
+      // カレンダーセル・選択日サマリー共通ラベル導出 (formatCalendarDayLabels)
+      expect(formatCalendarDayLabels('2026-08-25')).toEqual({
+        dayOfWeek: 2,
+        weekdayLabel: '(火)',
+        formattedMonthDayWithWeekday: '8月25日 (火)',
+        compactMobileDate: '8/25',
+      });
+      expect(formatCalendarDayLabels('2026-08-23').dayOfWeek).toBe(0); // 日曜
+      expect(formatCalendarDayLabels('2026-08-29').dayOfWeek).toBe(6); // 土曜
+      expect(formatCalendarDayLabels('invalid-date').dayOfWeek).toBe(-1);
+      expect(formatCalendarDayLabels('2026-02-31').dayOfWeek).toBe(-1);
 
       const items = Array.from({ length: 2500 }, (_, i) => i);
       const chunks = chunkArray(items, 1000);

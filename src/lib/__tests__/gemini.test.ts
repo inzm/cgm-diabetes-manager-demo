@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   estimateCarbsWithGemini,
@@ -15,10 +16,15 @@ import {
 } from '../../../functions/api/gemini';
 import {
   SOURCE_TO_SPEC_RULES,
+  evaluateSpecFirstIdentExemption,
   extractAddedBacktickIdentifiersFromDiff,
   inspectMarkdownIntegrity,
   isPureSpecFirstCommit,
+  stripJsCommentsPreservingStrings,
 } from '../../../scripts/verify-docs-sync.mjs';
+import { evaluatePreToolGuard } from '../../../.agents/hooks/pre-tool-guard.mjs';
+import { didTranscriptLinesTouchWorkspace, isWatchedRepoPath } from '../../../.agents/hooks/stop-guard.mjs';
+import { isVerifyStampReusable } from '../../../scripts/orchestrate-pipeline.mjs';
 import {
   validateProductionSupabaseEnv,
   computeServiceWorkerCacheName,
@@ -686,6 +692,141 @@ describe('gemini (方式1: BFFプロキシ連携 & 日本食品標準成分表�
         expect(rule, `Rule missing for ${targetPrefix}`).toBeDefined();
         expect(Array.isArray(rule?.requiredSpecs) && rule!.requiredSpecs!.length > 0).toBe(true);
       }
+    });
+
+    it('stripJsCommentsPreservingStrings が https:// を含む文字列リテラルを壊さずコメントのみを除去すること', () => {
+      const code = [
+        `const api = 'https://example.com/api'; const jargon = "IndexedDB"; // マスタ コメント`,
+        'const tpl = `https://foo.test/${1 + /* Dexie */ 2}`;',
+      ].join('\n');
+      const stripped = stripJsCommentsPreservingStrings(code);
+      expect(stripped).toContain(`'https://example.com/api'`);
+      expect(stripped).toContain(`"IndexedDB"`);
+      expect(stripped).not.toContain('マスタ');
+      expect(stripped).toContain('https://foo.test/');
+      expect(stripped).not.toContain('Dexie');
+    });
+
+    it('evaluateSpecFirstIdentExemption が実装ファイル混在時に未実装識別子の猶予を確実に拒否すること', () => {
+      expect(
+        evaluateSpecFirstIdentExemption({
+          forceStrictIdents: false,
+          isStagedMode: false,
+          activeFiles: ['docs/Web_Project/SPEC_CALENDAR.md'],
+        })
+      ).toEqual({ allowUncommittedDocDiff: true, allowPrecedingSpecCommits: true });
+
+      expect(
+        evaluateSpecFirstIdentExemption({
+          forceStrictIdents: false,
+          isStagedMode: false,
+          activeFiles: ['src/App.tsx', 'docs/Web_Project/SPEC_CALENDAR.md'],
+        })
+      ).toEqual({ allowUncommittedDocDiff: false, allowPrecedingSpecCommits: false });
+
+      expect(
+        evaluateSpecFirstIdentExemption({
+          forceStrictIdents: true,
+          isStagedMode: false,
+          activeFiles: ['docs/Web_Project/SPEC_CALENDAR.md'],
+        })
+      ).toEqual({ allowUncommittedDocDiff: false, allowPrecedingSpecCommits: false });
+    });
+
+    it('PreToolUse / Stop ライフサイクルフックと厳密 Verify Stamp がバイパス・誤判定を防止すること', () => {
+      expect(
+        evaluatePreToolGuard({
+          tool_name: 'run_command',
+          tool_input: { CommandLine: 'git commit --no-verify -m "bypass"' },
+        }).decision
+      ).toBe('deny');
+      expect(
+        evaluatePreToolGuard({
+          tool_name: 'run_command',
+          tool_input: { CommandLine: 'git push --force public-demo demo-public:main' },
+        }).decision
+      ).toBe('deny');
+      expect(
+        evaluatePreToolGuard({
+          tool_name: 'edit_file',
+          tool_input: { Path: 'c:\\repo\\legacy_vba\\Module1.bas' },
+        }).decision
+      ).toBe('deny');
+      expect(
+        evaluatePreToolGuard({
+          tool_name: 'call_mcp_tool',
+          tool_input: { ServerName: 'excel-manager', ToolName: 'run_macro' },
+        }).decision
+      ).toBe('deny');
+      expect(
+        evaluatePreToolGuard({
+          tool_name: 'run_command',
+          tool_input: { CommandLine: 'SKIP_DOC_SYNC=1 npm run test:docs' },
+        }).decision
+      ).toBe('force_ask');
+      expect(
+        evaluatePreToolGuard({
+          tool_name: 'call_mcp_tool',
+          tool_input: { ServerName: 'supabase_mcp', ToolName: 'apply_migration' },
+        }).decision
+      ).toBe('force_ask');
+      expect(
+        evaluatePreToolGuard({
+          tool_name: 'call_mcp_tool',
+          tool_input: {
+            ServerName: 'supabase_mcp',
+            ToolName: 'execute_sql',
+            Arguments: { query: 'SELECT version FROM supabase_migrations.schema_migrations;' },
+          },
+        }).decision
+      ).toBe('allow');
+
+      // Subagent 会話（USER_EXPLICIT なし + 15回の read_file 押し出し）でも先行する edit_file を検知できること
+      const subagentTranscript = [
+        JSON.stringify({
+          type: 'ASSISTANT',
+          tool_calls: [{ name: 'edit_file', args: { Path: 'src/App.tsx' } }],
+        }),
+        ...Array.from({ length: 15 }, () =>
+          JSON.stringify({
+            type: 'ASSISTANT',
+            tool_calls: [{ name: 'read_file', args: { Path: 'README.md' } }],
+          })
+        ),
+      ];
+      expect(didTranscriptLinesTouchWorkspace(subagentTranscript)).toBe(true);
+      expect(isWatchedRepoPath('.env.personal')).toBe(true);
+      expect(isWatchedRepoPath('wrangler.toml')).toBe(true);
+      expect(isWatchedRepoPath('.agents/scratch/pipeline-last-run.json')).toBe(false);
+
+      const fp = {
+        worktreeTreeSha: 'aaa111',
+        headSha: 'bbb222',
+        targetEnv: 'personal',
+        envHash: 'ccc333',
+      };
+      expect(
+        isVerifyStampReusable(
+          { ...fp, skipVisual: false, verifiedAtMs: 1_000_000 },
+          fp,
+          1_060_000
+        )
+      ).toBe(true);
+      // 1文字でも worktreeTreeSha が変化、または期限切れの場合は再利用不可
+      expect(
+        isVerifyStampReusable(
+          { ...fp, worktreeTreeSha: 'modified', skipVisual: false, verifiedAtMs: 1_000_000 },
+          fp,
+          1_060_000
+        )
+      ).toBe(false);
+      expect(
+        isVerifyStampReusable(
+          { ...fp, skipVisual: false, verifiedAtMs: 1_000_000 },
+          fp,
+          2_500_000
+        )
+      ).toBe(false);
     });
   });
 });

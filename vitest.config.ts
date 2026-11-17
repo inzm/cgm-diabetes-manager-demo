@@ -9,6 +9,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     pool: 'threads',
+    // Keep single worker thread to reuse Vite transform cache across the 4 test files (12.6s vs 27.5s multi-isolate startup on Windows)
     poolOptions: {
       threads: {
         singleThread: true,

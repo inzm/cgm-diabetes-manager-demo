@@ -122,6 +122,90 @@ export const extractLocalTimeStr = extractTimeStr;
 
 const JAPANESE_WEEKDAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
+export interface CalendarDayLabels {
+  dayOfWeek: number;
+  weekdayLabel: string;
+  formattedMonthDayWithWeekday: string;
+  compactMobileDate: string;
+}
+
+/**
+ * YYYY-MM-DD 文字列から曜日番号 (0〜6, 不正時は -1) とカレンダー画面用ラベル群を返す
+ * UIコンポーネントでの直接 `new Date(...).getDay()` 呼び出しを排しタイムゾーン安全に導出する
+ */
+export function formatCalendarDayLabels(dateStr: string): CalendarDayLabels {
+  const clean = String(dateStr ?? '').trim().slice(0, 10);
+  const match = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return {
+      dayOfWeek: -1,
+      weekdayLabel: '',
+      formattedMonthDayWithWeekday: dateStr,
+      compactMobileDate: dateStr,
+    };
+  }
+  const yearNum = parseInt(match[1], 10);
+  const monthNum = parseInt(match[2], 10);
+  const dayNum = parseInt(match[3], 10);
+  const localDt = new Date(yearNum, monthNum - 1, dayNum);
+  if (
+    isNaN(localDt.getTime()) ||
+    localDt.getFullYear() !== yearNum ||
+    localDt.getMonth() !== monthNum - 1 ||
+    localDt.getDate() !== dayNum
+  ) {
+    return {
+      dayOfWeek: -1,
+      weekdayLabel: '',
+      formattedMonthDayWithWeekday: dateStr,
+      compactMobileDate: dateStr,
+    };
+  }
+  const dayOfWeek = localDt.getDay();
+  const weekdayLabel = `(${JAPANESE_WEEKDAY_NAMES[dayOfWeek]})`;
+  return {
+    dayOfWeek,
+    weekdayLabel,
+    formattedMonthDayWithWeekday: `${monthNum}月${dayNum}日 ${weekdayLabel}`,
+    compactMobileDate: `${monthNum}/${dayNum}`,
+  };
+}
+
+/**
+ * Supabase (TIMESTAMPTZ) や CSV・外部入力から取得した日時文字列を、
+ * IndexedDB の `.between()` 辞書順検索が100%機能する 24文字ウォールクロックISO形式
+ * （"YYYY-MM-DDTHH:mm:ss.000Z"）へ正規化する。
+ * 非ISO形式のフォールバック時も `toISOString()` を使わずローカル時刻要素をそのまま保持する。
+ */
+export function normalizeToWallClockIso(raw: string | null | undefined): string {
+  if (!raw) {
+    return '1970-01-01T00:00:00.000Z';
+  }
+  const trimmed = String(raw).trim();
+  const match = trimmed.match(
+    /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?/
+  );
+  if (match) {
+    const yyyy = match[1];
+    const mm = match[2].padStart(2, '0');
+    const dd = match[3].padStart(2, '0');
+    const hh = match[4].padStart(2, '0');
+    const min = match[5].padStart(2, '0');
+    const ss = (match[6] ?? '00').padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}.000Z`;
+  }
+
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    const datePart = formatLocalDate(parsed);
+    const hh = String(parsed.getHours()).padStart(2, '0');
+    const min = String(parsed.getMinutes()).padStart(2, '0');
+    const ss = String(parsed.getSeconds()).padStart(2, '0');
+    return `${datePart}T${hh}:${min}:${ss}.000Z`;
+  }
+  return trimmed;
+}
+
 /**
  * YYYY-MM-DD 文字列から「YYYY年M月D日 (曜)」形式の日本語表記と曜日番号 (0〜6) を返す
  */

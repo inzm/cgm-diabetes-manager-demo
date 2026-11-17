@@ -1,132 +1,85 @@
 ---
 name: ai-orchestrator-pipeline
-description: 検証・コミット・Push・Cloudflare Pagesデプロイ・ブランチ運用・サブエージェント分担を、scripts/orchestrate-pipeline.mjs の統合パイプラインで実行する。機能追加・UI改善・バグ修正の出荷時に使う。
+description: 検証・明示ステージングコミット・Ruleset準拠Fast-Forward Push・Cloudflare Pages CD・並列サブエージェント Worktree 分担を scripts/orchestrate-pipeline.mjs で統合実行する。機能追加・UI改善・バグ修正の出荷時に使う。
 ---
 
 # ai-orchestrator-pipeline
 
-目的: 実装後の検証から出荷までを `scripts/orchestrate-pipeline.mjs` で一括実行する。
+目的: 実装後の段階的検証から原子的コミット・出荷までを `scripts/orchestrate-pipeline.mjs` で安全に一括実行する。
 
-## 役割分担 (親エージェントが統括)
-- Spec: 4軸評価、docs/Web_Project/SPEC_*.md の先行・同時更新。
-- Frontend/Domain: React / Tailwind / ECharts / Dexie / Worker の実装、src/lib/__tests__/ のテスト追加。
-- Visual QA: Playwright E2E回帰と11画面の撮影、PNGの目視確認 (skill: visual-design-test)。
-- Release: 全ゲート通過後に git add / commit / push（デプロイは GitHub Actions CD に一本化。緊急時のみ `--local-deploy`）。
+## 1. サブエージェント編成と並列 Worktree 隔離規約
+- **調査・影響範囲分析**（`legacy_vba/` の臨床計算照合、参照箇所の網羅調査） → `research` サブエージェントへ委譲し、親のコンテキスト肥大化を防ぐ。
+- **並列実装時の Worktree 分離**:
+  - 同一ワーキングツリー（`Workspace: "share"`）で複数の編集系サブエージェントを同時実行する場合、親エージェントが重複しない対象ファイル境界と対応 `SPEC_*.md` を厳密に割り当てる（同一ファイルの同時編集は厳禁）。
+  - ビルドやテストを伴う独立タスクを並列化する場合は、`git worktree add .agents/scratch/worktrees/<task-name> -b <branch>` で物理ディレクトリを分離して競合を根絶する（`.githooks/` は `core.hooksPath` により全 Worktree で自動有効化される）。
+- **出荷前 Read-Only 監査サブエージェント**:
+  - 大規模変更の出荷前には、編集権限を使わない監査役（仕様整合・セキュリティ境界・`visual-design-test` 画像検査）を分離して客観レビューを行う。
+- **コミット・Push 統括**: サブエージェントは原則として `git push` や本番 DB 変更を行わず、親エージェントが最終検証と出荷を統括する。
 
-## サブエージェント
-- 調査・影響範囲分析 (legacy_vba/ の計算照合、Props・DB参照箇所の網羅調査) → TypeName: research に委譲する。親のコンテキストを汚さないため。
-- 独立した実装・テスト追加 → TypeName: self またはカスタム定義。対象ファイルのスコープと対応する SPEC_*.md を明示して起動する。
-- 禁止: 複数エージェントが同一ファイルを同時に書き換えること。親がファイル境界を割り当てる。
-- 禁止: 指定スコープ外のファイルの修正。
-
-## 検査の3段階 (早い段階は軽く、出荷に近づくほど広く深く)
+## 2. 検査の4段階と Verify Stamp
 
 | 段階 | タイミング | 仕組み | 実行内容 |
 | :--- | :--- | :--- | :--- |
-| 1 | AIの作業終了時 | .agents/hooks/stop-guard.mjs (Stop Hook) | npm run test:docs。そのターンで src/ ・ functions/ ・ supabase/ ・ scripts/ ・ e2e/ ・ .agents/ ・ docs/Web_Project/ を編集していなければ検査しない |
-| 2 | git commit 時 | .git/hooks/pre-commit (scripts/install-git-hooks.mjs が npm install 時に設置) | test:docs --staged + typecheck + npm test |
-| 2' | 手動の中間確認 | npm run pipeline:verify:quick | test:docs + typecheck + npm test + test:smoke (ビルド・E2E・撮影なし) |
-| 3 | 出荷・公開前 | npm run pipeline:verify / pipeline:ship:* | 下記の全フェーズ (E2E回帰・全11画面の撮影とDOM監査を含む) |
+| 1 | AIのターン終了時 | `.agents/hooks/stop-guard.mjs` (`Stop` Hook) | 未コミット変更または当ターン内のコミットがある場合、`npm run test:docs` を自動実行 |
+| 2 | `git commit` 時 | `.githooks/pre-commit` | Staged Index Blob モードの `verify-docs-sync.mjs --staged` ＋ Partial Staging 遮断 ＋ `typecheck` ＋ `npm test`（純粋 `docs(spec)` コミット時は高速スキップ） |
+| 2' | 実装中の中間確認 | `npm run pipeline:verify:quick` | `test:docs` (Strict) + 4プロジェクト並列 `typecheck` + `npm test` (`src` + `scripts`) + 8並列 `test:smoke` |
+| 3 | 出荷・UI変更前 | `npm run pipeline:verify` / `pipeline:ship:*` | 上記 ＋ `audit:prod` ＋ 分離ビルド (`dist-portfolio` & `dist-personal`) ＋ 2プロジェクト隔離 Playwright E2E (`E2E-1`〜`E2E-14`) ＋ 11画面撮影監査 (`test:visual`) |
+| 4 | `git push` / CD完了後 | `.githooks/pre-push` + `post-deploy-verify` | `main` への Force Push 遮断・未検証 Push 防止、および CD 完了後の `scripts/post-deploy-smoke.mjs` 疎通確認 |
 
-- 画面撮影PNGのAIによる目視確認は、UIを変更したときに skill: visual-design-test で行う。毎回は行わない。
-- pipeline:ship:* は Phase 3 で npm test を通過済みのため、Phase 6 のコミット時は環境変数 PIPELINE_TESTS_PASSED=1 を渡し、pre-commit の npm test 重複実行を省く (test:docs と typecheck は常に実行)。
+- **Strict Verify Stamp (`.agents/scratch/verify-stamp.json`)**: `npm run pipeline:verify` 成功時に一時 `GIT_INDEX_FILE` から算出した Working Tree 全体の決定論的ツリー SHA・`HEAD`・環境変数ハッシュを記録する。15分以内にファイル変更なしで `pipeline:ship:*` を実行した場合、重複する再ビルド・Playwright 再実行を安全に省略する。
 
-## コマンド
+## 3. コマンドと明示的ステージング原則 (`git add -A` 廃止)
 
-### 中間確認 (軽量)
+### 中間確認 (軽量高速ループ)
 ```powershell
 npm run pipeline:verify:quick
 ```
-test:docs → typecheck → npm test → test:smoke のみ実行する。--ship とは併用できない。
 
-### 検証のみ (総合)
+### 総合検証・画面撮影のみ
 ```powershell
 npm run pipeline:verify
 ```
-実行順 (1つでも失敗したら中断):
-1. npm run test:docs — 仕様書・図面・DDLの同期、ハリボテ・開発者用語の検出
-2. npm run typecheck — TypeScript厳格型検査
-3. npm test — Vitest 臨床計算の単体テストと、画面間データ整合性の統合テスト
-4. npm run test:smoke — Vite開発サーバー全56エンドポイントが HTTP 200 かつエラーなし
-5. npm run build:portfolio — デモ用ビルド
-6. npm run test:e2e:regression — Playwright E2E-1〜E2E-14
-7. npm run test:visual — デスクトップ・モバイル全11画面の撮影とDOM監査
-8. npm run build:personal — 本番用ビルド (target=personal のみ)
+UIを変更した場合は、完了後に `.agents/scratch/screenshots/` の対象 PNG と `visual-audit-report.json` を `visual-design-test` スキルで確認する。
 
-実行後、.agents/scratch/screenshots/ の対象PNGを read_file で確認する。
+### 出荷: 個人本番 (`origin` `main` -> GitHub Actions CD)
+`pipeline:ship:*` は無差別な `git add -A` を一切行わない。未ステージ変更や未追跡ファイルが残っていると `PHASE-0-GUARD` で即座に中断するため、**必ず対象ファイルを明示的に `git add` してから実行する**。
 
-### 出荷: 本番 (Private origin -> GitHub Actions CD -> Cloudflare Pages: cgm-diabetes-manager-personal)
-Git 履歴上で「仕様先行」を証明するため、先に `docs(spec)` コミットを記録してから実装・出荷を実行する。
 ```powershell
-# 1. 仕様先行コミット (ユーザー合意後、実装着手の前)
-git add docs/Web_Project
+# 1. 第1コミット: 仕様先行の記録 (純粋ドキュメントのみ・高速 pre-commit)
+git add docs/Web_Project/SPEC_XXX.md
 git commit -m "docs(spec): 仕様変更内容の要約"
 
-# 2. 実装・テスト完了後、全ゲート検証＋実装コミット＋Push
+# 2. 第2コミット & 出荷: 実装ファイルを明示的に git add して総合検証・コミット・Push
+git add src/... supabase/... tests/...
 npm run pipeline:ship:personal -- --message "feat(personal): 実装内容の要約"
 ```
 
-### 出荷: デモ公開 (Public public-demo -> GitHub Actions CD -> Cloudflare Pages: cgm-diabetes-manager-demo)
-main の成果物を履歴ゼロの孤立ブランチとして再生成（または cherry-pick）してから出荷する。
-```powershell
-# A. 過去履歴ごとクリーン再構築する場合 (旧VBA資産・個人パス完全抹消)
-npm run demo:rebuild-branch
-git checkout demo-public
-npm run pipeline:verify
-git push --force public-demo demo-public:main
-git push --force origin demo-public
-git checkout main
+### 出荷: 公開デモ (`public-demo` Ruleset `27410303` 準拠・ブランチ切替ゼロ Fast-Forward 昇格)
+ローカルのワーキングツリーは `main` のまま一切切り替えず（`legacy_vba/` 等のローカル参照資産を保護）、`scripts/rebuild-demo-branch.mjs` が一時インデックス（`GIT_INDEX_FILE`）と `git commit-tree -p refs/heads/demo-public` でクリーンな Fast-Forward 子コミットを生成する。
 
-# B. 既存のクリーンな demo-public に2段階の差分コミットを取り込む場合
-git checkout demo-public
-git cherry-pick <spec-commit-sha> <feat-commit-sha>
-npm run pipeline:ship:demo -- --message "feat(demo): 変更内容の要約"
-git checkout main
+```powershell
+# main ブランチがクリーン（または明示 git add 済み）の状態でそのまま実行
+npm run pipeline:ship:demo -- --message "feat(demo): 公開デモ更新内容の要約"
 ```
 
-### 出荷の挙動
-- Phase 1〜5 (全テスト・撮影・監査) が全て成功した場合のみ、Phase 6 (git add -A → commit → push) へ進む。
-- Cloudflare Pages へのデプロイは GitHub Actions (`deploy-pages.yml` の `deploy` ジョブ) に一本化されており、ローカルとCIの二重デプロイを起こさない（GitHub Secrets 設定前の緊急時のみ `--local-deploy` フラグで `main` / `demo-public` ブランチからのローカルデプロイを許可）。
-- 1つでも失敗したら中断する。不完全なコードは push・デプロイされない。
-- --target=demo は PHASE-0-GUARD で、demo-public 以外のブランチからの実行と旧VBA関連資産（legacy_vba/・docs/VBA_Project/・docs/screenshot/・docs/動画作成用資料/）の混入を拒否する。--local-deploy 時は --target=personal でも main ブランチを強制する。
-- 結果は .agents/scratch/pipeline-last-run.json に保存される。
+`pipeline:ship:demo` の自動実行フロー:
+1. 全品質ゲート（`dist-portfolio` + `dist-personal` 分離ビルド & 2プロジェクト E2E）を通過。
+2. `rebuild-demo-branch.mjs` が非公開ディレクトリ除外・UTF-8 BOM 検査・ローカルパス/内部 Issue 番号スキャンを実行し、`refs/heads/demo-public` 上に Fast-Forward 子コミットを生成。
+3. `public-demo` のステージングブランチ `refs/heads/release/demo` へ Push し、`gh run watch --exit-status` で Ruleset `27410303` の必須ステータスチェック（`"Verify Quality Gates (DDD / Types / Vitest / Smoke / Playwright E2E)"`）通過を待機。
+4. CI 通過済みコミット SHA を `public-demo` の `refs/heads/main` へ Fast-Forward Push（Force Push ゼロ）し、`release/demo` を削除の上、`origin` の `demo-public` バックアップも更新。
 
-## ブランチ
+## 4. ブランチ構成
 
-| ブランチ | リモート / デプロイ先 | 用途と制約 |
+| ブランチ | リモート / 出力バンドル | 用途と保護制約 |
 | :--- | :--- | :--- |
-| main | Private: origin/main / cgm-diabetes-manager-personal | 日常の開発・検証・個人本番運用。pipeline:ship:personal で Push し、GitHub Actions CD が `REQUIRE_SUPABASE_ENV=1` 検証の上デプロイ |
-| demo-public | Public: public-demo/main / cgm-diabetes-manager-demo | 公開ポートフォリオ専用。`scripts/rebuild-demo-branch.mjs` により過去コミット履歴および旧VBA関連資産（legacy_vba/・docs/VBA_Project/・docs/screenshot/・docs/動画作成用資料/）を完全除外した孤立ブランチ。pipeline:ship:demo で出荷 |
-| feature/*, fix/*, docs/*, refactor/* | Private: origin/<branch> | 並行開発・PRレビュー用のトピックブランチ。Push 時に GitHub Actions `verify` ジョブ（CIのみ、デプロイなし）が自動実行される |
+| `main` | Private: `origin/main` (`dist-personal`) | 日常開発・個人本番運用。GitHub Actions `verify` が本番バンドルを検証・アーティファクト化し、`deploy` ジョブが Cloudflare Pages へ反映 |
+| `demo-public` | Public: `public-demo/main` (`dist-portfolio`) | 公開ポートフォリオ用クリーン履歴ブランチ。`main` チェックアウトのまま `rebuild-demo-branch.mjs` で Fast-Forward 更新し、`release/demo` CI 通過後に `public-demo/main` へ昇格 |
+| `feature/*`, `fix/*`, `docs/*`, `refactor/*` | Private: `origin/<branch>` | 並行開発・PR用トピックブランチ。`main` 統合時は Squash せず `docs(spec)` → `feat`/`fix` の2段階履歴を保持する |
 
-## コミット (2段階記録: Spec-First の証明)
-- 第1コミット (仕様先行): 仕様書・図面 (`docs/Web_Project/`) を先に更新し、`docs(spec): <仕様変更の要約>` でコミットする（実装コード `src/`・`functions/`・`supabase/` は含めない）。
-- 第2コミット (実装・検証): 合意した仕様のとおりに実装コード・型定義・DDL・テストを更新し、`feat(personal): <実装の要約>`（または `fix` / `refactor`）でコミットする（実装中に判明した仕様書の微調整を含めてよい）。
-- トピックブランチを `main` へ統合する際は、Squash マージを行わず2コミットの履歴を保持する。
-- git commit 時に `.git/hooks/pre-commit` が `npm run test:docs` (`--staged`)、`npm run typecheck`、`npm test` を実行する（第2コミット時は直前の連続する純粋 `docs(spec):` コミットの更新仕様書も Spec-First 同期済みとして自動照合する）。
-
-## 人の手が必要な項目のIssue記録
-対象と禁止事項は AGENTS.md の「ルール: 人の手が必要な項目」に従う。
-
-- リポジトリ: origin (inzm/cgm-diabates-manager-web, Private)
-- タイトル: `[要対応] <内容を一文で>`
-- ラベル: `human-action` と、種別 (`bug` / `enhancement` / `documentation` / `question`) のうち1つ
-- 本文の構成:
-  1. 背景 (何が見つかったか、関連する仕様書・コミット)
-  2. 人が行うこと (チェックボックスで列挙)
-  3. 完了条件
-  4. 影響 (4軸: セキュリティ / 拡張性 / 保守性 / ユーザビリティ のうち該当するもの)
-- 本文ファイルは .agents/scratch/ に作る (Git管理外)。
-
-手順:
-1. 重複確認
-   ```powershell
-   gh issue list --repo inzm/cgm-diabates-manager-web --state open --search "<キーワード>"
-   ```
-2. 本文ファイルを作成する (例: .agents/scratch/issue_human_action.md)。
-3. 作成
-   ```powershell
-   gh issue create --repo inzm/cgm-diabates-manager-web --title "[要対応] <内容>" --label "human-action,question" --body-file .agents/scratch/issue_human_action.md
-   ```
-4. 出力されたIssue番号をユーザーへ報告する（仕様書には `【未決事項】` / `【要確認】` タグや内部 Issue 番号を書かず、必須環境要件または確定動作のみを記述する）。
-5. 完了したらIssueをクローズする（仕様・実装変更を伴う場合は `docs(spec)` → `feat` / `fix` の2段階記録で反映する）。
+## 5. 人の手が必要な項目の Issue 記録手順
+- 作成先: `origin` (`inzm/cgm-diabates-manager-web`, Private) のみ（`public-demo` への作成および仕様書への内部 `Issue #XX`・未決タグ記載は厳禁）。
+- 本文ファイルは `.agents/scratch/` に作成し、秘密情報・実測データ・個人情報を一切含めない。
+```powershell
+gh issue list --repo inzm/cgm-diabates-manager-web --state open --search "<キーワード>"
+gh issue create --repo inzm/cgm-diabates-manager-web --title "[要対応] <要約>" --label "human-action,question" --body-file .agents/scratch/issue_human_action.md
+```

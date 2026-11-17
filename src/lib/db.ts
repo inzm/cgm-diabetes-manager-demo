@@ -12,9 +12,8 @@ import type {
 const PHYSICAL_DB_NAME = 'cgm_diabetes_manager_db';
 
 /**
- * デモアプリ（ポートフォリオモード既定状態）かどうかを判定する。
- * E2Eテストで CSV取込・バックアップ永続化を検証する際 (`__CGM_E2E_ALLOW_CSV_IMPORT__ === true`) は
- * 物理 IndexedDB を使用する。
+ * デモアプリ（ポートフォリオモード）かどうかを判定する。
+ * VITE_APP_MODE === 'portfolio' の場合、および IndexedDB 非対応の単体テスト環境ではオンメモリストアを使用する。
  */
 export function isDemoMemoryOnlyMode(): boolean {
   try {
@@ -24,14 +23,7 @@ export function isDemoMemoryOnlyMode(): boolean {
     ) {
       return true;
     }
-    if (import.meta.env.VITE_APP_MODE !== 'portfolio') return false;
-    if (
-      typeof window !== 'undefined' &&
-      (window as unknown as Record<string, unknown>).__CGM_E2E_ALLOW_CSV_IMPORT__ === true
-    ) {
-      return false;
-    }
-    return true;
+    return import.meta.env.VITE_APP_MODE === 'portfolio';
   } catch {
     return false;
   }

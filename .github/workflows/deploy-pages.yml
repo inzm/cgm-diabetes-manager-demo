@@ -15,13 +15,17 @@ permissions:
 jobs:
   verify:
     name: Verify Quality Gates (DDD / Types / Vitest / Smoke / Playwright E2E)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      verified_prod_bundle: ${{ steps.personal-build.outputs.verified_prod_bundle }}
     concurrency:
       group: ci-verify-${{ github.repository }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     env:
       IS_DEMO_REPO: ${{ endsWith(github.repository, '-demo') || vars.APP_BUILD_MODE == 'portfolio' }}
+      RESOLVED_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL }}
+      RESOLVED_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY }}
     steps:
       - name: Checkout repository (with Git history for DDD diff verification)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,36 +46,60 @@ jobs:
 
       - name: Run DDD Specification Sync, Schema Parity & Security/UX Gate
         env:
+          STRICT_DOC_IDENTIFIERS: '1'
           SKIP_DOC_SYNC: ${{ env.IS_DEMO_REPO == 'true' && '1' || '0' }}
           DIFF_RANGE: ${{ github.event_name == 'pull_request' && format('origin/{0}...HEAD', github.base_ref) || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' && format('{0}..{1}', github.event.before, github.sha) || '') }}
         run: npm run test:docs
 
-      - name: Run 3-Layer TypeScript Strict Typecheck (src + functions + e2e)
+      - name: Run 4-Project Parallel TypeScript Strict Typecheck (src + functions + e2e + scripts)
         run: npm run typecheck
 
-      - name: Run Clinical & Data Integrity Tests (Vitest)
+      - name: Run Clinical, Data Integrity & Gate Unit Tests (Vitest)
         run: npm test
 
-      - name: Run Runtime Dev Server Smoke Test (56 Endpoints)
+      - name: Run Runtime Dev Server 8-Parallel Smoke Test
         run: npm run test:smoke
 
-      - name: Build Portfolio Bundle for E2E Verification (VITE_APP_MODE=portfolio)
-        run: npm run build:vite:portfolio
+      - name: Build Portfolio Bundle -> dist-portfolio (VITE_APP_MODE=portfolio)
+        run: |
+          npm run build:vite:portfolio
+          grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" dist-portfolio/sw.js
 
-      - name: Verify Service Worker deterministic revision stamp
-        run: grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" dist/sw.js
+      - name: Build Personal Bundle -> dist-personal (VITE_APP_MODE=personal)
+        id: personal-build
+        run: |
+          if [ "$IS_DEMO_REPO" != "true" ] && [ -n "$RESOLVED_SUPABASE_URL" ] && [ -n "$RESOLVED_SUPABASE_ANON_KEY" ]; then
+            REQUIRE_SUPABASE_ENV=1 \
+              VITE_SUPABASE_URL="$RESOLVED_SUPABASE_URL" \
+              VITE_SUPABASE_ANON_KEY="$RESOLVED_SUPABASE_ANON_KEY" \
+              npm run build:vite:personal
+            echo "verified_prod_bundle=true" >> "$GITHUB_OUTPUT"
+          else
+            VITE_SUPABASE_URL="https://e2e-verify.supabase.co" \
+              VITE_SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e2e.verify" \
+              npm run build:vite:personal
+            echo "verified_prod_bundle=false" >> "$GITHUB_OUTPUT"
+          fi
+          test ! -d dist-personal/data
+          grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" dist-personal/sw.js
 
-      - name: Cache Playwright Chromium binaries
+      - name: Cache Playwright Chromium & CJK font cache
         id: playwright-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          path: |
+            ~/.cache/ms-playwright
+            ~/.local/share/fonts/noto-cjk
+          key: playwright-cjk-ubuntu24-${{ hashFiles('package-lock.json') }}
 
       - name: Install Playwright Chromium, OS dependencies & Japanese CJK fonts
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk fontconfig
+          if [ ! -d "$HOME/.local/share/fonts/noto-cjk" ] || [ -z "$(ls -A "$HOME/.local/share/fonts/noto-cjk" 2>/dev/null)" ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends fonts-noto-cjk fontconfig
+            mkdir -p "$HOME/.local/share/fonts/noto-cjk"
+            cp -f /usr/share/fonts/opentype/noto/NotoSansCJK-*.ttc "$HOME/.local/share/fonts/noto-cjk/" 2>/dev/null || true
+          fi
           fc-cache -f
           if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
             npx playwright install-deps chromium
@@ -79,17 +107,21 @@ jobs:
             npx playwright install --with-deps chromium
           fi
 
-      - name: Run Pre-Deployment Playwright E2E Regression Suite
+      - name: Run 2-Project Isolated Playwright E2E Regression Suite (portfolio + personal)
         run: npm run test:e2e:regression
 
-      - name: Run 11-Screen Visual Layout & Zero-Jargon DOM Audit
+      - name: Run 11-Screen Visual Layout & Zero-Jargon DOM Audit (portfolio)
         run: npm run test:visual
 
-      - name: Verify Personal Bundle Compilation & Demo Asset Exclusion (Private Repo)
-        if: ${{ env.IS_DEMO_REPO != 'true' }}
-        run: |
-          npm run build:vite:personal
-          test ! -d dist/data
+      - name: Upload Verified Bundle Artifact for Deployment (main branch only)
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (env.IS_DEMO_REPO == 'true' || steps.personal-build.outputs.verified_prod_bundle == 'true') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verified-pages-bundle-${{ github.run_id }}
+          path: ${{ env.IS_DEMO_REPO == 'true' && 'dist-portfolio/' || 'dist-personal/' }}
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
 
       - name: Upload Playwright Failure Traces & Visual Audit Screenshots
         if: ${{ failure() }}
@@ -100,13 +132,14 @@ jobs:
             test-results/
             .agents/scratch/screenshots/
           retention-days: 7
+          overwrite: true
           if-no-files-found: ignore
 
   deploy:
     name: Deploy Verified Bundle to Cloudflare Pages
     needs: verify
     if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -117,59 +150,57 @@ jobs:
     env:
       IS_DEMO_REPO: ${{ endsWith(github.repository, '-demo') || vars.APP_BUILD_MODE == 'portfolio' }}
       HAS_CF_SECRETS: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
-      RESOLVED_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL }}
-      RESOLVED_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY }}
+      RESOLVED_CF_PROJECT_NAME: ${{ vars.CF_PAGES_PROJECT_NAME || secrets.CF_PAGES_PROJECT_NAME || (endsWith(github.repository, '-demo') && 'cgm-diabetes-manager-demo' || '') }}
+      BUNDLE_OUT_DIR: ${{ (endsWith(github.repository, '-demo') || vars.APP_BUILD_MODE == 'portfolio') && 'dist-portfolio' || 'dist-personal' }}
     steps:
-      - name: Checkout repository
+      - name: Checkout Pages Functions & Wrangler config
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
 
       - name: Setup Node.js 24 LTS
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Enforce Personal Production Secrets Guard (Prevent Auth Gate Bypass)
-        if: ${{ env.IS_DEMO_REPO != 'true' }}
-        run: |
-          if [ -z "$RESOLVED_SUPABASE_URL" ] || [ -z "$RESOLVED_SUPABASE_ANON_KEY" ]; then
-            echo "::error::[Security Gate] Production deployment aborted: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be configured in GitHub Secrets or Variables (see Issue #87). Refusing to overwrite cgm-diabetes-manager-personal with Auth Gate / Cloud Sync disabled."
-            exit 1
-          fi
-          if [ "$HAS_CF_SECRETS" != "true" ]; then
-            echo "::error::[Deploy Gate] CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be configured in GitHub Secrets."
-            exit 1
-          fi
-
-      - name: Build Personal Production Bundle (VITE_APP_MODE=personal)
+      - name: Enforce Personal Production Secrets & Verified Bundle Guard
         if: ${{ env.IS_DEMO_REPO != 'true' }}
         env:
-          REQUIRE_SUPABASE_ENV: '1'
-          VITE_SUPABASE_URL: ${{ env.RESOLVED_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ env.RESOLVED_SUPABASE_ANON_KEY }}
+          VERIFIED_PROD_BUNDLE: ${{ needs.verify.outputs.verified_prod_bundle }}
         run: |
-          npm run build:vite:personal
-          test ! -d dist/data
-          grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" dist/sw.js
-
-      - name: Build Public Portfolio Bundle (VITE_APP_MODE=portfolio)
-        if: ${{ env.IS_DEMO_REPO == 'true' }}
-        run: |
-          npm run build:vite:portfolio
-          grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" dist/sw.js
+          if [ "$VERIFIED_PROD_BUNDLE" != "true" ]; then
+            echo "::error::[Security Gate] Production deployment aborted: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be configured in GitHub Secrets or Variables so verify builds and E2E-tests the authenticated production bundle."
+            exit 1
+          fi
+          if [ "$HAS_CF_SECRETS" != "true" ] || [ -z "$RESOLVED_CF_PROJECT_NAME" ]; then
+            echo "::error::[Deploy Gate] CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, and CF_PAGES_PROJECT_NAME must be configured in GitHub Secrets/Variables."
+            exit 1
+          fi
 
       - name: Warn if Public Demo Cloudflare Secrets are Pending
         if: ${{ env.IS_DEMO_REPO == 'true' && env.HAS_CF_SECRETS != 'true' }}
         run: |
-          echo "::warning::Cloudflare secrets are not yet configured on public-demo (Issue #87). Skipping Cloudflare Pages deploy."
+          echo "::warning::Cloudflare deployment credentials are not configured on public-demo. Skipping Cloudflare Pages deploy."
 
-      - name: Deploy to Cloudflare Pages via Wrangler CLI
-        if: ${{ env.HAS_CF_SECRETS == 'true' }}
+      - name: Download Verified Bundle Artifact from Verify Job
+        if: ${{ env.HAS_CF_SECRETS == 'true' && (env.IS_DEMO_REPO == 'true' || needs.verify.outputs.verified_prod_bundle == 'true') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: verified-pages-bundle-${{ github.run_id }}
+          path: ${{ env.BUNDLE_OUT_DIR }}
+
+      - name: Assert Downloaded Bundle Integrity Before Wrangler Upload
+        if: ${{ env.HAS_CF_SECRETS == 'true' && (env.IS_DEMO_REPO == 'true' || needs.verify.outputs.verified_prod_bundle == 'true') }}
+        run: |
+          if [ "$IS_DEMO_REPO" != "true" ]; then
+            test ! -d dist-personal/data
+          fi
+          grep -Eq "const CACHE_NAME = 'cgm-manager-v2-[0-9a-f]{8}';" "${BUNDLE_OUT_DIR}/sw.js"
+
+      - name: Deploy Verified Bundle to Cloudflare Pages via Wrangler CLI
+        if: ${{ env.HAS_CF_SECRETS == 'true' && env.RESOLVED_CF_PROJECT_NAME != '' }}
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=${{ vars.CF_PAGES_PROJECT_NAME || (env.IS_DEMO_REPO == 'true' && 'cgm-diabetes-manager-demo' || 'cgm-diabetes-manager-personal') }} --branch=main
+          command: pages deploy ${{ env.BUNDLE_OUT_DIR }} --project-name=${{ env.RESOLVED_CF_PROJECT_NAME }} --branch=main

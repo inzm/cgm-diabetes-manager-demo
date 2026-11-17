@@ -37,17 +37,170 @@ function parseSummaryInsulin(summaryText: string): number {
   return m ? parseFloat(m[1]) : 0;
 }
 
+async function dismissDemoWelcomeIfOpen(page: Page): Promise<void> {
+  const modal = page.getByTestId('demo-welcome-modal');
+  await expect(modal).toBeVisible();
+  await page.getByTestId('btn-start-demo').click();
+  await expect(modal).toBeHidden();
+}
+
+function buildMockJwt(sub: string, email: string): string {
+  const b64 = (obj: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(obj))
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({
+    sub,
+    email,
+    aud: 'authenticated',
+    role: 'authenticated',
+    exp: Math.floor(Date.now() / 1000) + 7200,
+  })}.e2e_mock_sig`;
+}
+
+async function loginPersonalBundleViaMockedSupabase(
+  page: Page,
+  roleMode: 'owner' | 'viewer' = 'owner'
+): Promise<void> {
+  const userId =
+    roleMode === 'owner'
+      ? '00000000-0000-0000-0000-000000000001'
+      : '44444444-4444-4444-8444-444444444444';
+  const email = roleMode === 'owner' ? 'owner@example.com' : 'viewer-family@example.com';
+  const sharedOwnerId = '22222222-2222-4222-8222-222222222222';
+  const accessToken = buildMockJwt(userId, email);
+
+  const mockUser = {
+    id: userId,
+    aud: 'authenticated',
+    role: 'authenticated',
+    email,
+    app_metadata: { provider: 'email' },
+    user_metadata: {},
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  await page.route('**/auth/v1/**', async (route) => {
+    const url = route.request().url();
+    if (url.includes('/token')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          access_token: accessToken,
+          token_type: 'bearer',
+          expires_in: 7200,
+          expires_at: Math.floor(Date.now() / 1000) + 7200,
+          refresh_token: 'e2e-refresh-token',
+          user: mockUser,
+        }),
+      });
+      return;
+    }
+    if (url.includes('/user')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockUser),
+      });
+      return;
+    }
+    await route.fulfill({ status: 204, body: '' });
+  });
+
+  await page.route('**/rest/v1/**', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    const method = req.method();
+    const accept = req.headers()['accept'] || '';
+
+    if (url.includes('/rpc/verify_user_authorization')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          authorized: true,
+          is_owner: roleMode === 'owner',
+          is_invited_family: roleMode === 'viewer',
+          user_id: userId,
+          email,
+        }),
+      });
+      return;
+    }
+
+    if (url.includes('/family_permissions') && method === 'GET') {
+      const perms =
+        roleMode === 'viewer'
+          ? [
+              {
+                id: '33333333-3333-4333-8333-333333333333',
+                patient_id: sharedOwnerId,
+                family_user_id: userId,
+                family_email: email,
+                role: 'viewer',
+                invited_at: '2026-08-01T00:00:00.000Z',
+                accepted_at: '2026-08-01T00:00:00.000Z',
+                created_at: '2026-08-01T00:00:00.000Z',
+              },
+            ]
+          : [];
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(perms),
+      });
+      return;
+    }
+
+    if (method === 'GET' && accept.includes('application/vnd.pgrst.object+json')) {
+      await route.fulfill({
+        status: 406,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 'PGRST116',
+          details: 'The result contains 0 rows',
+          hint: null,
+          message: 'JSON object requested, multiple (or no) rows returned',
+        }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.route('**/realtime/v1/**', async (route) => {
+    await route.abort();
+  });
+  await page.routeWebSocket(/\/realtime\/v1\/websocket/, (ws) => {
+    ws.onMessage(() => {});
+  });
+
+  await page.goto('/');
+  await expect(page.getByTestId('auth-gate-screen')).toBeVisible();
+  await expect(page.getByTestId('demo-welcome-modal')).toHaveCount(0);
+
+  await page.locator('#auth-gate-email').fill(email);
+  await page.locator('#auth-gate-password').fill('StrongPass1!');
+  await page.getByTestId('auth-gate-submit').click();
+
+  await expect(page.getByTestId('auth-gate-screen')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '設定' }).first()).toBeVisible();
+}
+
 test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-14)', () => {
   let runtimeErrors: string[] = [];
 
-  test.beforeEach(async ({ page }, testInfo) => {
+  test.beforeEach(async ({ page }) => {
     runtimeErrors = [];
     attachZeroErrorGuard(page, runtimeErrors);
-    if (!testInfo.title.includes('E2E-11')) {
-      await page.addInitScript(() => {
-        (window as unknown as Record<string, boolean>).__CGM_E2E_SUPPRESS_WELCOME__ = true;
-      });
-    }
   });
 
   test.afterEach(async () => {
@@ -58,6 +211,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     page,
   }) => {
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
 
     const desktopSummary = page.locator('.sticky.top-12 .hidden.sm\\:flex');
 
@@ -116,6 +270,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     const reloadDurationMs = Date.now() - reloadStart;
     console.log(`[E2E-1] Portfolio reload completed in ${reloadDurationMs}ms`);
     expect(reloadDurationMs).toBeLessThan(2000);
+    await dismissDemoWelcomeIfOpen(page);
 
     expect(parseSummaryCarbs(await desktopSummary.innerText())).toBe(initialCarbs);
   });
@@ -124,6 +279,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     page,
   }) => {
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
     await expect(page.getByText('2026年 8月')).toBeVisible();
 
     // 「食品・活動」画面へ移動
@@ -209,6 +365,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     // 5. デモモードでページをリロードすると、追加した食品・活動および削除したカテゴリも初期状態にクリーンリセットされ、物理IndexedDBにデータが蓄積されていないことを検証
     await page.reload();
+    await dismissDemoWelcomeIfOpen(page);
     await page.getByRole('button', { name: '食品・活動' }).first().click();
     await expect(page.getByRole('button', { name: /よく使う食品/ })).toBeVisible();
     await expect(page.getByText('特製カツ丼E2E')).toHaveCount(0);
@@ -224,6 +381,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     page,
   }) => {
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
     const desktopSummary = page.locator('.sticky.top-12 .hidden.sm\\:flex');
     await expect(desktopSummary).toBeVisible();
     await expect(desktopSummary).toContainText('8月25日 (火)');
@@ -292,6 +450,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     page,
   }) => {
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
     const desktopSummary = page.locator('.sticky.top-12 .hidden.sm\\:flex');
     await expect(desktopSummary).toBeVisible();
 
@@ -351,6 +510,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     page,
   }) => {
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
     await page.getByRole('button', { name: '分析' }).first().click();
 
     await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
@@ -379,21 +539,29 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
       .toBe(true);
   });
 
-  test('E2E-6: デモアプリ設定画面の不要セクション非表示検証 & 見守り家族ロール（閲覧専用モード isReadOnly）操作ロック検証 @regression', async ({
+  test('E2E-6: デモアプリ設定画面の不要セクション非表示検証 & CSV取込非活性・手動リセット検証 @regression', async ({
     page,
   }) => {
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
+
+    // 0. デモアプリ（ポートフォリオモード）では CSV取込ボタンが disabled かつ「デモアプリでは利用できません」と表示されることを検証
+    const demoCsvBtn = page.getByRole('button', { name: /CSV取込/ });
+    await expect(demoCsvBtn).toBeVisible();
+    await expect(demoCsvBtn).toBeDisabled();
+    await expect(demoCsvBtn).toContainText('デモアプリでは利用できません');
+
     await page.getByRole('button', { name: '設定' }).first().click();
     await expect(page.getByText('血糖値の目標範囲・アラート設定')).toBeVisible();
     await expect(page.getByText('食事記録のデフォルトインスリン設定')).toBeVisible();
 
-    // 0. デモアプリ既定状態では未実装・バックアップ・擬似認可セクション（セクション2〜5）が非表示であることを検証
+    // 1. デモアプリでは未実装・バックアップ・擬似認可セクション（セクション2〜5）が非表示であることを検証
     await expect(page.getByText('データのバックアップ・初期化')).toHaveCount(0);
     await expect(page.getByText('糖質の自動推定')).toHaveCount(0);
     await expect(page.getByText('家族見守り共有・クラウド同期（実装予定）')).toHaveCount(0);
     await expect(page.getByText('動作検証・アプリ追加')).toHaveCount(0);
 
-    // 0.5. デモ環境のデータ管理カードが表示され、手動リセットボタンで追加した食品が初期状態へ戻ることを検証
+    // 2. デモ環境のデータ管理カードが表示され、手動リセットボタンで追加した食品が初期状態へ戻ることを検証
     await expect(page.getByText('デモ環境のデータ管理')).toBeVisible();
     const demoDataDesc = page.getByText(
       'このデモアプリで登録・変更した内容は、お使いのスマートフォンやPCには保存されません。ページを再読み込みするかタブを閉じると、登録・変更した内容は破棄され、初期状態に戻ります。'
@@ -420,36 +588,13 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     await page.getByRole('button', { name: '食品・活動' }).first().click();
     await expect(page.getByText('手動リセット検証食品')).toHaveCount(0);
-
-    // 1. E2E検証フラグを有効化してリロードし、見守り家族 (閲覧専用) ロールの操作ロックを回帰検証
-    await page.addInitScript(() => {
-      (window as unknown as Record<string, boolean>).__CGM_E2E_ALLOW_CSV_IMPORT__ = true;
-    });
-    await page.reload();
-    await page.getByRole('button', { name: '設定' }).first().click();
-
-    // 見守り家族 (閲覧専用) に切替
-    await page.getByRole('button', { name: '見守り家族 (閲覧専用)' }).click();
-    await expect(page.getByText(/閲覧専用モードで表示中/)).toBeVisible();
-
-    // 設定保存ボタンが disabled であること
-    await expect(page.getByRole('button', { name: '設定を保存' }).first()).toBeDisabled();
-
-    // 食品・活動画面で追加ボタンが disabled であること
-    await page.getByRole('button', { name: '食品・活動' }).first().click();
-    await expect(page.getByRole('button', { name: '食品を追加' })).toBeDisabled();
-
-    // カレンダーの日次詳細ドロワーで「食事を記録」「活動を記録」が disabled であること
-    await page.getByRole('button', { name: 'カレンダー' }).first().click();
-    await page.locator('.sticky.top-12 .hidden.sm\\:flex').click();
-    await expect(page.getByRole('button', { name: '食事を記録' })).toBeDisabled();
-    await expect(page.getByRole('button', { name: '活動を記録' })).toBeDisabled();
   });
 
   test('E2E-7: 異常系・境界値バリデーション & 破壊的操作ガード・論理削除減算検証 @regression', async ({
     page,
   }) => {
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
 
     // 1. 設定画面での閾値逆転バリデーション検証
     await page.getByRole('button', { name: '設定' }).first().click();
@@ -500,26 +645,12 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
       .toBeLessThan(beforeCarbs);
   });
 
-  test('E2E-8: デモモードCSV取込非活性検証 & 大容量CSV取込（Web Worker 並列処理）・JSONバックアップ復元ラウンドトリップ検証 @regression', async ({
+  test('E2E-8: 本番実バンドル（personal）における大容量CSV取込（Web Worker 並列処理）・物理IndexedDB永続化・JSONバックアップ復元ラウンドトリップ検証 @regression @personal-bundle', async ({
     page,
   }) => {
-    await page.goto('/');
-    await expect(page.getByText('2026年 8月')).toBeVisible();
+    await loginPersonalBundleViaMockedSupabase(page, 'owner');
 
-    // 0. デモアプリ（ポートフォリオモード既定）では CSV取込ボタンが disabled かつ「デモアプリでは利用できません」と表示されることを検証
-    const demoCsvBtn = page.getByRole('button', { name: /CSV取込/ });
-    await expect(demoCsvBtn).toBeVisible();
-    await expect(demoCsvBtn).toBeDisabled();
-    await expect(demoCsvBtn).toContainText('デモアプリでは利用できません');
-
-    // Web Worker CSV取込機能自体の回帰検証のため、通常モード相当フラグを有効化してリロード
-    await page.addInitScript(() => {
-      (window as unknown as Record<string, boolean>).__CGM_E2E_ALLOW_CSV_IMPORT__ = true;
-    });
-    await page.reload();
-    await expect(page.getByText('2026年 8月')).toBeVisible();
-
-    // 設定画面で記録データをクリーン初期化（バックグラウンド同期も停止）し、CSV取込〜バックアップ保存〜復元を検証
+    // 設定画面で記録データをクリーン初期化し、CSV取込〜バックアップ保存〜復元を検証
     await page.getByRole('button', { name: '設定' }).first().click();
     await expect(page.getByText('データのバックアップ・初期化')).toBeVisible();
     await page.getByRole('button', { name: '記録データを初期化' }).click();
@@ -592,6 +723,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     context,
   }) => {
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
     const desktopSummary = page.locator('.sticky.top-12 .hidden.sm\\:flex');
     await expect(desktopSummary).toBeVisible();
 
@@ -673,6 +805,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/');
+    await dismissDemoWelcomeIfOpen(page);
 
     const nextMonthBtn = page.getByRole('button', { name: '翌月' });
     const tabContainer = page.getByTestId('tab-transition-container');
@@ -1210,24 +1343,12 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await expect(welcomeModal).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(welcomeModal).toBeHidden();
-
-    // 9. 通常モード（__CGM_E2E_ALLOW_CSV_IMPORT__ = true）ではデモ案内モーダルが表示されないこと
-    await page.addInitScript(() => {
-      (window as unknown as Record<string, boolean>).__CGM_E2E_ALLOW_CSV_IMPORT__ = true;
-    });
-    await page.reload();
-    await expect(page.getByText('2026年 8月')).toBeVisible();
-    await expect(welcomeModal).toHaveCount(0);
   });
 
-  test('E2E-12: 論理削除済み同名カテゴリの復活（UNIQUE衝突防止）・手動初期化後のデモデータ再ハイドレーション抑止 & 全ID正規UUID検証 @regression', async ({
+  test('E2E-12: 本番実バンドル（personal）における論理削除済み同名カテゴリの復活（UNIQUE衝突防止）・手動初期化後のデータ非再投入 & 全ID正規UUID検証 @regression @personal-bundle', async ({
     page,
   }) => {
-    await page.addInitScript(() => {
-      (window as unknown as Record<string, boolean>).__CGM_E2E_ALLOW_CSV_IMPORT__ = true;
-    });
-    await page.goto('/');
-    await expect(page.getByText('2026年 8月')).toBeVisible();
+    await loginPersonalBundleViaMockedSupabase(page, 'owner');
 
     // 1. カテゴリ削除後に同じ名前のカテゴリを再追加すると、エラーにならず既存レコードが復活（is_deleted: false）すること
     await page.getByRole('button', { name: '食品・活動' }).first().click();
@@ -1301,15 +1422,17 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     }
   });
 
-  test('E2E-13: 本番認証ゲート（AuthGateScreen）による未ログイン画面完全ロック & クイックガイド表示検証 @regression', async ({
+  test('E2E-13: 本番実バンドル（personal）における認証ゲート（AuthGateScreen）完全ロック・デモJSON除外・見守り家族（viewer）閲覧専用ロック検証 @regression @personal-bundle', async ({
     page,
   }) => {
-    await page.addInitScript(() => {
-      (window as unknown as Record<string, boolean>).__CGM_E2E_ENABLE_CLOUD_AUTH__ = true;
-    });
     await page.goto('/');
 
-    // 1. 専用ログイン画面（AuthGateScreen）が表示され、招待制バッジが確認できること
+    // 0. 本番バンドル（dist-personal）からデモ用JSON（/data/real_glucose_recent.json）が物理除外されていること
+    const demoAssetRes = await page.request.get('/data/real_glucose_recent.json');
+    const contentType = demoAssetRes.headers()['content-type'] || '';
+    expect(contentType).not.toContain('application/json');
+
+    // 1. 専用ログイン画面（AuthGateScreen）が表示され、招待制バッジが確認できること（ウィンドウフラグ一切なし）
     await expect(page.getByTestId('auth-gate-screen')).toBeVisible();
     await expect(
       page.getByText('招待制・プライベート保護（本人・招待家族専用）')
@@ -1334,14 +1457,27 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     await page.getByTestId('auth-gate-quick-guide-toggle').click();
     await expect(page.getByTestId('auth-gate-quick-guide')).toHaveCount(0);
+
+    // 4. 招待された見守り家族（role: 'viewer'）としてログインした際、全画面で追加・編集・設定保存・CSV取込がロック（isReadOnly）されること
+    await loginPersonalBundleViaMockedSupabase(page, 'viewer');
+    await expect(page.getByRole('button', { name: /CSV取込/ })).toBeDisabled();
+
+    await page.getByRole('button', { name: '設定' }).first().click();
+    await expect(page.getByText(/閲覧専用モードで表示中/)).toBeVisible();
+    await expect(page.getByRole('button', { name: '設定を保存' }).first()).toBeDisabled();
+
+    await page.getByRole('button', { name: '食品・活動' }).first().click();
+    await expect(page.getByRole('button', { name: '食品を追加' })).toBeDisabled();
+
+    await page.getByRole('button', { name: 'カレンダー' }).first().click();
+    await page.locator('.sticky.top-12 .hidden.sm\\:flex').click();
+    await expect(page.getByRole('button', { name: '食事を記録' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '活動を記録' })).toBeDisabled();
   });
 
-  test('E2E-14: パスワード複雑性ポリシー（案B：8文字以上＋英大文字・英小文字・数字・記号必須）のリアルタイムUI検証 & 登録ブロック検証 @regression', async ({
+  test('E2E-14: パスワード複雑性ポリシー（案B：8文字以上＋英大文字・英小文字・数字・記号必須）のリアルタイムUI検証 & 登録ブロック検証 @regression @personal-bundle', async ({
     page,
   }) => {
-    await page.addInitScript(() => {
-      (window as unknown as Record<string, boolean>).__CGM_E2E_ENABLE_CLOUD_AUTH__ = true;
-    });
     await page.goto('/');
     await expect(page.getByTestId('auth-gate-screen')).toBeVisible();
 

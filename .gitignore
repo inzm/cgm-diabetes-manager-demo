@@ -5,6 +5,8 @@ node_modules/
 
 # Production build outputs
 dist/
+dist-personal/
+dist-portfolio/
 build/
 .output/
 *.tsbuildinfo
@@ -19,6 +21,8 @@ supabase/.temp/
 .env
 .env.local
 .env.*.local
+.dev.vars
+.dev.vars.*
 *.pem
 
 # IDE & Editor

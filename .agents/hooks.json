@@ -1,13 +1,26 @@
 {
   "ddd-stop-guard": {
     "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node hooks/session-start.mjs",
+        "timeout": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "node hooks/pre-tool-guard.mjs",
+        "timeout": 10
+      }
+    ],
     "Stop": [
       {
         "type": "command",
         "command": "node hooks/stop-guard.mjs",
-        "timeout": 15
+        "timeout": 30
       }
     ]
   }
 }
-

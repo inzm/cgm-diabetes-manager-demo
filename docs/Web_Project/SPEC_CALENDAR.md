@@ -127,7 +127,7 @@
     - 「血糖」「糖質」の文字ラベルを廃止し、アイコン＋数値＋単位（`🩸148mg` ｜ `🍚171.8g` ｜ `💉43U` ｜ `▼0 ▲1`）のみで1行にゆとりを持って収める。
     - 右端に独立した**凡例アイコンボタン（`!` / `AlertCircle` アイコン）**を配置し、タップ時に吹き出し（ポップオーバー）でカレンダー記号の凡例（`▲ 高血糖アラート(>${hyperThreshold})` / `▼ 低血糖アラート(<${hypoThreshold})` / `🍚 糖質` / `💉 インスリン` / `🩸 平均血糖値`）およびスマホのジェスチャー操作ヒントを表示する。これによりカレンダー下部の凡例領域をスマホ時は非表示（`hidden sm:flex`）にし、縦スクロール競合を防止する。
 - **表示項目（PC・スマホ共通）**:
-  - **選択日付・曜日バッジ**: PC時は **`8月25日 (火)`**（`text-lg font-black`）、スマホ時は **`8/25 (火)`**（`M/D (曜)` 形式、`text-sm font-black`）。ともに曜日カラー（日曜=ローズ系背景/枠、土曜=ブルー系背景/枠、平日=スレート系背景/枠）のピルバッジで強調表示する。
+  - **選択日付・曜日バッジ**: 日付・曜日算出を `src/lib/dateUtils.ts`（`formatCalendarDayLabels`）に一元化し、PC時は **`8月25日 (火)`**（`text-base font-black`）、スマホ時は **`8/25 (火)`**（`M/D (曜)` 形式、`text-sm font-black`）を曜日カラー（日曜=ローズ系背景/枠、土曜=ブルー系背景/枠、平日=スレート系背景/枠）のピルバッジで強調表示する（UIコンポーネント内での直接 `new Date(...).getDay()` 呼び出しは行わない）。
   - **平均血糖値**: `148 mg/dL`（`PatientContext` の `hypoThreshold` / `hyperThreshold` と動的に連動して低血糖=青・高血糖=赤・目標内=スレートで色分け）
   - **糖質量**: `171.8 g`
   - **インスリン量**: `43 U`（食事インスリン＋単体・持効型インスリンの日次総和）
@@ -150,7 +150,7 @@
 - **前月・翌月セル（`!isCurrentMonth`）のノイズ排除**:
   - 前月・翌月のセルは淡いスレート背景に**薄い日付番号のみを表示**し、集計値・異常値ラベル・スパークラインは一切表示しないことで、当月のカレンダー領域を明瞭に際立たせる。
 - **1行目（日付 & 異常値ラベル行 — 日付数字を最優先で強調・異常値ラベルのコントラスト抑制）**:
-  - 左: **日付番号を拡大（スマホ `text-[13px]` / PC `sm:text-sm`、`font-black`）** し、何日であるかをひと目で判別できるようにする。**日曜日は赤系（`text-rose-600`）**、**土曜日は青系（`text-blue-600`）**、平日は濃スレート系（`text-slate-900`）。当日は丸バッジ強調。
+  - 左: **日付番号を拡大（スマホ `text-[13px]` / PC `sm:text-sm`、`font-black`）** し、何日であるかをひと目で判別できるようにする。曜日判定は `src/lib/dateUtils.ts`（`formatCalendarDayLabels`）を経由し、**日曜日は赤系（`text-rose-600`）**、**土曜日は青系（`text-blue-600`）**、平日は濃スレート系（`text-slate-900`）。当日は丸バッジ強調。
   - 右: 異常値記号。文字（「低」「高」）を含めず、日付の視認性を一切妨げないよう彩度・コントラストを十分に抑えた **低血糖 `▼`（`text-blue-400/65 font-medium`）**、**高血糖 `▲`（`text-rose-400/65 font-medium`）** のみを発生エピソード数分（最大3個まで並記、`text-[8px] sm:text-[9.5px]`）控えめに表示。
 - **2行目（糖質量合計行 — 脇役）**:
   - 絵文字 `🍚`（彩度を落として赤色の競合を防止）＋ 控えめなフォントサイズ・落ち着いたスレート系の文字色（`text-slate-400`）で糖質量合計（例: `🍚 171.8g`）を表示。
@@ -198,7 +198,7 @@
 
 - **本番モード (`VITE_APP_MODE=personal`) におけるデモデータ完全遮断 & 当月・当日初期表示**:
   - `isPortfolioMode() === false` の本番モードでは、`ensureRealGlucoseDataLoaded`（`src/lib/realGlucoseLoader.ts`）は `public/data/real_glucose_recent.json` / `public/data/real_glucose_readings.json` のプリフェッチやハイドレーション、および既存ユーザーデータの削除を一切行わず、`seedFoodMasterIfEmpty(patientId)` のみを実行する。
-  - `index.html` にはデモ用JSONの無条件 `<link rel="preload">` を含めず、`vite.config.ts` で `mode === 'personal'` ビルド時には `dist/data/real_glucose_*.json` を出力から除外する。
+  - `index.html` にはデモ用JSONの無条件 `<link rel="preload">` を含めず、`vite.config.ts` で `mode === 'personal'` ビルド時には `dist-personal/data/real_glucose_*.json` を出力から除外する。
   - `src/components/calendar/CalendarView.tsx` の初回マウント時、本番モード（`!isPortfolioMode()`）では当月データが0件であっても過去月への自動ジャンプを行わず、**常に「今日（現在の年月・当日）」を表示**する（過去月にデータがある場合は上部の案内バナーからユーザーの任意操作で移動可能）。
 - **ポートフォリオモード (`VITE_APP_MODE=portfolio`) におけるリアル血糖値・実測連動食事データ基盤・2フェーズ高速段階的同期 (`src/lib/realGlucoseLoader.ts`, `public/data/real_glucose_recent.json`, `public/data/real_glucose_readings.json`)**:
   - 合成されたデモデータ（サイン波血糖値や不自然なランダム食事記録）は一切生成せず、ポートフォリオモードでのみ実測CGMデータを2フェーズで段階ロードする。生成される測定値・異常値・食事・活動・明細のIDはすべて `src/lib/uuidUtils.ts` の `deterministicUuid` による正規UUIDとする。
@@ -206,14 +206,14 @@
     - **Phase 1（Memory-First 即時初期描画）**: `portfolio` ビルド時に注入される `<link rel="preload">` およびモジュール初期化時の先行プリフェッチにより直近期間データ（`public/data/real_glucose_recent.json`：3,482件、約91KB / gzip 18KB）をJSバンドルと並列取得し、メモリ上（`inMemoryRecentCache`）で即座に展開する。IndexedDB の重いトランザクション完了を待たずに `CalendarView.tsx` および `DailyDetailDrawer.tsx` へメモリから直接データを提供（初期データ準備完了時に User Timing API マーク `cgm-calendar-data-ready` を記録）するため、初回アクセス・リロードともに **0.3〜0.5秒以内** でカレンダーが即座に描画される。
     - **Phase 1.5 & Phase 2（バックグラウンド非ブロッキング オンメモリDB格納＆過去データ展開）**: カレンダー初期描画完了後に、裏側で直近データのオンメモリDBへの格納・初期食品シード（`seedFoodMasterIfEmpty`）を実行し、続いて Stage 2 完了から 1,800ms 待機した上で全期間データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）を取得して小チャンク（測定値は6,000件単位＋40ms休止）で順次オンメモリDBへ格納する。これらはすべて RAM 上の処理であり、端末の物理 IndexedDB には書き込まない（下記参照）。完了時に `cgm-background-hydration-complete` イベントで最新データ月（`latestDataDate` から動的導出）以外の過去月キャッシュ・分析期間境界を自動更新する。
     - なお、設定画面で「記録データを初期化」が実行された場合（`markPatientManuallyCleared`）は、同一セッション内でカレンダーや分析画面へ遷移してもデモデータが勝手に再ハイドレーションされないよう抑止し、`resetDemoDataToInitialState` 実行時のみ抑止フラグを解除する。
-  - ポートフォリオ環境（`VITE_APP_MODE=portfolio` かつ `window.__CGM_E2E_ALLOW_CSV_IMPORT__ !== true`）では、採用担当者や閲覧者のスマートフォン端末の物理ストレージを一切圧迫しないよう、`src/lib/db.ts` の全テーブルをオンメモリストア（`InMemoryTable`）として動作させ、物理 IndexedDB（`cgm_diabetes_manager_db`）への永続書き込みを行わないとともに、起動時・`pagehide` 時・手動リセット時に既存の物理 IndexedDB を自動削除（パージ）する。これにより、閲覧者が食事記録・食品登録・活動登録・カテゴリ編集・削除をすべて試せる一方、ページ再読み込み時または設定画面の「デモデータを初期状態に戻す」実行時には初期シード状態へ100%クリーンにリセットされる。
+  - ポートフォリオ環境（`VITE_APP_MODE=portfolio`）では、採用担当者や閲覧者のスマートフォン端末の物理ストレージを一切圧迫しないよう、`src/lib/db.ts` の全テーブルをオンメモリストア（`InMemoryTable`）として動作させ、物理 IndexedDB（`cgm_diabetes_manager_db`）への永続書き込みを行わないとともに、起動時・`pagehide` 時・手動リセット時に既存の物理 IndexedDB を自動削除（パージ）する。これにより、閲覧者が食事記録・食品登録・活動登録・カテゴリ編集・削除をすべて試せる一方、ページ再読み込み時または設定画面の「デモデータを初期状態に戻す」実行時には初期シード状態へ100%クリーンにリセットされる。
   - ポートフォリオモードでは初回表示時に最新の実測データ月（2026年8月）を最初から表示することで、余分な月ジャンプ再レンダリングなしで開いた瞬間にリアルな血糖波形と食事・異常値エピソードを確認できるようにする。
   - 表示中の年月に記録が1件もなく、他の年月に実データが存在する場合は、カレンダー上部に「最新の記録がある YYYY年M月 を表示」ボタンを表示し、ワンクリックで移動できるようにする。
 - **異常値エピソード抽出の単一真実源化 (`src/lib/anomalyExtractor.ts`)**:
   - CSV取込（`src/workers/csvParser.worker.ts`）および設定閾値変更時の再判定はすべて `extractAnomalyEventsFromReadings` を使用して `db.events` に正規UUID（`deterministicUuid`）の `低血糖`・`高血糖` イベントを生成する。
   - `aggregateMonthlyData`（`src/lib/aggregates.ts`）における各日の `hypoCount` / `hyperCount` は、その日の `低血糖`・`高血糖` イベント件数を集計するため、カレンダーセル・選択日サマリー・日次詳細ドロワー・分析画面で件数が100%一致する。
 - **オンメモリ月別集計キャッシュ (`monthlyCacheMap`) & 複合インデックス局所取得 & クラウド同期連動 (`src/lib/db.ts`, `src/lib/echartsCore.ts`, `src/lib/syncEngine.ts`, `src/components/common/Header.tsx`)**:
-  - カレンダー表示時は全件取得（`toArray()`）を行わず、`db.libre_readings.where('[user_id+timestamp]').between(...)` および `db.events.where('[user_id+event_datetime]').between(...)` で42日グリッド範囲のみをピンポイント取得する。Supabase から Pull された日時は `normalizeToWallClockIso`（`src/lib/syncEngine.ts`）により 24文字 ISO（`"YYYY-MM-DDTHH:mm:ss.000Z"`）へ正規化されるため `.between()` 検索が100%一致する。
+  - カレンダー表示時は全件取得（`toArray()`）を行わず、`db.libre_readings.where('[user_id+timestamp]').between(...)` および `db.events.where('[user_id+event_datetime]').between(...)` で42日グリッド範囲のみをピンポイント取得する。Supabase から Pull された日時は `normalizeToWallClockIso`（`src/lib/dateUtils.ts` / `src/lib/syncEngine.ts`：スラッシュ区切り等の非ISOフォールバック時も `toISOString()` を使わずローカル時刻要素から生成）により 24文字 ISO（`"YYYY-MM-DDTHH:mm:ss.000Z"`）へ正規化されるため `.between()` 検索が100%一致する。
   - `${patientId}:${year}-${month}:${hypoThreshold}-${hyperThreshold}` をキーとして保持し、設定画面で目標閾値が変更された場合、バックアップ復元・データ初期化が実行された場合、またはクラウド双方向同期・Realtime受信時（`registerUiCacheInvalidator` 経由）に `clearCalendarMonthlyCache()` によりキャッシュを確実に破棄して再集計する。
   - 本番クラウド構成時（`isCloudConfigured === true`）は、共通ヘッダー（`src/components/common/Header.tsx`）の右上にクラウド同期・ログイン状態ボタンを表示し、ログイン中はワンタップで手動同期（`syncNow`）、未ログイン時は設定画面のクラウドアカウント欄へ移動できるようにする。
   - 日次詳細ドロワー（`DailyDetailDrawer.tsx`）でのイベント削除時も `triggerBackgroundCloudSync` を実行し、24時間血糖チャート（`DailyGlucoseChart.tsx`, `src/lib/echartsCore.ts`）は `React.lazy()` で初回オープン時に遅延ロードする。

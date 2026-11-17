@@ -7,9 +7,6 @@ import { cn } from '@/lib/utils';
 export function shouldShowDemoWelcomeModal(): boolean {
   if (!isDemoCsvImportDisabled()) return false;
   if (typeof window === 'undefined') return false;
-  if ((window as unknown as Record<string, unknown>).__CGM_E2E_SUPPRESS_WELCOME__ === true) {
-    return false;
-  }
   return true;
 }
 

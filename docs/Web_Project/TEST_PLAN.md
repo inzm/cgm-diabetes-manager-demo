@@ -43,7 +43,7 @@
 | :--- | :--- |
 | **臨床分析計算**<br>([`src/lib/analysisCalculators.ts`](../../src/lib/analysisCalculators.ts)) | ・食前血糖値（直前15分〜直後5分以内の最寄り値）の正確な抽出<br>・食後60〜180分ピーク値の特定と上昇幅（Δ）計算、および窓内に次の食事・追加インスリン（持効型を除く）がある場合の直前打ち切り・`isPostMealReference` 参考値判定・平均ピーク/平均Δからの除外検証<br>・時間帯4区分（朝 06-11時、昼 12-17時、夕・夜 18-23時、夜間・未明 00-05時）のタイムゾーン非依存判定<br>・曜日別傾向・糖質インスリン推移における食事インスリン＋単体インスリン合算 |
 | **異常値抽出ステートマシン**<br>([`src/lib/anomalyExtractor.ts`](../../src/lib/anomalyExtractor.ts)) | ・28分継続回復ルールおよび45分センサー欠損ギャップによるエピソード確定<br>・カスタム閾値（例: 低血糖 `< 80`, 高血糖 `> 160`）変更時の再判定と件数変化<br>・`computeBoundGlucoseForMeal` / `isPostMealInterferingEvent` / `bindMealGlucoseFromReadings` における後続食事・追加インスリン干渉時の窓打ち切り（60分未満干渉時の `undefined` クリア、持効型インスリン非干渉保証、追加・削除時の前後食事再バインド）検証 |
-| **日時・タイムゾーン安全処理**<br>([`src/lib/dateUtils.ts`](../../src/lib/dateUtils.ts)) | ・`buildWallClockIso` / `extractTimeStr` による -9時間ズレ防止<br>・`shiftLocalDateStr` / `getDayOfWeekFromDateStr` の境界日付検証 |
+| **日時・タイムゾーン安全処理**<br>([`src/lib/dateUtils.ts`](../../src/lib/dateUtils.ts)) | ・`buildWallClockIso` / `extractTimeStr` / `normalizeToWallClockIso`（非ISOスラッシュ形式を含む）による -9時間 UTC ズレ防止<br>・`shiftLocalDateStr` / `getDayOfWeekFromDateStr` / `formatCalendarDayLabels` の境界日付・不正入力安全性検証 |
 | **画面間データ整合性統合テスト**<br>([`src/lib/__tests__/dataIntegrity.test.ts`](../../src/lib/__tests__/dataIntegrity.test.ts)) | ・カレンダーセル、選択日サマリー、日次詳細、曜日別分析、糖質インスリン推移、時間帯別異常値分析のすべての数値（糖質・インスリン・異常値件数）が100%一致することの検証<br>・`user_settings` の食事区分別デフォルトインスリン設定（`enable_default_insulin` トグル ON/OFF および朝・昼・夕・間食の単位解決）の整合性検証<br>・決定論的UUID生成（[`src/lib/uuidUtils.ts`](../../src/lib/uuidUtils.ts)）、論理削除カテゴリの再登録復活およびカテゴリ文字数上限（`addOrReviveCategory` / `MAX_CATEGORY_NAME_LENGTH = 50`）、本番モード（`personal`）でのデモデータ自動投入ゼロ保証、バックアップ復元時のUUID正規化＆全4種メモリキャッシュ破棄、およびマルチテナント環境での患者別データ初期化隔離（[`src/lib/backupRestore.ts`](../../src/lib/backupRestore.ts) の `resetPatientDataAndInvalidateCaches` が他患者のデータを消去しないこと）の検証<br>・同じ日の朝食・昼食・夕食の重複判定（間食・論理削除・別日除外、日付境界23:59/00:00一致、`aggregateMonthlyData` との一致）および「1つにまとめる」（`mergeDuplicateMeals`：時刻最早＋`id` 最小への統合、明細 `event_id` 付け替え、合計糖質再計算、まとめ元論理削除、全画面合計値一致）の検証 |
 | **双方向クラウド同期エンジン & 招待専用権限管理・キャッシュ全消去・案Bパスワード強度検証**<br>([`src/lib/syncEngine.ts`](../../src/lib/syncEngine.ts) / [`src/lib/supabase.ts`](../../src/lib/supabase.ts)) | ・Supabase (`TIMESTAMPTZ`) から取得した日時の24文字ウォールクロックISO正規化（`normalizeToWallClockIso`: 課題 #7 対応）と `.between()` 境界検索一致検証<br>・1,000件単位チャンク分割（`chunkArray`）および汎用LWW差分計算純粋関数（`computeLwwDiff`）の単体検証<br>・`family_permissions` に基づく患者本人 / 招待家族（`viewer` 閲覧専用ロック / `editor` 代理記録）の権限・対象患者解決（`resolveUserAccessFromPermissions`）<br>・未招待第三者のログイン・サインアップ遮断検証（`verifyUserAccessWithCloud`: オーナー本人・招待家族は許可、未招待第三者は `authorized: false` で即座に拒否）<br>・パスワード複雑性ポリシー（案B：`validateStrongPassword` により8文字以上＋英大文字・英小文字・数字・記号の4種すべて必須）の境界値・欠落パターン検証<br>・ログアウト時の最終同期試行・失敗時警告保護・ローカル端末キャッシュ完全消去（`executeSafeLogoutWithFinalSync` & `purgeAllLocalPatientCaches`: 最終同期成功時のみ自動消去、失敗時は確認要求を返してキャンセル時に端末データを保持、`force: true` 承認時にIndexedDB全7テーブル＋全4種メモリキャッシュ消去）<br>・未ログイン時のローカルデータ（`DEFAULT_PATIENT_ID`）から認証済み `auth.uid()` への7テーブル自動引き継ぎ（`migrateAnonymousLocalDataToUser`）<br>・オンライン復帰時（`online` イベント）およびオンライン画面再表示時（`visibilitychange`）の1,000msデバウンス自動同期、未ログイン/デモ時抑止、および閲覧専用ロール時の Push 抑止<br>・7テーブル双方向 Push & Pull、閾値変更・CSV取込時のクラウド側異常値エピソード安全置換（`replaceRemoteAnomalies: true`: 新集合の先行 `upsert` → 不要旧IDのみ `deleteRowsByIdsInChunks` で後削除、途中失敗時の旧異常値保持と再実行収束保証） |
 | **糖質自動推定エンジン & BFF認証検証（案2）・レート制限・ビルド/PWA保護**<br>([`src/lib/gemini.ts`](../../src/lib/gemini.ts) / `functions/api/gemini.ts` / `scripts/build-guards.ts` / `vite.config.ts`) | ・日本食品標準成分表内蔵辞書による主要食品・料理の糖質量推定<br>・Cloudflare Pages Functions BFF（`POST /api/gemini`）の本番認証検証＆レート制限（案2：`GEMINI_API_KEY` 有無判定より最先頭での Cross-Origin/Cross-Site `403` 遮断および本番検証済み Supabase Bearer JWT 必須化［`GEMINI_API_KEY` 未設定時でも JWTなし・期限切れ・偽造JWT・同一 Origin 単独は常に `401` 遮断］、`checkBffUserRateLimit` によるユーザー単位スライディングウィンドウレート制限［`BFF_RATE_LIMIT_MAX` / `BFF_RATE_LIMIT_WINDOW_SEC` 超過時の `429` 遮断と `Retry-After` 付与］）<br>・`GEMINI_API_KEY` 検証・`foodName`/`unit` パラメータ長検証・レスポンス整形・未設定/認証失敗時の安全なローカル辞書フォールバック<br>・本番デプロイ用ビルド環境変数ガード（`enforceProductionEnvGuard` / `validateProductionSupabaseEnv`：`REQUIRE_SUPABASE_ENV=1` 時に `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` 欠落を即時ブロック）および Service Worker 決定論的リビジョンハッシュ刻印（`stampServiceWorkerRevision` / `computeServiceWorkerCacheName`）の単体検証<br>・`localStorage` に一切依存しない安全な動作 |
@@ -53,8 +53,8 @@
 
 | 検証項目 | 手法・判定基準 |
 | :--- | :--- |
-| **DDD 仕様書・図面・DDL・型定義・ユーザーガイド・コード同期 & セキュリティ検査 (`scripts/verify-docs-sync.mjs`)** | ソースコード（`src/`, `functions/`, `supabase/`）変更時に対応する `SPEC_*.md` / `ARCHITECTURE.md` / `USER_GUIDE.md` / `diagrams/*`（重要変更時は `requiredSpecs` 全件）が直前の純粋先行仕様コミット（`docs(spec): ...`）または同一変更セット内で更新されていること、仕様書・ルート `README.md`・`AGENTS.md` 内の参照ファイルパス（日本語パス含む）・リンク・`.agents/hooks.json` スクリプトおよびバッククォート識別子（Check 8：仕様先行コミット段階の新規追加識別子のみ実装完了まで段階的許容し、出荷検証・CIでは全件厳格エラー）がすべて実在すること、`src/`・`functions/`・`scripts/` の全モジュールがマッピング＆スモークテスト登録されていること、`0001_initial_schema.sql`・`ARCHITECTURE.md` Section 5・`src/types/database.ts`・`src/lib/db.ts`・`SEQUENCE_AND_ERD.md` の4層スキーマ（全テーブル・全カラム・文字長上限）が完全一致すること、E2Eテストスイート数・Vitest件数表記が実コードと一致すること、仕様書内に未完了ステータスタグ（`【未決事項】`・`【要確認】`・`【改修予定】`・`【実装予定】`・`【将来案】`）や内部 `Issue #XX` 参照が含まれていないこと、置換破損・文字化け・表崩れ・旧VBA資産のGit追跡が存在しないこと、`src/`・`functions/` 内に `localStorage` へのAPIキー保存や虚偽の「安全に保管」表示が存在しないこと |
-| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | 開発サーバー（稼働中またはエフェメラル自動起動）に対して全56エンドポイント（全UIコンポーネント・Context・Lib・Types・Worker）のリクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
+| **DDD 仕様書・図面・DDL・型定義・ユーザーガイド・コード同期 & セキュリティ検査 (`scripts/verify-docs-sync.mjs` / `scripts/gates/*.ts`)** | ソースコード（`src/`, `functions/`, `supabase/`）変更時に対応する `SPEC_*.md` / `ARCHITECTURE.md` / `USER_GUIDE.md` / `diagrams/*`（重要変更時は `requiredSpecs` 全件）が直前の純粋先行仕様コミット（`docs(spec): ...`）または同一変更セット内で更新されていること、仕様書・ルート `README.md`・`AGENTS.md` 内の参照ファイルパス（日本語パス含む）・リンク・`.agents/hooks.json` スクリプトおよびバッククォート識別子（Check 8：仕様先行コミット段階の新規追加識別子のみ実装完了まで段階的許容し、出荷検証・CIでは全件厳格エラー）がすべて実在すること、`src/`・`functions/` の全モジュールが `SOURCE_TO_SPEC_RULES` にマッピングされクライアント全モジュールがスモークテストで自動導出されていること、連番マイグレーション（`supabase/migrations/*.sql`）・`supabase/schema_snapshot.json`・`ARCHITECTURE.md` Section 5・`src/types/database.ts`・`src/lib/db.ts`・`SEQUENCE_AND_ERD.md` の6層スキーマ（全テーブル・全カラム・文字長上限・`app_private` `SECURITY DEFINER` 分離）が完全一致すること、E2Eテストスイート数・Vitest件数表記が実コードと一致すること、仕様書内に未完了ステータスタグ（`【未決事項】`・`【要確認】`・`【改修予定】`・`【実装予定】`・`【将来案】`）や内部 `Issue #XX` 参照が含まれていないこと、置換破損・文字化け・UTF-8 BOM・表崩れ・旧VBA資産のGit追跡が存在しないこと、`src/`・`functions/` 内に `localStorage` へのAPIキー保存や `window` テストバックドアフラグ・虚偽の「安全に保管」表示が存在しないこと |
+| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | OS 空きポート自動割当による隔離エフェメラル Vite 開発サーバーに対して全56エンドポイント（全UIコンポーネント・Context・Lib・Types・Worker）の8並列リクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
 
 ### 2.3 Layer 4: Browser E2E テスト計画 (Playwright)
 
@@ -168,20 +168,19 @@ Playwright E2E テストを実装・運用する際は、テスト自体の信�
 
 | コマンド | 用途・実行タイミング |
 | :--- | :--- |
-| `npm run test:docs` | 仕様書（SSOT）・図面・DDL・型定義とソースコードの同期、参照パス実在性（ローカル絶対パス・`file:///` リンク混入禁止を含む）、セキュリティ/ハリボテ禁止規約、および仕様書破損・旧VBA資産混入防止の検証。Check 8 として仕様書内のバッククォート識別子（camelCase / snake_case / 関数名()）がコード・CI設定に実在するかも既定で厳格エラーとして検査する（意図的な例外は `scripts/verify-docs-sync.mjs` の `IDENT_ALLOWLIST` に理由付きで登録。一時的に警告のみとする場合のみ `WARN_IDENT_CHECK=1`） |
+| `npm run test:docs` | 仕様書（SSOT）・図面・DDL・型定義とソースコードの同期、参照パス実在性（ローカル絶対パス・`file:///` リンク混入禁止を含む）、セキュリティ/ハリボテ禁止規約、および仕様書破損・旧VBA資産混入防止の検証。Check 8 として仕様書内のバッククォート識別子（camelCase / snake_case / 関数名()）がコード・CI設定に実在するかも既定で厳格エラーとして検査する（意図的な例外は `scripts/gates/doc-identifiers.ts` の `IDENT_ALLOWLIST` に理由付きで登録。一時的に警告のみとする場合のみ `WARN_IDENT_CHECK=1`） |
 | `npm run audit:prod` | 本番依存パッケージの脆弱性監査（`npm audit --omit=dev --audit-level=high`） |
-| `npm test` | Vitestによる全Unitテスト・画面間データ整合性テストの実行 |
+| `npm test` | Vitestによる全Unitテスト・画面間データ整合性テスト・ハーネスゲート単体テスト（`src` + `scripts`）の並列実行 |
 | `npm run test:watch` | 開発時のファイル変更連動自動テスト実行 |
-| `npm run test:smoke` | 開発サーバー（`localhost:3000`）に対するランタイムスモークテストの実行 |
+| `npm run test:smoke` | OS 空きポート自動割当の隔離エフェメラル開発サーバーに対する8並列ランタイムスモークテストの実行 |
 | `npm run test:e2e` | Playwright による全ブラウザ E2E テストスイート（`E2E-1` 〜 `E2E-14`）の実行 |
-| `npm run test:e2e:regression` | デプロイ前自動ゲート用の Playwright E2E リグレッションテスト（`@regression`）の実行 |
-| `npm run typecheck` | 3層 TypeScript 厳格型検査（`tsconfig.json`［フロントエンド］ + `tsconfig.functions.json`［Cloudflare Workers BFF］ + `tsconfig.e2e.json`［E2E・設定］） |
+| `npm run test:e2e:regression` | デプロイ前自動ゲート用の 2プロジェクト隔離 Playwright E2E リグレッションテスト（`@regression`）の実行 |
+| `npm run typecheck` | 4プロジェクト並列インクリメンタル TypeScript 厳格型検査（`tsconfig.json`［フロントエンド］ + `tsconfig.functions.json`［Cloudflare Workers BFF］ + `tsconfig.e2e.json`［E2E・設定］ + `tsconfig.scripts.json`［検証ゲート群］） |
 | `npm run build` | 本番Rollupバンドル整合性検査（`REQUIRE_SUPABASE_ENV=1` 指定時は `enforceProductionEnvGuard` により Supabase 環境変数必須検証を実施） |
-| `npm run demo:rebuild-branch` | `scripts/rebuild-demo-branch.mjs` により旧VBA資産・個人PCパス・過去コミット履歴を完全除外した孤立ブランチ `demo-public` を再生成 |
+| `npm run demo:rebuild-branch` | `scripts/rebuild-demo-branch.mjs` により旧VBA資産・個人PCパス・内部 Issue 番号を完全除外したクリーンな Fast-Forward 子コミットを `demo-public` 上に生成（Working Tree 切替なし） |
 | `npm run verify:all` | `test:docs` + `typecheck` + `test` + `test:smoke` + `build` の一括検証 |
-| `npm run pipeline:verify:quick` | 中間確認用の軽量パイプライン。`test:docs` + `typecheck` + `test` + `test:smoke` のみ実行し、ビルド・E2E・画面撮影は行わない |
-| `npm run pipeline:verify` | 出荷前の総合検査。軽量パイプラインの内容に加え、ビルド・E2E回帰（`E2E-1` 〜 `E2E-14`）・全11画面の撮影とDOM監査を実行する |
-| `npm run deploy:portfolio` | ポートフォリオバンドル生成 ➔ Playwright E2E リグレッションテスト通過 ➔ Cloudflare Pages デプロイ（手動緊急用） |
+| `npm run pipeline:verify:quick` | 中間確認用の軽量パイプライン。`test:docs` + 並列インクリメンタル `typecheck` + `test` + 8並列 `test:smoke` のみ実行し、ビルド・E2E・画面撮影は行わない |
+| `npm run pipeline:verify` | 出荷前の総合検査。`dist-portfolio` と `dist-personal` の分離ビルドを生成し、2プロジェクト Playwright E2E回帰（`E2E-1` 〜 `E2E-14`：デモと本番実バンドルの双方を検証）および全11画面の撮影・DOM監査を実行する |
 
 ### 3.1 検査の実行タイミング（3段階 + リモートCI/CD分離）
 
@@ -189,12 +188,12 @@ Playwright E2E テストを実装・運用する際は、テスト自体の信�
 
 | 段階 | タイミング | 仕組み | 実行内容 |
 | :--- | :--- | :--- | :--- |
-| 1 | AIの作業終了時 | `.agents/hooks/stop-guard.mjs`（Stop Hook） | `test:docs` のみ。監視対象の未コミット変更や当ターンのファイル編集（`run_command`・サブエージェント経由を含む）がない場合は検査しない |
-| 2 | `git commit` 時 | `.git/hooks/pre-commit`（`scripts/install-git-hooks.mjs` が設置） | `test:docs --staged` + `typecheck` + `npm test`。`pipeline:ship:*` 内のコミットでは、同じ実行内で `npm test` 通過済みのため `PIPELINE_TESTS_PASSED=1` により `npm test` のみ省略する |
-| 3 | 出荷Push前 / 全Push・PR時 | `npm run pipeline:verify` / `pipeline:ship:*` / `.github/workflows/deploy-pages.yml`（`verify` ジョブ） | Node 24 LTS 上で全フェーズ（`audit:prod`・`test:docs`・3層 `typecheck`・`npm test`・`test:smoke`・E2E回帰・全11画面の撮影とDOM監査・失敗時証跡保存）を実行。撮影画像のAIによる目視確認はUI変更時のみ |
-| 4 | `main` への Push 後 | `.github/workflows/deploy-pages.yml`（`deploy` ジョブ） | `verify` 通過後のみ起動。本番は `REQUIRE_SUPABASE_ENV=1` で Supabase 環境変数完備を強制検証してビルド・デプロイし、公開デモは `portfolio` バンドルをデプロイする |
+| 1 | AIのセッション開始・ツール実行前・作業終了時 | `.agents/hooks/{session-start,pre-tool-guard,stop-guard}.mjs`（Lifecycle Hooks） | `SessionStart` で開始時 `HEAD` を記録し、`PreToolUse` で `--no-verify`・`legacy_vba/` 書込・Excel COM・`main` Force Push を遮断し、`Stop` で `test:docs` を実行する |
+| 2 | `git commit` 時 | `.githooks/pre-commit`（`core.hooksPath`） | Staged Index Blob モードの `test:docs --staged` + 未ステージ/未追跡コードの Partial Staging 遮断 + 並列インクリメンタル `typecheck` + `npm test`（純粋 `docs(spec):` コミット時は高速パスで省略、Verify Stamp 一致時は重複実行を省略） |
+| 3 | 出荷Push前 / 全Push・PR時 | `.githooks/pre-push` + `npm run pipeline:verify` / `pipeline:ship:*` / `.github/workflows/deploy-pages.yml`（`verify` ジョブ） | `pre-push` で `main` への Force Push・未検証 Push を遮断し、Node 24 LTS 上で全フェーズ（`audit:prod`・`test:docs`・並列 `typecheck`・`npm test`・分離ビルド・2プロジェクト E2E回帰・全11画面の `expect.soft()` + `finally` レポート出力付き撮影とDOM監査・検証済み Artifact アップロード）を実行 |
+| 4 | `main` への Push 後 | `.github/workflows/deploy-pages.yml`（`deploy` ジョブ） + `scripts/post-deploy-smoke.mjs` | `verify` 通過後のみ起動。本番は `verify` で E2E 検証済みの `dist-personal` アーティファクト（Supabase 環境変数必須検証済）、公開デモは `dist-portfolio` アーティファクトを再ビルドなしでダウンロードしてデプロイし、ライブ疎通・BFF `401` 境界を確認する |
 
-`npm test` は、臨床計算（異常値抽出・日時処理など）の**単体テスト**と、カレンダー・日次詳細・分析画面の数値一致を確かめる**統合テスト**（`src/lib/__tests__/dataIntegrity.test.ts`）の両方を含む。
+`npm test` は、臨床計算（異常値抽出・日時処理など）・ハーネス検証ゲート（`scripts/__tests__/gates.test.ts`）の**単体テスト**と、カレンダー・日次詳細・分析画面の数値一致を確かめる**統合テスト**（`src/lib/__tests__/dataIntegrity.test.ts`）の両方を含む。
 
 ---
 
@@ -203,9 +202,9 @@ Playwright E2E テストを実装・運用する際は、テスト自体の信�
 今後、すべての機能追加・改修・PRマージおよびデプロイにおいて、以下の **7重品質ゲート** をすべてクリアすることを必須とします。
 
 1. **仕様同期 & セキュリティ検査**: `npm run test:docs` および `npm run audit:prod` がエラーゼロでパスすること（AIの作業終了時の Stop Hook、Git `pre-commit` フック、および GitHub Actions 全ブランチ Push / PR CI でも強制）
-2. **3層型整合性**: `npm run typecheck`（フロントエンド・Cloudflare Workers BFF・Playwright E2E）がエラーゼロであること
+2. **4プロジェクト型整合性**: `npm run typecheck`（フロントエンド・Cloudflare Workers BFF・Playwright E2E・検証ゲート群）がエラーゼロであること
 3. **ロジック & 画面間データ整合性**: `npm test` で全Unit/統合テストがパスすること（Green。Git `pre-commit` フックでも強制）
-4. **静的ビルド & 本番環境変数保護**: `npm run build`（および `build:vite:personal` / `build:vite:portfolio`）がエラーなく成功し、本番デプロイビルド（`REQUIRE_SUPABASE_ENV=1`）では Supabase 環境変数欠落時に即座にデプロイを遮断し、`dist/sw.js` にビルドハッシュリビジョンが自動刻印されること
-5. **ランタイム疎通**: `npm run test:smoke` で開発サーバー上にエラーオーバーレイが発生せず正常描画されること
+4. **静的ビルド分離 & 本番環境変数保護**: `npm run build`（および `build:vite:personal` → `dist-personal` / `build:vite:portfolio` → `dist-portfolio`）が上書き競合なく成功し、本番デプロイビルド（`REQUIRE_SUPABASE_ENV=1`）では Supabase 環境変数欠落時に即座にデプロイを遮断し、各出力先の `sw.js` にビルドハッシュリビジョンが自動刻印されること
+5. **ランタイム疎通**: `npm run test:smoke` でエフェメラル開発サーバー上にエラーオーバーレイが発生せず正常変換されること
 6. **期間局所スライス＆境界キャッシュ検証**: `setAnalysisBoundaryCache` および `buildAndCacheLocalizedPeriodSlice` による期間別キャッシュ再利用が単体テストで保証されること
-7. **デプロイ前ブラウザ E2E リグレッション＆視覚監査ゲート (`.github/workflows/deploy-pages.yml` & `e2e/app.spec.ts` & `e2e/visual-design.spec.ts`)**: `build:vite:portfolio` 完了後、Cloudflare Pages へデプロイする前に `npm run test:e2e:regression`（`E2E-1` 〜 `E2E-14`）および `npm run test:visual`（全11画面のDOMレイアウト・専門用語ゼロ監査）をヘッドレス Chromium で自動実行し、1件でも失敗またはコンソールエラーが発生した場合は証跡アーティファクトを保存してデプロイを自動停止し、本番環境のデグレを100%防止すること
+7. **デプロイ前2プロジェクト実バンドル E2E リグレッション＆視覚監査ゲート (`.github/workflows/deploy-pages.yml` & `e2e/app.spec.ts` & `e2e/visual-design.spec.ts`)**: `dist-portfolio` と `dist-personal` の両実バンドルを分離生成し、クライアント内テスト用ウィンドウフラグなしで `npm run test:e2e:regression`（`E2E-1` 〜 `E2E-14`：`portfolio` と `personal` 実バンドルの双方を検証）および `npm run test:visual`（全11画面のDOMレイアウト・専門用語ゼロ監査）をヘッドレス Chromium で自動実行し、検証通過済みの同一ビルド Artifact を `deploy` ジョブへ引き渡してデプロイすること

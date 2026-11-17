@@ -1,0 +1,3 @@
+# Enforce LF line endings on POSIX shell Git hooks so /bin/sh never fails on Windows CRLF
+*.sh text eol=lf
+.githooks/* text eol=lf

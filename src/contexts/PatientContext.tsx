@@ -18,7 +18,6 @@ import { seedFoodMasterIfEmpty } from '@/lib/foodSeed';
 import {
   type PasswordStrengthResult,
   getSupabaseClient,
-  isCloudAuthForcedForE2E,
   isSupabaseConfigured,
   validateStrongPassword,
 } from '@/lib/supabase';
@@ -103,8 +102,7 @@ export function PatientProvider({ children }: { children: React.ReactNode }) {
   );
 
   const isCloudEnabled = isSupabaseConfigured();
-  const isAuthRequired =
-    isCloudEnabled && (!isPortfolioMode() || isCloudAuthForcedForE2E());
+  const isAuthRequired = isCloudEnabled && !isPortfolioMode();
 
   const [authUser, setAuthUser] = useState<AuthUserInfo | null>(null);
   const [isSystemOwner, setIsSystemOwner] = useState<boolean>(

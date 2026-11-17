@@ -60,7 +60,7 @@
 ## 3. Service Worker キャッシュ戦略 (`public/sw.js`)
 
 ### 3.1 キャッシュライフサイクル & 遅延チャンクのアイドル時先読み
-- **キャッシュ名**: ベース名 `cgm-manager-v2`（`public/sw.js`）。本番・デモバンドル生成時（`vite.config.ts` の `stampServiceWorkerRevision`）には `dist/index.html` の SHA-256 先頭8文字を付与した決定論的リビジョン名（`cgm-manager-v2-<hash>`）へ自動刻印し、デプロイごとに新 Service Worker の `activate` で旧ハッシュのキャッシュを一掃する。
+- **キャッシュ名**: ベース名 `cgm-manager-v2`（`public/sw.js`）。本番・デモバンドル生成時（`vite.config.ts` の `stampServiceWorkerRevision`、`configResolved` から `build.outDir` を動的解決）には各出力先（`dist-personal/index.html` または `dist-portfolio/index.html`）の SHA-256 先頭8文字を付与した決定論的リビジョン名（`cgm-manager-v2-<hash>`）へ自動刻印し、デプロイごとに新 Service Worker の `activate` で旧ハッシュのキャッシュを一掃する。
 - **Pre-cache (インストール時 `STATIC_PRECACHE`・`public/sw.js`)**:
   - `/` および `/index.html`
   - `/manifest.webmanifest`

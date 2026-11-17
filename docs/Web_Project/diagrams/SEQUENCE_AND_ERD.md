@@ -1,7 +1,7 @@
 # Web版 シーケンス図 & データベースER図 (SEQUENCE_AND_ERD.md)
 
 本ドキュメントは、システム内の重要処理フロー（家族共有認可、Local-First同期、CSVインポート）およびデータベースのエンティティ関係（ER図）をMermaid記法で可視化した仕様書（SSOT）です。
-（※IndexedDB (Dexie.js) ＋ 決定論的UUID (`src/lib/uuidUtils.ts`) ＋ Web Worker CSV取込 ＋ JSONバックアップ/復元 ＋ Supabase Auth Gate (`src/components/common/AuthGateScreen.tsx`)・招待専用RLS (`supabase/migrations/0001_initial_schema.sql`)・7テーブル双方向LWW差分同期＆Realtime購読 (`src/lib/syncEngine.ts`) が実装・稼働中であり、CSV原本の Supabase Storage 保管のみ将来実装予定（未実装）です。）
+（※IndexedDB (Dexie.js) ＋ 決定論的UUID (`src/lib/uuidUtils.ts`) ＋ Web Worker CSV取込 ＋ JSONバックアップ/復元 ＋ Supabase Auth Gate (`src/components/common/AuthGateScreen.tsx`)・非公開 `app_private` スキーマ隔離招待専用RLS (`supabase/migrations/`)・7テーブル双方向LWW差分同期＆Realtime購読 (`src/lib/syncEngine.ts`) が実装・稼働中であり、CSV原本の Supabase Storage 保管のみ将来実装予定（未実装）です。）
 
 ---
 
@@ -154,10 +154,10 @@ sequenceDiagram
 
     User->>Gate: 2. ログイン / 招待家族サインアップ送信
     Gate->>SupaAuth: signInWithPassword / signUp
-    Note over SupaAuth: サインアップ時は BEFORE INSERT トリガーで<br/>オーナーまたは family_permissions 招待済みを検証
+    Note over SupaAuth: サインアップ時は BEFORE INSERT トリガー (app_private.enforce_invited_or_owner_signup) で<br/>オーナーまたは family_permissions 招待済みを検証 (OID保持スキーマ移行対応)
     SupaAuth-->>Context: JWT セッション返却 (auth.uid, email)
 
-    Context->>SupaDB: 3. 家族連携照会 (family_permissions) & verify_user_authorization() [authenticated限定RPC / anon遮断]
+    Context->>SupaDB: 3. 家族連携照会 (family_permissions) & verify_user_authorization() [SECURITY INVOKER -> app_private / anon遮断]
     alt 未招待の第三者アカウントの場合
         SupaDB-->>Context: authorized = false
         Context->>SupaAuth: 即座に強制 signOut()

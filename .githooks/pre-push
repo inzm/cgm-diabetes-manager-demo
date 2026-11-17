@@ -1,0 +1,49 @@
+#!/bin/sh
+REMOTE_NAME="$1"
+REMOTE_URL="$2"
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+NEEDS_LOCAL_VERIFY=0
+
+while read local_ref local_sha remote_ref remote_sha; do
+  [ -z "$local_ref" ] && continue
+
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    if [ "$local_sha" = "$ZERO_SHA" ]; then
+      echo "❌ [Pre-Push Blocked] refs/heads/main ブランチの削除は禁止されています。"
+      exit 1
+    fi
+
+    if [ "$remote_sha" != "$ZERO_SHA" ]; then
+      if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+        echo "❌ [Pre-Push Blocked] ${REMOTE_NAME} の refs/heads/main に対する Non-Fast-Forward (Force Push) は禁止されています。"
+        exit 1
+      fi
+    fi
+
+    case "$REMOTE_NAME $REMOTE_URL" in
+      *public-demo*|*-demo*)
+        if [ "$PIPELINE_DEMO_FF_VERIFIED" != "1" ]; then
+          echo "❌ [Pre-Push Blocked] public-demo の main への直接 Push は禁止されています。"
+          echo "   npm run pipeline:ship:demo を使用し、release/demo 上で必須ステータスチェック通過後に Fast-Forward 昇格させてください。"
+          exit 1
+        fi
+        ;;
+      *)
+        if [ "$PIPELINE_SHIP_AUTHORIZED" != "1" ]; then
+          NEEDS_LOCAL_VERIFY=1
+        fi
+        ;;
+    esac
+  fi
+done
+
+if [ "$NEEDS_LOCAL_VERIFY" = "1" ]; then
+  echo "🔒 [Pre-Push Gate] Direct push to main detected outside pipeline:ship. Running DDD Sync, Typecheck & Vitest..."
+  STRICT_DOC_IDENTIFIERS=1 npm run test:docs || exit 1
+  npm run typecheck || exit 1
+  npm test || exit 1
+fi
+
+echo "✅ [Pre-Push Gate] Push checks passed for ${REMOTE_NAME}."
+exit 0

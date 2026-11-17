@@ -2,8 +2,12 @@ import { test, expect, Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SCREENSHOT_DIR = path.join(process.cwd(), '.agents', 'scratch', 'screenshots');
+const LATEST_SCREENSHOT_DIR = path.join(process.cwd(), '.agents', 'scratch', 'screenshots');
+const SCREENSHOT_DIR = process.env.CGM_VISUAL_SCREENSHOT_DIR
+  ? path.resolve(process.env.CGM_VISUAL_SCREENSHOT_DIR)
+  : LATEST_SCREENSHOT_DIR;
 const REPORT_PATH = path.join(SCREENSHOT_DIR, 'visual-audit-report.json');
+const LATEST_REPORT_PATH = path.join(LATEST_SCREENSHOT_DIR, 'visual-audit-report.json');
 
 interface ScreenAuditResult {
   id: string;
@@ -27,11 +31,16 @@ const FORBIDDEN_UI_JARGON = [
   'food_master',
   'event_master',
   'meal_details',
+  'user_settings',
+  'family_permissions',
 ];
 
 function ensureScreenshotDir() {
   if (!fs.existsSync(SCREENSHOT_DIR)) {
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(LATEST_SCREENSHOT_DIR)) {
+    fs.mkdirSync(LATEST_SCREENSHOT_DIR, { recursive: true });
   }
 }
 
@@ -76,6 +85,9 @@ async function captureAndAuditScreen(
   const fullPath = path.join(SCREENSHOT_DIR, fileName);
 
   await page.screenshot({ path: fullPath, fullPage: false });
+  if (SCREENSHOT_DIR !== LATEST_SCREENSHOT_DIR) {
+    fs.copyFileSync(fullPath, path.join(LATEST_SCREENSHOT_DIR, fileName));
+  }
 
   const layoutMetrics = await page.evaluate((jargonList) => {
     const docEl = document.documentElement;
@@ -106,18 +118,24 @@ async function captureAndAuditScreen(
 
   auditLog.push(result);
 
-  expect(
-    result.hasHorizontalOverflow,
-    `[${id}] Horizontal overflow detected (${result.scrollWidth}px > ${result.clientWidth}px)`
-  ).toBe(false);
-  expect(
-    result.exposedJargon,
-    `[${id}] Forbidden developer jargon exposed in UI: ${result.exposedJargon.join(', ')}`
-  ).toEqual([]);
-  expect(
-    result.runtimeErrors,
-    `[${id}] Runtime errors detected: ${result.runtimeErrors.join('\n')}`
-  ).toEqual([]);
+  expect
+    .soft(
+      result.hasHorizontalOverflow,
+      `[${id}] Horizontal overflow detected (${result.scrollWidth}px > ${result.clientWidth}px)`
+    )
+    .toBe(false);
+  expect
+    .soft(
+      result.exposedJargon,
+      `[${id}] Forbidden developer jargon exposed in UI: ${result.exposedJargon.join(', ')}`
+    )
+    .toEqual([]);
+  expect
+    .soft(
+      result.runtimeErrors,
+      `[${id}] Runtime errors detected: ${result.runtimeErrors.join('\n')}`
+    )
+    .toEqual([]);
 }
 
 test.describe('AI Orchestration Visual Design & Multimodal Screenshot Suite @visual', () => {
@@ -126,7 +144,10 @@ test.describe('AI Orchestration Visual Design & Multimodal Screenshot Suite @vis
   }) => {
     const runtimeErrors: string[] = [];
     const auditLog: ScreenAuditResult[] = [];
+    let unexpectedError: string | null = null;
     attachZeroErrorGuard(page, runtimeErrors);
+
+    try {
 
     // =========================================================================
     // 1. Desktop Views (1280x800)
@@ -293,10 +314,12 @@ test.describe('AI Orchestration Visual Design & Multimodal Screenshot Suite @vis
         })
         .filter((m) => m.scrollW > m.clientW + 1);
     });
-    expect(
-      overflowingAnalysisTables,
-      `Mobile analysis inner tables should not overflow horizontally: ${JSON.stringify(overflowingAnalysisTables)}`
-    ).toEqual([]);
+    expect
+      .soft(
+        overflowingAnalysisTables,
+        `Mobile analysis inner tables should not overflow horizontally: ${JSON.stringify(overflowingAnalysisTables)}`
+      )
+      .toEqual([]);
 
     // Navigate to Food & Activity View on Mobile
     await page.locator('button:visible', { hasText: '食品・活動' }).first().click();
@@ -323,32 +346,46 @@ test.describe('AI Orchestration Visual Design & Multimodal Screenshot Suite @vis
         isTruncated: udonTextEl.scrollWidth > udonTextEl.clientWidth + 1,
       };
     });
-    expect(udonServingMetrics).not.toBeNull();
-    expect(
-      udonServingMetrics?.isTruncated,
-      `Mobile food serving weight '1 玉(250g)' should not be truncated: ${JSON.stringify(udonServingMetrics)}`
-    ).toBe(false);
-
-    // Write structured visual audit report
-    fs.writeFileSync(
-      REPORT_PATH,
-      JSON.stringify(
+    expect.soft(udonServingMetrics).not.toBeNull();
+    expect
+      .soft(
+        udonServingMetrics?.isTruncated,
+        `Mobile food serving weight '1 玉(250g)' should not be truncated: ${JSON.stringify(udonServingMetrics)}`
+      )
+      .toBe(false);
+    } catch (err) {
+      unexpectedError = err instanceof Error ? err.message : String(err);
+      throw err;
+    } finally {
+      ensureScreenshotDir();
+      const softErrors = test.info().errors.map((e) => e.message || String(e));
+      const reportPayload = JSON.stringify(
         {
           generatedAt: new Date().toISOString(),
           totalScreens: auditLog.length,
-          allPassed: auditLog.every(
-            (item) =>
-              !item.hasHorizontalOverflow &&
-              item.exposedJargon.length === 0 &&
-              item.runtimeErrors.length === 0
-          ),
+          expectedScreens: 11,
+          allPassed:
+            unexpectedError === null &&
+            softErrors.length === 0 &&
+            auditLog.length === 11 &&
+            auditLog.every(
+              (item) =>
+                !item.hasHorizontalOverflow &&
+                item.exposedJargon.length === 0 &&
+                item.runtimeErrors.length === 0
+            ),
+          unexpectedError,
+          assertionErrors: softErrors,
           screens: auditLog,
         },
         null,
         2
-      ),
-      'utf8'
-    );
+      );
+      fs.writeFileSync(REPORT_PATH, reportPayload, 'utf8');
+      if (REPORT_PATH !== LATEST_REPORT_PATH) {
+        fs.writeFileSync(LATEST_REPORT_PATH, reportPayload, 'utf8');
+      }
+    }
   });
 });
 

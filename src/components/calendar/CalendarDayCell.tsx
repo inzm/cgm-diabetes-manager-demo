@@ -1,5 +1,6 @@
 import React from 'react';
 import { DailyAggregatedData } from '@/lib/aggregates';
+import { formatCalendarDayLabels } from '@/lib/dateUtils';
 import { Sparkline } from './Sparkline';
 import { cn } from '@/lib/utils';
 
@@ -47,9 +48,8 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({
     }
   };
 
-  // 曜日判定 (0: 日曜 = 赤系, 6: 土曜 = 青系)
-  const dateObj = new Date(`${date}T00:00:00`);
-  const dayOfWeek = !isNaN(dateObj.getTime()) ? dateObj.getDay() : -1;
+  // 曜日判定 (0: 日曜 = 赤系, 6: 土曜 = 青系) — dateUtils.ts に一元化
+  const { dayOfWeek } = formatCalendarDayLabels(date);
 
   // 日付数字の色 (前月・翌月は淡いトーン、当月ははっきりした色)
   const dayNumberColor = isToday

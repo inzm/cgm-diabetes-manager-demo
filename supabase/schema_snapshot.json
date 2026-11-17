@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 4,
+  "migrations": [
+    "0001_initial_schema.sql",
+    "20261116205848_harden_rls_functions_and_fk_indexes.sql",
+    "20261116205957_expand_timing_category_and_alter_rls_policies_initplan.sql",
+    "20261117030000_isolate_security_definer_helpers_and_consolidate_family_rls.sql"
+  ],
+  "securityPosture": {
+    "privateHelperSchema": "app_private",
+    "privateSecurityDefinerHelpers": [
+      "is_system_owner",
+      "is_authorized_system_user",
+      "can_view_patient_data",
+      "can_edit_patient_data",
+      "verify_user_authorization",
+      "enforce_invited_or_owner_signup"
+    ],
+    "publicExposedRpcFunctions": [
+      {
+        "name": "verify_user_authorization",
+        "security": "INVOKER"
+      }
+    ],
+    "publicSecurityDefinerFunctions": []
+  },
+  "tables": {
+    "family_permissions": {
+      "tsInterface": "FamilyPermission",
+      "localDexie": false,
+      "rlsEnabled": true,
+      "singleActionPolicies": [
+        "family_permissions_select",
+        "family_permissions_insert",
+        "family_permissions_update",
+        "family_permissions_delete"
+      ],
+      "columns": {
+        "id": { "type": "UUID", "varcharLength": null },
+        "patient_id": { "type": "UUID", "varcharLength": null },
+        "family_user_id": { "type": "UUID", "varcharLength": null },
+        "family_email": { "type": "VARCHAR(255)", "varcharLength": 255 },
+        "role": { "type": "VARCHAR(20)", "varcharLength": 20 },
+        "invited_at": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "accepted_at": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "created_at": { "type": "TIMESTAMPTZ", "varcharLength": null }
+      }
+    },
+    "categories": {
+      "tsInterface": "Category",
+      "localDexie": true,
+      "rlsEnabled": true,
+      "columns": {
+        "id": { "type": "UUID", "varcharLength": null },
+        "user_id": { "type": "UUID", "varcharLength": null },
+        "target_type": { "type": "VARCHAR(20)", "varcharLength": 20 },
+        "category_name": { "type": "VARCHAR(50)", "varcharLength": 50 },
+        "display_order": { "type": "INTEGER", "varcharLength": null },
+        "is_protected": { "type": "BOOLEAN", "varcharLength": null },
+        "is_deleted": { "type": "BOOLEAN", "varcharLength": null },
+        "updated_at": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "created_at": { "type": "TIMESTAMPTZ", "varcharLength": null }
+      }
+    },
+    "food_master": {
+      "tsInterface": "FoodMaster",
+      "localDexie": true,
+      "rlsEnabled": true,
+      "columns": {
+        "id": { "type": "UUID", "varcharLength": null },
+        "user_id": { "type": "UUID", "varcharLength": null },
+        "category_id": { "type": "UUID", "varcharLength": null },
+        "food_name": { "type": "VARCHAR(100)", "varcharLength": 100 },
+        "base_amount": { "type": "NUMERIC(6,1)", "varcharLength": null },
+        "unit": { "type": "VARCHAR(20)", "varcharLength": 20 },
+        "carbs_per_unit": { "type": "NUMERIC(6,1)", "varcharLength": null },
+        "is_deleted": { "type": "BOOLEAN", "varcharLength": null },
+        "updated_at": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "created_at": { "type": "TIMESTAMPTZ", "varcharLength": null }
+      }
+    },
+    "event_master": {
+      "tsInterface": "EventMaster",
+      "localDexie": true,
+      "rlsEnabled": true,
+      "columns": {
+        "id": { "type": "UUID", "varcharLength": null },
+        "user_id": { "type": "UUID", "varcharLength": null },
+        "category_id": { "type": "UUID", "varcharLength": null },
+        "event_name": { "type": "VARCHAR(100)", "varcharLength": 100 },
+        "default_duration": { "type": "INTEGER", "varcharLength": null },
+        "memo": { "type": "TEXT", "varcharLength": null },
+        "is_deleted": { "type": "BOOLEAN", "varcharLength": null },
+        "updated_at": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "created_at": { "type": "TIMESTAMPTZ", "varcharLength": null }
+      }
+    },
+    "libre_readings": {
+      "tsInterface": "LibreReading",
+      "localDexie": true,
+      "rlsEnabled": true,
+      "columns": {
+        "id": { "type": "UUID", "varcharLength": null },
+        "user_id": { "type": "UUID", "varcharLength": null },
+        "timestamp": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "glucose_value": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "scan_type": { "type": "VARCHAR(20)", "varcharLength": 20 },
+        "created_at": { "type": "TIMESTAMPTZ", "varcharLength": null }
+      }
+    },
+    "events": {
+      "tsInterface": "HealthEvent",
+      "localDexie": true,
+      "rlsEnabled": true,
+      "columns": {
+        "id": { "type": "UUID", "varcharLength": null },
+        "user_id": { "type": "UUID", "varcharLength": null },
+        "event_datetime": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "event_type": { "type": "VARCHAR(20)", "varcharLength": 20 },
+        "timing_category": { "type": "VARCHAR(50)", "varcharLength": 50 },
+        "total_carbs": { "type": "NUMERIC(6,1)", "varcharLength": null },
+        "insulin_units": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "pre_meal_glucose": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "post_meal_glucose": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "duration_minutes": { "type": "INTEGER", "varcharLength": null },
+        "memo": { "type": "TEXT", "varcharLength": null },
+        "is_deleted": { "type": "BOOLEAN", "varcharLength": null },
+        "updated_at": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "created_at": { "type": "TIMESTAMPTZ", "varcharLength": null }
+      }
+    },
+    "meal_details": {
+      "tsInterface": "MealDetail",
+      "localDexie": true,
+      "rlsEnabled": true,
+      "columns": {
+        "id": { "type": "UUID", "varcharLength": null },
+        "user_id": { "type": "UUID", "varcharLength": null },
+        "event_id": { "type": "UUID", "varcharLength": null },
+        "food_name": { "type": "VARCHAR(100)", "varcharLength": 100 },
+        "amount": { "type": "NUMERIC(6,1)", "varcharLength": null },
+        "unit": { "type": "VARCHAR(20)", "varcharLength": 20 },
+        "carbs": { "type": "NUMERIC(6,1)", "varcharLength": null },
+        "is_deleted": { "type": "BOOLEAN", "varcharLength": null },
+        "updated_at": { "type": "TIMESTAMPTZ", "varcharLength": null },
+        "created_at": { "type": "TIMESTAMPTZ", "varcharLength": null }
+      }
+    },
+    "user_settings": {
+      "tsInterface": "UserSettings",
+      "localDexie": true,
+      "rlsEnabled": true,
+      "columns": {
+        "user_id": { "type": "UUID", "varcharLength": null },
+        "hypo_threshold": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "hyper_threshold": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "target_tir_min": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "target_tir_max": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "enable_default_insulin": { "type": "BOOLEAN", "varcharLength": null },
+        "default_insulin_breakfast": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "default_insulin_lunch": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "default_insulin_dinner": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "default_insulin_snack": { "type": "NUMERIC(5,1)", "varcharLength": null },
+        "updated_at": { "type": "TIMESTAMPTZ", "varcharLength": null }
+      }
+    }
+  }
+}

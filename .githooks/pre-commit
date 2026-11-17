@@ -1,0 +1,46 @@
+#!/bin/sh
+echo "🔒 [Pre-Commit Gate] Running Staged Index DDD Sync, Partial-Staging Guard, Typecheck & Tests..."
+
+node scripts/verify-docs-sync.mjs --staged
+if [ $? -ne 0 ]; then
+  echo "❌ [Pre-Commit Blocked] ステージ済みインデックスの仕様書・スキーマ同期検証に失敗しました。仕様書を更新して git add してください。"
+  exit 1
+fi
+
+STAGED_NON_DOC=$(git -c core.quotePath=false diff --cached --name-only | grep -Ev '^(docs/|\.agents/.*\.md$|README\.md$|AGENTS\.md$)' || true)
+if [ -z "$STAGED_NON_DOC" ]; then
+  echo "⚡ [Pre-Commit Fast-Path] 純粋な仕様書・ドキュメント変更のみのため、typecheck と npm test を省略します。"
+  exit 0
+fi
+
+UNSTAGED_CODE=$({ git -c core.quotePath=false diff --name-only; git -c core.quotePath=false ls-files --others --exclude-standard; } | grep -Ev '^(\.agents/scratch/|docs/|\.agents/.*\.md$|README\.md$|AGENTS\.md$)' || true)
+if [ -n "$UNSTAGED_CODE" ] && [ "$ALLOW_PARTIAL_WORKTREE" != "1" ]; then
+  echo "❌ [Pre-Commit Blocked] Partial Staging 検出: 未ステージまたは未追跡のコードファイルが残っているため、Working Tree とステージ済みインデックスが一致しません。"
+  echo "$UNSTAGED_CODE"
+  echo "   変更・新規ファイルを明示的に git add するか git stash / .agents/scratch/ へ退避してからコミットしてください。"
+  exit 1
+fi
+
+if [ "$PIPELINE_VERIFIED_STAMP" = "1" ]; then
+  echo "⚡ [Pre-Commit Stamp] 直前の厳密 Verify Stamp と完全一致したため、重複する typecheck と npm test を省略します。"
+  exit 0
+fi
+
+npm run typecheck
+if [ $? -ne 0 ]; then
+  echo "❌ [Pre-Commit Blocked] TypeScript 型検査に失敗しました。"
+  exit 1
+fi
+
+if [ "$PIPELINE_TESTS_PASSED" = "1" ]; then
+  echo "ℹ️ [Pre-Commit Gate] npm test は同一パイプライン実行内で通過済みのため省略します。"
+else
+  npm test
+  if [ $? -ne 0 ]; then
+    echo "❌ [Pre-Commit Blocked] 単体・統合テスト（npm test）に失敗しました。"
+    exit 1
+  fi
+fi
+
+echo "✅ [Pre-Commit Gate] All checks passed!"
+exit 0

@@ -73,7 +73,7 @@
                     <mxGeometry x="20" y="40" width="240" height="60" as="geometry"/>
                 </mxCell>
 
-                <mxCell id="node_supa_rls" value="&lt;b&gt;Row Level Security (RLS)&lt;/b&gt;&lt;br&gt;・患者データの完全分離&lt;br&gt;・&lt;font color=&quot;#dc2626&quot;&gt;can_view_patient_data()&lt;/font&gt;&lt;br&gt;・家族閲覧ロール(viewer)の厳格制御" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;fontColor=#991b1b;fontSize=11;fontStyle=1;" vertex="1" parent="c_cloud">
+                <mxCell id="node_supa_rls" value="&lt;b&gt;Row Level Security (RLS)&lt;/b&gt;&lt;br&gt;・非公開 `app_private` スキーマ隔離&lt;br&gt;・&lt;font color=&quot;#dc2626&quot;&gt;app_private.can_view_patient_data()&lt;/font&gt;&lt;br&gt;・家族閲覧ロール(viewer)の厳格制御" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;fontColor=#991b1b;fontSize=11;fontStyle=1;" vertex="1" parent="c_cloud">
                     <mxGeometry x="280" y="40" width="250" height="60" as="geometry"/>
                 </mxCell>
 

@@ -9,7 +9,9 @@ import {
 } from './realGlucoseLoader';
 import { resetFoodSeedSession } from './foodSeed';
 import { reevaluatePatientAnomalyEvents } from './anomalyExtractor';
+import { normalizeToWallClockIso } from './dateUtils';
 import { deterministicUuid, ensureUuid } from './uuidUtils';
+export { normalizeToWallClockIso };
 import {
   DEFAULT_HYPER_THRESHOLD,
   DEFAULT_HYPO_THRESHOLD,
@@ -114,33 +116,6 @@ export function invalidateAllCachesAfterSync(patientId?: string): void {
       // Ignore individual UI cache error
     }
   }
-}
-
-/**
- * 課題 #7 対応:
- * Supabase (TIMESTAMPTZ) から取得した日時文字列（例: "2026-08-25T12:30:00+00:00",
- * "2026-08-25 07:15:00+00", "2026-08-25T12:30:00Z" 等）を、
- * IndexedDB の `.between()` 辞書順検索が100%機能する 24文字のウォールクロックISO形式
- * （"YYYY-MM-DDTHH:mm:ss.000Z"）へ正規化する。
- */
-export function normalizeToWallClockIso(raw: string | null | undefined): string {
-  if (!raw) {
-    return '1970-01-01T00:00:00.000Z';
-  }
-  const trimmed = String(raw).trim();
-  const match = trimmed.match(
-    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/
-  );
-  if (match) {
-    const [, yyyy, mm, dd, hh, min, ss] = match;
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss ?? '00'}.000Z`;
-  }
-
-  const parsed = new Date(trimmed);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toISOString().slice(0, 19) + '.000Z';
-  }
-  return trimmed;
 }
 
 /**
