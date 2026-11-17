@@ -112,7 +112,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({
       aria-label={duplicateNoticeText ? `${date} (${duplicateNoticeText})` : undefined}
       style={{ animationDelay: `${enterDelayMs}ms` }}
       className={cn(
-        'cgm-cell-enter group relative h-full min-h-0 sm:min-h-[88px] lg:min-h-[92px] p-0.5 sm:p-1.5 border border-slate-200/80 transition-all duration-200 select-none cursor-pointer flex flex-col justify-between overflow-hidden active:scale-[0.98]',
+        'cgm-cell-enter group relative h-full min-h-0 sm:min-h-[88px] lg:min-h-[92px] p-1 sm:p-1.5 border border-slate-200/80 transition-all duration-200 select-none cursor-pointer flex flex-col justify-start gap-0.5 sm:gap-1 overflow-hidden active:scale-[0.98]',
         cellBgClass,
         isSelected && 'ring-2 ring-sky-500 z-10 shadow-xs border-transparent',
         !isSelected &&
@@ -129,14 +129,14 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({
         </span>
 
         {isCurrentMonth && !isLoading && (hypoCount > 0 || hyperCount > 0) && (
-          <div className="flex items-center gap-0.5 text-[8px] sm:text-[9.5px] font-medium tracking-tighter leading-none shrink-0">
+          <div className="flex items-center gap-0.5 text-[9px] sm:text-[10px] font-bold tracking-tighter leading-none shrink-0">
             {hypoCount > 0 && (
-              <span className="text-blue-400/65" title={`低血糖 ${hypoCount}回`}>
+              <span className="text-blue-600" title={`低血糖 ${hypoCount}回`}>
                 {hypoTriangles}
               </span>
             )}
             {hyperCount > 0 && (
-              <span className="text-rose-400/65" title={`高血糖 ${hyperCount}回`}>
+              <span className="text-rose-600" title={`高血糖 ${hyperCount}回`}>
                 {hyperTriangles}
               </span>
             )}
@@ -157,14 +157,14 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({
         </div>
       ) : (
         <>
-          {/* 2行目 (脇役): 糖質量合計 */}
-          <div className="flex items-center leading-none shrink-0">
+          {/* 2行目 (脇役・PCのみ): 糖質量合計 */}
+          <div className="hidden sm:flex items-center leading-none shrink-0">
             {totalCarbs > 0 ? (
               <span
-                className="inline-flex items-center gap-0.5 text-[8px] sm:text-[10px] font-medium text-slate-400 tabular-nums whitespace-nowrap leading-none"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-500 tabular-nums whitespace-nowrap leading-none"
                 title={`糖質合計 ${formattedCarbs}`}
               >
-                <span className="text-[7.5px] sm:text-[9px] leading-none opacity-55 grayscale-[50%]">
+                <span className="text-[9px] leading-none opacity-60 grayscale-[50%]">
                   🍚
                 </span>
                 <span>{formattedCarbs}</span>
@@ -174,14 +174,14 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({
             )}
           </div>
 
-          {/* 3行目 (脇役): インスリン量合計 */}
-          <div className="flex items-center leading-none shrink-0">
+          {/* 3行目 (脇役・PCのみ): インスリン量合計 */}
+          <div className="hidden sm:flex items-center leading-none shrink-0">
             {totalInsulin > 0 ? (
               <span
-                className="inline-flex items-center gap-0.5 text-[8px] sm:text-[10px] font-medium text-slate-400 tabular-nums whitespace-nowrap leading-none"
+                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-500 tabular-nums whitespace-nowrap leading-none"
                 title={`インスリン合計 ${totalInsulin}単位`}
               >
-                <span className="text-[7.5px] sm:text-[9px] leading-none opacity-55 grayscale-[45%]">
+                <span className="text-[9px] leading-none opacity-60 grayscale-[45%]">
                   💉
                 </span>
                 <span>{totalInsulin}</span>
@@ -192,20 +192,20 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({
           </div>
 
           {/* 4行目: 血糖値平均 (日付と競合しないよう正常時は落ち着いたスレート色、閾値超過時のみ青/赤) */}
-          <div className="flex items-center leading-none shrink-0">
+          <div className="flex items-center leading-none shrink-0 mt-0.5 sm:mt-0">
             {avgGlucose !== null ? (
               <span
                 className={cn(
-                  'inline-flex items-center gap-0.5 text-[9.5px] sm:text-xs font-bold tabular-nums leading-none whitespace-nowrap',
+                  'inline-flex items-center gap-0.5 text-[11px] sm:text-xs font-bold tabular-nums leading-none whitespace-nowrap',
                   avgGlucose < hypoThreshold
-                    ? 'text-blue-500/90'
+                    ? 'text-blue-600'
                     : avgGlucose > hyperThreshold
-                    ? 'text-rose-500/90'
-                    : 'text-slate-600'
+                    ? 'text-rose-600'
+                    : 'text-slate-700'
                 )}
                 title={`平均血糖値 ${avgGlucose} mg/dL`}
               >
-                <span className="text-[8px] sm:text-[10px] leading-none opacity-65">🩸</span>
+                <span className="text-[9px] sm:text-[10px] leading-none opacity-75">🩸</span>
                 <span>{avgGlucose}</span>
               </span>
             ) : (

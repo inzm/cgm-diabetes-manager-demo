@@ -205,9 +205,34 @@
   transform: none;
 }
 
+/* 端到達時のラバーバンド（バウンス）アニメーション */
+@keyframes cgmEdgeBounceLeft {
+  0% { transform: translate3d(0, 0, 0); }
+  35% { transform: translate3d(-18px, 0, 0); }
+  70% { transform: translate3d(4px, 0, 0); }
+  100% { transform: none; }
+}
+
+@keyframes cgmEdgeBounceRight {
+  0% { transform: translate3d(0, 0, 0); }
+  35% { transform: translate3d(18px, 0, 0); }
+  70% { transform: translate3d(-4px, 0, 0); }
+  100% { transform: none; }
+}
+
+.cgm-edge-bounce-left {
+  animation: cgmEdgeBounceLeft 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cgm-edge-bounce-right {
+  animation: cgmEdgeBounceRight 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cgm-slide-fade-forward,
   .cgm-slide-fade-backward,
+  .cgm-edge-bounce-left,
+  .cgm-edge-bounce-right,
   .cgm-cell-enter,
   .cgm-drawer-content-enter,
   .cgm-sparkline-path,

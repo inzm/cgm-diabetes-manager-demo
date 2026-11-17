@@ -421,13 +421,13 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     const masterSelect = page.getByLabel('登録済みの食品から選ぶ');
     await expect(masterSelect.locator('option')).not.toHaveCount(1);
 
-    await masterSelect.selectOption({ label: 'ごはん (1杯 / 糖質55.2g)' });
+    await masterSelect.selectOption({ label: 'ごはん (1杯)' });
     const qtyInput = page.locator('input[type="number"]').nth(1);
     await qtyInput.fill('1.5');
     await expect(page.getByText('糖質 82.8 g')).toBeVisible();
     await page.getByRole('button', { name: '＋ リストに追加' }).click();
 
-    await masterSelect.selectOption({ label: '豚の生姜焼き (1人前 / 糖質6.5g)' });
+    await masterSelect.selectOption({ label: '豚の生姜焼き (1人前)' });
     await qtyInput.fill('1');
     await page.getByRole('button', { name: '＋ リストに追加' }).click();
 
@@ -1081,8 +1081,11 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     });
     expect(postModalCloseStyle).toEqual({ animationName: 'none', transform: 'none' });
 
-    // 7. 非カレンダー3画面のコンテンツ領域左右スワイプによる順次タブ遷移（食品・活動 -> 分析 -> 分析テーブル上スワイプで設定 -> 右端ストップ -> 分析 -> 食品・活動 -> カレンダー）
-    await dispatchSwipe('[data-testid="main-content-area"]', 280, 400, 100, 400);
+    // 7. 非カレンダー3画面のコンテンツ領域左右スワイプによる順次タブ遷移（食品タブ -> 活動タブ -> 分析 -> 設定 -> 右端バウンス -> 分析 -> 食品・活動 -> カレンダー）
+    await dispatchSwipe('[data-testid="food-master-view"]', 280, 400, 100, 400);
+    await expect(page.getByRole('button', { name: '活動を追加' })).toBeVisible();
+
+    await dispatchSwipe('[data-testid="food-master-view"]', 280, 400, 100, 400);
     await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
     await expect(tabContainer).toHaveAttribute('data-transition-direction', 'forward');
     await expect(tabContainer).toHaveClass(/cgm-slide-fade-forward/);
@@ -1094,8 +1097,9 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await expect(tabContainer).toHaveAttribute('data-transition-direction', 'forward');
     await expect(tabContainer).toHaveClass(/cgm-slide-fade-forward/);
 
-    // 設定画面（右端）でさらに左スワイプしても設定画面に留まること
+    // 設定画面（右端）でさらに左スワイプしても設定画面に留まり、端バウンスアニメーションが発火すること
     await dispatchSwipe('[data-testid="main-content-area"]', 280, 400, 100, 400);
+    await expect(page.locator('[data-testid="main-content-area"]')).toHaveClass(/cgm-edge-bounce-left/);
     await expect(page.getByText('血糖値の目標範囲・アラート設定')).toBeVisible();
 
     // 右スワイプで 分析 -> 食品・活動 -> カレンダー へ順番に backward アニメーション付きで戻れること

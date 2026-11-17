@@ -195,7 +195,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
             <span className="p-1 rounded-full bg-indigo-100 text-indigo-600">
               <Footprints className="w-3.5 h-3.5" />
             </span>
-            <span>活動・インスリン記録</span>
+            <span>活動記録</span>
           </button>
 
           <button

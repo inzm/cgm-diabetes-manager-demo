@@ -23,14 +23,13 @@ import {
   X,
   Footprints,
   Clock,
-  Syringe,
   Save,
   Trash2,
   AlertCircle,
   Loader2,
   Lock,
 } from 'lucide-react';
-import { cn, getErrorMessage } from '@/lib/utils';
+import { cn, getErrorMessage, showToast } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 
 interface ActivityRecordModalProps {
@@ -47,7 +46,6 @@ function serializeActivityState(
   activityType: string,
   eventName: string,
   durationMinutes: string,
-  insulinUnits: string,
   memoNote: string
 ): string {
   return JSON.stringify({
@@ -56,7 +54,6 @@ function serializeActivityState(
     activityType,
     eventName: eventName.trim(),
     durationMinutes: durationMinutes.trim(),
-    insulinUnits: insulinUnits.trim(),
     memoNote: memoNote.trim(),
   });
 }
@@ -77,7 +74,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
   const [selectedMasterId, setSelectedMasterId] = useState<string>('');
   const [eventName, setEventName] = useState<string>('');
   const [durationMinutes, setDurationMinutes] = useState<string>('30');
-  const [insulinUnits, setInsulinUnits] = useState<string>('');
   const [memoNote, setMemoNote] = useState<string>('');
   const [initialSnapshot, setInitialSnapshot] = useState<string>('');
 
@@ -139,10 +135,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
             const loadedName = sepIdx !== -1 ? rawMemo.slice(0, sepIdx) : rawMemo;
             const loadedNote = sepIdx !== -1 ? rawMemo.slice(sepIdx + 3) : '';
             const loadedDuration = String(event.duration_minutes ?? 0);
-            const loadedInsulin =
-              event.insulin_units != null && event.insulin_units > 0
-                ? String(event.insulin_units)
-                : '';
 
             setDate(loadedDate);
             setTime(loadedTime);
@@ -152,7 +144,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
             setEventName(loadedName);
             setMemoNote(loadedNote);
             setDurationMinutes(loadedDuration);
-            setInsulinUnits(loadedInsulin);
             setInitialSnapshot(
               serializeActivityState(
                 loadedDate,
@@ -160,7 +151,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
                 loadedType,
                 loadedName,
                 loadedDuration,
-                loadedInsulin,
                 loadedNote
               )
             );
@@ -183,10 +173,9 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       setSelectedMasterId('');
       setEventName('');
       setDurationMinutes('30');
-      setInsulinUnits('');
       setMemoNote('');
       setInitialSnapshot(
-        serializeActivityState(nowDate, nowTime, '運動', '', '30', '', '')
+        serializeActivityState(nowDate, nowTime, '運動', '', '30', '')
       );
       setShowDiscardConfirm(false);
       setShowDeleteConfirm(false);
@@ -280,7 +269,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       activityType,
       eventName,
       durationMinutes,
-      insulinUnits,
       memoNote
     );
     if (initialSnapshot && currentSnapshot !== initialSnapshot) {
@@ -311,7 +299,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       pauseBackgroundHydration(currentPatientId, 3000);
       await waitForRecentPersistence(currentPatientId);
       const eventDateTimeIso = buildWallClockIso(date, time);
-      const insulin = parseFloat(insulinUnits) || 0;
       const duration = Math.max(0, parseInt(durationMinutes, 10) || 0);
       const nowIso = new Date().toISOString();
 
@@ -325,7 +312,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
           event_type: '活動',
           timing_category: activityType,
           duration_minutes: duration,
-          insulin_units: insulin > 0 ? insulin : undefined,
           memo: combinedMemo,
           updated_at: nowIso,
         });
@@ -337,7 +323,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
           event_type: '活動',
           timing_category: activityType,
           duration_minutes: duration,
-          insulin_units: insulin > 0 ? insulin : undefined,
           memo: combinedMemo,
           is_deleted: false,
           created_at: nowIso,
@@ -349,6 +334,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
+      showToast(editEventId ? '活動記録を更新しました' : '活動を記録しました');
       onSuccess();
       onClose();
     } catch (err: unknown) {
@@ -374,6 +360,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
       invalidateInMemoryRecentCache(currentPatientId);
       invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
+      showToast('活動記録を削除しました');
       onSuccess();
       onClose();
     } catch (err: unknown) {
@@ -412,7 +399,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
               <Footprints className="w-4 h-4" />
             </div>
             <h3 className="text-base font-bold text-slate-800">
-              {editEventId ? '活動・インスリンを編集' : '活動・インスリンを記録'}
+              {editEventId ? '活動を編集' : '活動を記録'}
             </h3>
           </div>
           <button
@@ -443,28 +430,22 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
                   value={date}
                   disabled={isReadOnly}
                   onChange={(e) => setDate(e.target.value)}
-                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+                  className="min-h-[44px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
                 />
                 <input
                   type="time"
                   value={time}
                   disabled={isReadOnly}
                   onChange={(e) => setTime(e.target.value)}
-                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+                  className="min-h-[44px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
                 />
               </div>
-            </div>
-            <div className="text-right">
-              <span className="text-[11px] text-slate-500 block">選択区分</span>
-              <span className="inline-block mt-0.5 px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">
-                {activityType}
-              </span>
             </div>
           </div>
 
           {/* 2. よく使う活動から選ぶ (カテゴリ絞り込み & 活動選択) */}
           <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
-            <label className="block text-xs font-bold text-slate-700">
+            <label className="block text-xs sm:text-sm font-bold text-slate-700">
               よく使う活動から選ぶ
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-2.5">
@@ -473,7 +454,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
                 value={selectedCategoryId}
                 disabled={isReadOnly}
                 onChange={(e) => handleSelectCategoryById(e.target.value)}
-                className="w-full min-h-[42px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
+                className="w-full min-h-[44px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
               >
                 <option value="ALL">すべてのカテゴリ</option>
                 {eventCategories.map((cat) => (
@@ -488,17 +469,15 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
                 value={selectedMasterId}
                 disabled={isReadOnly}
                 onChange={(e) => handleSelectEventMaster(e.target.value)}
-                className="w-full min-h-[42px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
+                className="w-full min-h-[44px] px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
               >
-                <option value="">活動を選ぶ（時間を自動入力）...</option>
+                <option value="">活動を選ぶ...</option>
                 {selectedCategoryId === 'ALL' && groupedEventMasters.length > 0
                   ? groupedEventMasters.map((group) => (
                       <optgroup key={group.categoryId} label={group.categoryName}>
                         {group.items.map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.event_name}
-                            {m.default_duration ? ` (${m.default_duration}分)` : ''}
-                            {m.memo ? ` — ${m.memo}` : ''}
                           </option>
                         ))}
                       </optgroup>
@@ -506,8 +485,6 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
                   : filteredEventMasters.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.event_name}
-                        {m.default_duration ? ` (${m.default_duration}分)` : ''}
-                        {m.memo ? ` — ${m.memo}` : ''}
                       </option>
                     ))}
               </select>
@@ -516,7 +493,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
 
           {/* 3. 活動名 (初期値は空欄プレースホルダー) */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 mb-1">
               活動名 <span className="text-rose-500">*</span>
             </label>
             <input
@@ -525,52 +502,30 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
               value={eventName}
               disabled={isReadOnly}
               onChange={(e) => setEventName(e.target.value)}
-              className="w-full min-h-[40px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm font-bold text-slate-800 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+              className="w-full min-h-[44px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-800 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
             />
           </div>
 
-          {/* 4. 実施時間 & インスリン投与量 (初期値は空欄プレースホルダー) */}
-          <div className="grid grid-cols-2 gap-3.5">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center space-x-1">
-                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>実施時間 (分)</span>
-              </label>
-              <input
-                type="number"
-                step="5"
-                min="0"
-                value={durationMinutes}
-                disabled={isReadOnly}
-                onChange={(e) => setDurationMinutes(e.target.value)}
-                className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center space-x-1">
-                <Syringe className="w-3.5 h-3.5 text-sky-500" />
-                <span>インスリン投与量 (任意)</span>
-              </label>
-              <div className="flex items-center space-x-1.5">
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  placeholder="0"
-                  value={insulinUnits}
-                  disabled={isReadOnly}
-                  onChange={(e) => setInsulinUnits(e.target.value)}
-                  className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-sky-700 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50"
-                />
-                <span className="text-xs text-slate-400 font-semibold">U</span>
-              </div>
-            </div>
+          {/* 4. 実施時間 */}
+          <div>
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 mb-1 flex items-center space-x-1">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <span>実施時間 (分)</span>
+            </label>
+            <input
+              type="number"
+              step="5"
+              min="0"
+              value={durationMinutes}
+              disabled={isReadOnly}
+              onChange={(e) => setDurationMinutes(e.target.value)}
+              className="w-full min-h-[44px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+            />
           </div>
 
           {/* 5. 補足メモ */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 mb-1">
               補足メモ・体調コメント (任意)
             </label>
             <input
@@ -579,7 +534,7 @@ export const ActivityRecordModal: React.FC<ActivityRecordModalProps> = ({
               value={memoNote}
               disabled={isReadOnly}
               onChange={(e) => setMemoNote(e.target.value)}
-              className="w-full min-h-[40px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+              className="w-full min-h-[44px] px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
             />
           </div>
         </div>

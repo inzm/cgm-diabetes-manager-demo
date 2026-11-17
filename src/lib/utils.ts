@@ -39,3 +39,11 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Dispatch a global transient toast notification event
+ */
+export function showToast(message: string): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('cgm-toast', { detail: { message } }));
+}
+

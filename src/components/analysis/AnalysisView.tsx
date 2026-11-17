@@ -343,70 +343,23 @@ export const AnalysisView: React.FC = () => {
   const isMonthSelected = dateRange.startsWith('month:');
 
   return (
-    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 sm:py-4 space-y-3.5 sm:space-y-4">
-      {/* 1. タイトル & 期間セレクター ヘッダー（第1層：純白カード） */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-3xl border border-slate-200 shadow-xs">
-        <div className="flex items-center space-x-2.5">
-          <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 shrink-0">
-            <BarChart3 className="w-5 h-5" />
+    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 pt-3 pb-20 sm:py-4 space-y-3.5 sm:space-y-4">
+      {/* 1. タイトル & 集計期間 常時表示ヘッダー（スクロール追従 sticky） */}
+      <div className="sticky top-12 z-20 flex items-center justify-between gap-3 bg-white/95 backdrop-blur-md px-3.5 py-2.5 sm:p-3.5 rounded-2xl border border-slate-200 shadow-xs">
+        <div className="flex items-center space-x-2.5 min-w-0">
+          <div className="p-1.5 sm:p-2 rounded-xl bg-indigo-50 text-indigo-600 shrink-0">
+            <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div>
-            <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+          <div className="min-w-0">
+            <h2 className="text-sm sm:text-base font-extrabold text-slate-900 tracking-tight truncate">
               血糖・食事の傾向分析
             </h2>
-            <p className="text-[11px] font-medium text-slate-500">
+            <p className="text-[11px] sm:text-xs font-semibold text-slate-500 tabular-nums truncate">
               集計期間: {startDate} 〜 {endDate}
             </p>
           </div>
         </div>
-
-        {/* 期間セレクター（直近プリセットボタン ＋ 月別セレクトボックス） */}
-      <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200/70">
-        {rangeOptions.map((opt) => (
-          <button
-            key={opt.key}
-            onClick={() => setDateRange(opt.key)}
-            className={cn(
-              'px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap',
-              dateRange === opt.key
-                ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                : 'text-slate-600 hover:text-slate-900'
-            )}
-          >
-            {opt.label}
-          </button>
-        ))}
-
-        {/* 月単位で選択できるセレクトボックス */}
-        <select
-          aria-label="月単位で集計期間を選択"
-          value={isMonthSelected ? dateRange : ''}
-          onChange={(e) => {
-            if (e.target.value) {
-              setDateRange(e.target.value as AnalysisRange);
-            }
-          }}
-          className={cn(
-            'px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500',
-            isMonthSelected
-              ? 'bg-white text-indigo-700 shadow-2xs ring-1 ring-indigo-300 font-bold'
-              : 'bg-white/60 hover:bg-white text-slate-700 border border-slate-200/80'
-          )}
-        >
-          <option value="" disabled>
-            📅 月別で選択...
-          </option>
-          {availableMonths.map((ym) => {
-            const [yStr, mStr] = ym.split('-');
-            return (
-              <option key={ym} value={`month:${ym}`}>
-                📅 {yStr}年{parseInt(mStr, 10)}月
-              </option>
-            );
-          })}
-        </select>
       </div>
-    </div>
 
       {/* 2. 1画面統合ダッシュボード（第1層：4大分析セクションすべてを純白カード bg-white に統一してグルーピングを明確化） */}
       {isLoading || !boundaryMeta || !periodSlice ? (
@@ -516,6 +469,60 @@ export const AnalysisView: React.FC = () => {
           </section>
         </div>
       )}
+
+      {/* 下部固定 期間セレクターバー（スクロール時も常時操作可能） */}
+      <div
+        data-testid="analysis-period-bottom-bar"
+        className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] sm:bottom-3 z-20 pointer-events-none"
+      >
+        <div className="max-w-3xl mx-auto pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl p-1.5 shadow-[0_-4px_16px_-4px_rgba(15,23,42,0.12)] sm:shadow-lg">
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            {rangeOptions.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setDateRange(opt.key)}
+                className={cn(
+                  'min-h-[40px] px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0',
+                  dateRange === opt.key
+                    ? 'bg-slate-900 text-white shadow-xs font-bold'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+
+            <select
+              aria-label="月単位で集計期間を選択"
+              value={isMonthSelected ? dateRange : ''}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setDateRange(e.target.value as AnalysisRange);
+                }
+              }}
+              className={cn(
+                'min-h-[40px] px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer shrink-0 focus:outline-none focus:ring-2 focus:ring-indigo-500',
+                isMonthSelected
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              )}
+            >
+              <option value="" disabled>
+                📅 月別...
+              </option>
+              {availableMonths.map((ym) => {
+                const [yStr, mStr] = ym.split('-');
+                return (
+                  <option key={ym} value={`month:${ym}`} className="bg-white text-slate-800">
+                    📅 {yStr}年{parseInt(mStr, 10)}月
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

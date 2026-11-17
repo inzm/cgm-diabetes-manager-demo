@@ -26,6 +26,7 @@ import {
   Settings,
   FileSpreadsheet,
   RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -133,6 +134,44 @@ export const App: React.FC = () => {
   };
 
   // クラウド同期完了時に画面を自動再描画
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const [edgeBounce, setEdgeBounce] = useState<'left' | 'right' | null>(null);
+  const edgeBounceTimerRef = useRef<number | null>(null);
+
+  const triggerEdgeBounce = (dir: 'left' | 'right') => {
+    setEdgeBounce(null);
+    if (edgeBounceTimerRef.current) {
+      window.clearTimeout(edgeBounceTimerRef.current);
+    }
+    window.requestAnimationFrame(() => {
+      setEdgeBounce(dir);
+      edgeBounceTimerRef.current = window.setTimeout(() => {
+        setEdgeBounce(null);
+      }, 300);
+    });
+  };
+
+  useEffect(() => {
+    const handleToast = (e: Event) => {
+      const msg = (e as CustomEvent<{ message?: string }>).detail?.message;
+      if (!msg) return;
+      setToastMessage(msg);
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+      toastTimerRef.current = window.setTimeout(() => {
+        setToastMessage(null);
+      }, 2400);
+    };
+    window.addEventListener('cgm-toast', handleToast);
+    return () => {
+      window.removeEventListener('cgm-toast', handleToast);
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+      if (edgeBounceTimerRef.current) window.clearTimeout(edgeBounceTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     const handleCloudSynced = () => {
       clearCalendarMonthlyCache();
@@ -278,10 +317,18 @@ export const App: React.FC = () => {
 
       const currentIdx = NAV_TAB_ORDER.indexOf(activeTab);
       if (currentIdx === -1) return;
-      if (deltaX < 0 && currentIdx < NAV_TAB_ORDER.length - 1) {
-        setActiveTab(NAV_TAB_ORDER[currentIdx + 1]);
-      } else if (deltaX > 0 && currentIdx > 0) {
-        setActiveTab(NAV_TAB_ORDER[currentIdx - 1]);
+      if (deltaX < 0) {
+        if (currentIdx < NAV_TAB_ORDER.length - 1) {
+          setActiveTab(NAV_TAB_ORDER[currentIdx + 1]);
+        } else {
+          triggerEdgeBounce('left');
+        }
+      } else if (deltaX > 0) {
+        if (currentIdx > 0) {
+          setActiveTab(NAV_TAB_ORDER[currentIdx - 1]);
+        } else {
+          triggerEdgeBounce('right');
+        }
       }
     }
   };
@@ -448,7 +495,9 @@ export const App: React.FC = () => {
         data-testid="main-content-area"
         className={cn(
           'flex-1 overflow-x-clip pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:pb-0',
-          activeTab === 'calendar' && 'max-sm:flex max-sm:flex-col max-sm:min-h-0 max-sm:overflow-hidden'
+          activeTab === 'calendar' && 'max-sm:flex max-sm:flex-col max-sm:min-h-0 max-sm:overflow-hidden',
+          edgeBounce === 'left' && 'cgm-edge-bounce-left',
+          edgeBounce === 'right' && 'cgm-edge-bounce-right'
         )}
       >
         <div
@@ -509,6 +558,21 @@ export const App: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* 完了通知トースト */}
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="toast-notification"
+          className="fixed top-14 left-1/2 -translate-x-1/2 z-[70] pointer-events-none cgm-popover-enter"
+        >
+          <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-slate-900/95 text-white text-sm font-bold shadow-lg border border-slate-700/80 whitespace-nowrap">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{toastMessage}</span>
+          </div>
+        </div>
+      )}
 
       {/* モバイル用 ボトムナビゲーションバー (カレンダー、食品・活動、記録、分析、設定) */}
       <BottomNav

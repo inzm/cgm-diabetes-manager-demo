@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { usePatient } from '@/contexts/PatientContext';
 import { db } from '@/lib/db';
 import { FoodMaster, EventMaster, Category } from '@/types/database';
@@ -428,16 +428,98 @@ export const FoodMasterView: React.FC = () => {
     }
   };
 
+  const swipeTouchStartX = useRef<number | null>(null);
+  const swipeTouchStartY = useRef<number | null>(null);
+  const swipeIgnored = useRef<boolean>(false);
+
+  const handleViewTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const target = e.target as Element | null;
+    if (
+      target?.closest('input, select, textarea, .overflow-x-auto, [role="dialog"], [aria-modal="true"]')
+    ) {
+      swipeIgnored.current = true;
+      swipeTouchStartX.current = null;
+      swipeTouchStartY.current = null;
+      return;
+    }
+    const touch = e.touches?.[0] ?? e.changedTouches?.[0];
+    if (!touch) return;
+    swipeIgnored.current = false;
+    swipeTouchStartX.current = touch.clientX;
+    swipeTouchStartY.current = touch.clientY;
+  };
+
+  const handleViewTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (swipeIgnored.current || swipeTouchStartX.current === null || swipeTouchStartY.current === null) {
+      swipeIgnored.current = false;
+      swipeTouchStartX.current = null;
+      swipeTouchStartY.current = null;
+      return;
+    }
+    const touch = e.changedTouches?.[0] ?? e.touches?.[0];
+    const startX = swipeTouchStartX.current;
+    const startY = swipeTouchStartY.current;
+    swipeTouchStartX.current = null;
+    swipeTouchStartY.current = null;
+    if (!touch) return;
+
+    const deltaX = touch.clientX - startX;
+    const deltaY = touch.clientY - startY;
+    if (Math.abs(deltaX) > Math.abs(deltaY) * 1.2 && Math.abs(deltaX) > 50) {
+      if (deltaX < 0 && sectionTab === 'food') {
+        (e.nativeEvent as unknown as Record<string, boolean>).__cgmSwipeHandled = true;
+        handleSwitchSection('event');
+      } else if (deltaX > 0 && sectionTab === 'event') {
+        (e.nativeEvent as unknown as Record<string, boolean>).__cgmSwipeHandled = true;
+        handleSwitchSection('food');
+      }
+    }
+  };
+
+  const cycleMobileSort = () => {
+    if (sectionTab === 'food') {
+      const order: FoodSortKey[] = ['name_asc', 'name_desc', 'carbs_desc', 'carbs_asc'];
+      const next = order[(order.indexOf(foodSort) + 1) % order.length];
+      setFoodSort(next);
+    } else {
+      const order: EventSortKey[] = ['name_asc', 'name_desc', 'duration_desc', 'duration_asc'];
+      const next = order[(order.indexOf(eventSort) + 1) % order.length];
+      setEventSort(next);
+    }
+  };
+
+  const mobileSortLabel =
+    sectionTab === 'food'
+      ? foodSort === 'name_asc'
+        ? '名前↑'
+        : foodSort === 'name_desc'
+          ? '名前↓'
+          : foodSort === 'carbs_desc'
+            ? '糖質↓'
+            : '糖質↑'
+      : eventSort === 'name_asc'
+        ? '名前↑'
+        : eventSort === 'name_desc'
+          ? '名前↓'
+          : eventSort === 'duration_desc'
+            ? '時間↓'
+            : '時間↑';
+
   return (
-    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4">
-      {/* 1. 上部バー: 食品・活動 切替タブ & 新規追加ボタン */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white p-3 sm:p-4 rounded-2xl border border-slate-200 shadow-2xs">
+    <div
+      data-testid="food-master-view"
+      onTouchStart={handleViewTouchStart}
+      onTouchEnd={handleViewTouchEnd}
+      className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-3 pb-4 lg:py-6 space-y-3 sm:space-y-4"
+    >
+      {/* 1. 上部バー: 食品・活動 切替タブ (スクロール時も常時固定) & PC用新規追加ボタン */}
+      <div className="sticky top-12 z-20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 bg-white/95 backdrop-blur-md p-2.5 sm:p-4 rounded-2xl border border-slate-200 shadow-xs">
         <div className="grid grid-cols-2 sm:inline-flex rounded-xl bg-slate-100 p-1 gap-1">
           <button
             type="button"
             onClick={() => handleSwitchSection('food')}
             className={cn(
-              'flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer',
+              'min-h-[42px] flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer',
               sectionTab === 'food'
                 ? 'bg-white text-amber-700 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -451,7 +533,7 @@ export const FoodMasterView: React.FC = () => {
             type="button"
             onClick={() => handleSwitchSection('event')}
             className={cn(
-              'flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer',
+              'min-h-[42px] flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer',
               sectionTab === 'event'
                 ? 'bg-white text-emerald-700 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -462,23 +544,14 @@ export const FoodMasterView: React.FC = () => {
           </button>
         </div>
 
-        <div className="flex items-center justify-end gap-2">
-          {/* モバイル・タブレット時のみ上部にカテゴリ編集ボタンを表示 (PCは右サイドメニュー内に配置) */}
-          <button
-            type="button"
-            onClick={() => setIsCategoryModalOpen(true)}
-            className="lg:hidden inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 transition-colors shadow-2xs cursor-pointer"
-          >
-            <Tag className="w-3.5 h-3.5 text-sky-500" />
-            <span>カテゴリ編集</span>
-          </button>
-
+        <div className="hidden lg:flex items-center justify-end gap-2">
           <button
             type="button"
             disabled={isReadOnly}
             onClick={sectionTab === 'food' ? handleOpenAddFood : handleOpenAddEvent}
+            aria-label={sectionTab === 'food' ? '食品を追加' : '活動を追加'}
             className={cn(
-              'inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs',
+              'inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-xs',
               isReadOnly
                 ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                 : sectionTab === 'food'
@@ -927,6 +1000,66 @@ export const FoodMasterView: React.FC = () => {
             </div>
           </div>
         </aside>
+      </div>
+
+      {/* モバイル・タブレット用 下部固定操作バー (絞り込み・並び替え・カテゴリ編集・追加) */}
+      <div
+        data-testid="food-master-bottom-bar"
+        className="lg:hidden sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-20 -mx-3 px-3 py-2 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_12px_-4px_rgba(15,23,42,0.08)]"
+      >
+        <div className="max-w-3xl mx-auto flex items-center gap-2">
+          <select
+            aria-label="カテゴリ絞り込み"
+            value={selectedCategoryId}
+            onChange={(e) => handleSelectCategory(e.target.value)}
+            className="flex-1 min-w-0 min-h-[44px] px-2.5 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+          >
+            <option value="all">すべて ({totalCount})</option>
+            {activeCategories.map((cat) => (
+              <option key={cat.id} value={cat.id}>
+                {cat.category_name}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={cycleMobileSort}
+            title="並び替え"
+            className="min-h-[44px] shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 cursor-pointer active:scale-95"
+          >
+            <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
+            <span>{mobileSortLabel}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsCategoryModalOpen(true)}
+            title="カテゴリ編集"
+            aria-label="カテゴリ編集"
+            className="min-h-[44px] shrink-0 inline-flex items-center justify-center px-2.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer active:scale-95"
+          >
+            <Tag className="w-4 h-4 text-sky-500" />
+          </button>
+
+          <button
+            type="button"
+            disabled={isReadOnly}
+            onClick={sectionTab === 'food' ? handleOpenAddFood : handleOpenAddEvent}
+            aria-label={sectionTab === 'food' ? '食品を追加' : '活動を追加'}
+            className={cn(
+              'min-h-[44px] shrink-0 inline-flex items-center gap-1 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-xs',
+              isReadOnly
+                ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                : sectionTab === 'food'
+                  ? 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer active:scale-95'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-95'
+            )}
+          >
+            {isReadOnly ? <Lock className="w-3.5 h-3.5" /> : <Plus className="w-4 h-4" />}
+            <span>追加</span>
+          </button>
+        </div>
       </div>
 
       {/* 食品登録・編集モーダル */}
