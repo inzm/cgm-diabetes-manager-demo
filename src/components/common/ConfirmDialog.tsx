@@ -7,6 +7,7 @@ export interface ConfirmDialogProps {
   isOpen: boolean;
   title: string;
   message: string;
+  items?: string[];
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: 'danger' | 'warning';
@@ -18,6 +19,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   isOpen,
   title,
   message,
+  items,
   confirmLabel = '実行する',
   cancelLabel = 'キャンセル',
   variant = 'danger',
@@ -84,11 +86,25 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               >
                 {title}
               </h4>
-              <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-line">
                 {message}
               </p>
             </div>
           </div>
+
+          {items && items.length > 0 && (
+            <ul
+              data-testid="confirm-dialog-items"
+              className="max-h-40 overflow-y-auto rounded-xl bg-slate-50 border border-slate-200/80 px-3 py-2 space-y-1 text-xs sm:text-sm font-semibold text-slate-700"
+            >
+              {items.map((item, idx) => (
+                <li key={`${item}-${idx}`} className="flex items-center gap-1.5 truncate">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+                  <span className="truncate">{item}</span>
+                </li>
+              ))}
+            </ul>
+          )}
 
           <div className="grid grid-cols-2 gap-2.5 pt-2">
             <button

@@ -70,17 +70,17 @@ export const FoodCard: React.FC<FoodCardProps> = ({
         }
       }}
       className={cn(
-        'grid grid-cols-12 items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2.5 text-xs sm:text-sm transition-colors',
+        'grid grid-cols-12 items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-3 text-sm transition-colors',
         !isReadOnly && 'cursor-pointer hover:bg-amber-50/40',
         selected ? 'bg-sky-50/70 hover:bg-sky-50/90' : 'bg-white'
       )}
     >
-      {/* チェックボックス + カテゴリ + 食品名 */}
-      <div className="col-span-7 flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+      {/* チェックボックス + (上段: カテゴリ / 下段: 食品名) */}
+      <div className="col-span-7 flex items-center gap-2.5 min-w-0">
         {!isReadOnly && (
           <div
             onClick={handleCheckboxClick}
-            className="flex items-center justify-center shrink-0 p-1 -m-1"
+            className="flex items-center justify-center shrink-0 p-1.5 -m-1.5"
           >
             <input
               type="checkbox"
@@ -92,20 +92,23 @@ export const FoodCard: React.FC<FoodCardProps> = ({
           </div>
         )}
 
-        <span
-          className={cn(
-            'text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap',
-            getCategoryBadgeClass(categoryName)
-          )}
-        >
-          {categoryName}
-        </span>
-
-        <span className="font-bold text-slate-800 truncate">{food.food_name}</span>
+        <div className="flex flex-col items-start gap-1 min-w-0">
+          <span
+            className={cn(
+              'text-[10px] sm:text-[11px] font-bold px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap leading-none',
+              getCategoryBadgeClass(categoryName)
+            )}
+          >
+            {categoryName}
+          </span>
+          <span className="text-sm sm:text-base font-bold text-slate-800 leading-snug break-words">
+            {food.food_name}
+          </span>
+        </div>
       </div>
 
       {/* 基準量 */}
-      <div className="col-span-3 text-right text-[11px] sm:text-xs text-slate-500 font-medium tabular-nums whitespace-nowrap truncate">
+      <div className="col-span-3 text-right text-xs sm:text-sm text-slate-600 font-semibold tabular-nums whitespace-nowrap truncate">
         {food.base_amount} {food.unit}
       </div>
 
@@ -113,7 +116,7 @@ export const FoodCard: React.FC<FoodCardProps> = ({
       <div className="col-span-2 text-right tabular-nums whitespace-nowrap">
         <span
           className={cn(
-            'text-sm sm:text-base font-black tracking-tight',
+            'text-base sm:text-lg font-black tracking-tight',
             carbsVal >= 50
               ? 'text-amber-700'
               : carbsVal >= 20
@@ -123,7 +126,7 @@ export const FoodCard: React.FC<FoodCardProps> = ({
         >
           {carbsFormatted}
         </span>
-        <span className="text-[11px] text-slate-400 font-bold ml-0.5">g</span>
+        <span className="text-xs text-slate-400 font-bold ml-0.5">g</span>
       </div>
     </div>
   );

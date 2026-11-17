@@ -25,10 +25,11 @@ import {
   Tag,
   Lock,
   Trash2,
-  FolderInput,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  ChevronUp,
+  ChevronDown,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -98,8 +99,21 @@ export const FoodMasterView: React.FC = () => {
 
   // 複数選択チェックボックス状態
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkCategoryId, setBulkCategoryId] = useState<string>('');
   const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState<boolean>(false);
+
+  // モバイル下部アコーディオン開閉状態
+  const [isBottomSheetOpen, setIsBottomSheetOpen] = useState<boolean>(false);
+  const sheetTouchStartY = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleBottomSwipe = (e: Event) => {
+      const dir = (e as CustomEvent<{ direction?: 'open' | 'close' }>).detail?.direction;
+      if (dir === 'open') setIsBottomSheetOpen(true);
+      if (dir === 'close') setIsBottomSheetOpen(false);
+    };
+    window.addEventListener('cgm-bottom-sheet-swipe', handleBottomSwipe);
+    return () => window.removeEventListener('cgm-bottom-sheet-swipe', handleBottomSwipe);
+  }, []);
 
   // モーダル状態
   const [isFoodModalOpen, setIsFoodModalOpen] = useState(false);
@@ -181,7 +195,6 @@ export const FoodMasterView: React.FC = () => {
     setSelectedCategoryId('all');
     setSearchQuery('');
     setSelectedIds(new Set());
-    setBulkCategoryId('');
   };
 
   const handleSelectCategory = (catId: string) => {
@@ -288,35 +301,13 @@ export const FoodMasterView: React.FC = () => {
     }
   };
 
-  // 一括カテゴリ変更
-  const handleBulkCategoryMove = async (targetCatId: string) => {
-    if (isReadOnly || !targetCatId || selectedIds.size === 0) return;
-    const ids = Array.from(selectedIds);
-    const now = new Date().toISOString();
-
+  const selectedItemNames = useMemo(() => {
+    if (selectedIds.size === 0) return [];
     if (sectionTab === 'food') {
-      await db.transaction('rw', db.food_master, async () => {
-        await Promise.all(
-          ids.map((id) => db.food_master.update(id, { category_id: targetCatId, updated_at: now }))
-        );
-      });
-    } else {
-      await db.transaction('rw', db.event_master, async () => {
-        await Promise.all(
-          ids.map((id) =>
-            db.event_master.update(id, { category_id: targetCatId, updated_at: now })
-          )
-        );
-      });
+      return foods.filter((f) => selectedIds.has(f.id)).map((f) => f.food_name);
     }
-
-    setBulkCategoryId('');
-    setSelectedIds(new Set());
-    invalidateFoodMasterMemoryCache(currentPatientId);
-    invalidateAnalysisDatasetCache(currentPatientId);
-    triggerBackgroundCloudSync(currentPatientId);
-    loadData();
-  };
+    return eventItems.filter((e) => selectedIds.has(e.id)).map((e) => e.event_name);
+  }, [foods, eventItems, selectedIds, sectionTab]);
 
   // 一括削除の実行
   const executeBulkDelete = async () => {
@@ -510,22 +501,22 @@ export const FoodMasterView: React.FC = () => {
       data-testid="food-master-view"
       onTouchStart={handleViewTouchStart}
       onTouchEnd={handleViewTouchEnd}
-      className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-3 pb-4 lg:py-6 space-y-3 sm:space-y-4"
+      className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-2 pb-24 lg:py-6 space-y-3 sm:space-y-4"
     >
-      {/* 1. 上部バー: 食品・活動 切替タブ (スクロール時も常時固定) & PC用新規追加ボタン */}
-      <div className="sticky top-12 z-20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 bg-white/95 backdrop-blur-md p-2.5 sm:p-4 rounded-2xl border border-slate-200 shadow-xs">
-        <div className="grid grid-cols-2 sm:inline-flex rounded-xl bg-slate-100 p-1 gap-1">
+      {/* 1. 上部バー: 食品・活動 切替タブ (スクロール時も常時固定・スリムデザイン) & PC用新規追加ボタン */}
+      <div className="sticky top-12 z-20 -mx-3 px-3 py-1.5 lg:mx-0 lg:px-3.5 lg:py-2.5 bg-white/95 backdrop-blur-md border-b border-slate-200 lg:border lg:rounded-2xl lg:shadow-2xs flex items-center justify-between gap-3">
+        <div className="grid grid-cols-2 w-full lg:w-auto lg:inline-flex rounded-xl bg-slate-100 p-0.5 gap-0.5">
           <button
             type="button"
             onClick={() => handleSwitchSection('food')}
             className={cn(
-              'min-h-[42px] flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer',
+              'min-h-[38px] flex items-center justify-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer',
               sectionTab === 'food'
-                ? 'bg-white text-amber-700 shadow-xs'
+                ? 'bg-white text-amber-700 shadow-2xs'
                 : 'text-slate-600 hover:text-slate-900'
             )}
           >
-            <Utensils className="w-4 h-4 text-amber-500" />
+            <Utensils className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500" />
             <span>よく使う食品 ({foods.length})</span>
           </button>
 
@@ -533,13 +524,13 @@ export const FoodMasterView: React.FC = () => {
             type="button"
             onClick={() => handleSwitchSection('event')}
             className={cn(
-              'min-h-[42px] flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer',
+              'min-h-[38px] flex items-center justify-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer',
               sectionTab === 'event'
-                ? 'bg-white text-emerald-700 shadow-xs'
+                ? 'bg-white text-emerald-700 shadow-2xs'
                 : 'text-slate-600 hover:text-slate-900'
             )}
           >
-            <Footprints className="w-4 h-4 text-emerald-500" />
+            <Footprints className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-500" />
             <span>よく使う活動 ({eventItems.length})</span>
           </button>
         </div>
@@ -551,7 +542,7 @@ export const FoodMasterView: React.FC = () => {
             onClick={sectionTab === 'food' ? handleOpenAddFood : handleOpenAddEvent}
             aria-label={sectionTab === 'food' ? '食品を追加' : '活動を追加'}
             className={cn(
-              'inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-xs',
+              'inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs',
               isReadOnly
                 ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                 : sectionTab === 'food'
@@ -567,10 +558,10 @@ export const FoodMasterView: React.FC = () => {
 
       {/* 2. メイン2カラム領域 (左: 検索＋リスト / 右: PC用カテゴリサイドメニュー) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* 左カラム: 検索・一括操作・データリスト */}
+        {/* 左カラム: 検索・削除バー・データリスト */}
         <div className="lg:col-span-9 space-y-3">
-          {/* 検索バー & モバイル用カテゴリピル */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-3.5 shadow-2xs space-y-2.5">
+          {/* 検索バー (PC用: モバイルは下部固定アコーディオンへ集約) */}
+          <div className="hidden lg:block bg-white rounded-2xl border border-slate-200 p-3.5 shadow-2xs">
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-2.5" />
               <input
@@ -582,7 +573,7 @@ export const FoodMasterView: React.FC = () => {
                     ? '食品名で検索 (例: ごはん, 食パン, うどん)...'
                     : '活動名やメモで検索 (例: ウォーキング, 入浴)...'
                 }
-                className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500"
               />
               {searchQuery && (
                 <button
@@ -595,94 +586,36 @@ export const FoodMasterView: React.FC = () => {
                 </button>
               )}
             </div>
-
-            {/* モバイル・タブレット用横スクロールカテゴリピル (lg未満で表示) */}
-            <div className="flex lg:hidden items-center gap-1.5 overflow-x-auto pt-0.5 pb-0.5">
-              <button
-                type="button"
-                onClick={() => handleSelectCategory('all')}
-                className={cn(
-                  'px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer',
-                  selectedCategoryId === 'all'
-                    ? 'bg-slate-900 text-white shadow-2xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                )}
-              >
-                すべて ({totalCount})
-              </button>
-
-              {activeCategories.map((cat) => {
-                const count =
-                  sectionTab === 'food'
-                    ? foods.filter((f) => f.category_id === cat.id).length
-                    : eventItems.filter((e) => e.category_id === cat.id).length;
-                return (
-                  <button
-                    type="button"
-                    key={cat.id}
-                    onClick={() => handleSelectCategory(cat.id)}
-                    className={cn(
-                      'px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer',
-                      selectedCategoryId === cat.id
-                        ? 'bg-slate-900 text-white shadow-2xs'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    )}
-                  >
-                    {cat.category_name} ({count})
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
-          {/* 複数選択時の一括操作バー */}
+          {/* 複数選択時の常時表示コンパクト削除バー (スクロール時も画面内に固定) */}
           {!isReadOnly && selectedIds.size > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 bg-sky-900 text-white px-3.5 py-2.5 rounded-xl shadow-md animate-in fade-in duration-150">
-              <div className="flex items-center gap-2 text-xs sm:text-sm font-bold">
+            <div
+              data-testid="selection-delete-bar"
+              className="sticky top-[6.25rem] lg:top-[7.25rem] z-20 flex items-center justify-between gap-2 bg-sky-900/95 backdrop-blur-md text-white px-3 py-1.5 rounded-xl shadow-md"
+            >
+              <div className="flex items-center gap-1.5 text-xs sm:text-sm font-bold shrink-0">
                 <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-sky-500 text-white font-black tabular-nums">
                   {selectedIds.size}件
                 </span>
-                <span>を選択中</span>
+                <span>選択中</span>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {/* 一括カテゴリ変更セレクタ */}
-                <div className="inline-flex items-center gap-1.5 bg-slate-800/90 border border-slate-700 rounded-lg px-2.5 py-1">
-                  <FolderInput className="w-3.5 h-3.5 text-sky-300 shrink-0" />
-                  <select
-                    value={bulkCategoryId}
-                    onChange={(e) => handleBulkCategoryMove(e.target.value)}
-                    aria-label="選択した項目のカテゴリを一括変更"
-                    className="bg-transparent text-xs font-bold text-white focus:outline-hidden cursor-pointer"
-                  >
-                    <option value="" className="text-slate-800">
-                      カテゴリを一括変更...
-                    </option>
-                    {activeCategories.map((cat) => (
-                      <option key={cat.id} value={cat.id} className="text-slate-800">
-                        「{cat.category_name}」へ移動
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 一括削除ボタン */}
-                <button
-                  type="button"
-                  onClick={() => setIsBulkDeleteConfirmOpen(true)}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>まとめて削除</span>
-                </button>
-
-                {/* 選択解除ボタン */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => setSelectedIds(new Set())}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-sky-200 hover:text-white hover:bg-sky-800 transition-colors cursor-pointer"
+                  className="min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-semibold text-sky-100 hover:text-white hover:bg-sky-800 transition-colors cursor-pointer"
                 >
-                  選択解除
+                  解除
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsBulkDeleteConfirmOpen(true)}
+                  className="min-h-[34px] inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>削除</span>
                 </button>
               </div>
             </div>
@@ -847,16 +780,16 @@ export const FoodMasterView: React.FC = () => {
                         }
                       }}
                       className={cn(
-                        'grid grid-cols-12 items-center gap-2 px-3 sm:px-4 py-2.5 text-xs sm:text-sm transition-colors',
+                        'grid grid-cols-12 items-center gap-2 px-3 sm:px-4 py-3 text-sm transition-colors',
                         !isReadOnly && 'cursor-pointer hover:bg-emerald-50/40',
                         isSelected ? 'bg-sky-50/70 hover:bg-sky-50/90' : 'bg-white'
                       )}
                     >
-                      <div className="col-span-7 sm:col-span-6 flex items-center gap-2.5 min-w-0">
+                      <div className="col-span-8 sm:col-span-6 flex items-center gap-2.5 min-w-0">
                         {!isReadOnly && (
                           <div
                             onClick={(e) => e.stopPropagation()}
-                            className="flex items-center justify-center shrink-0 p-1 -m-1"
+                            className="flex items-center justify-center shrink-0 p-1.5 -m-1.5"
                           >
                             <input
                               type="checkbox"
@@ -868,29 +801,30 @@ export const FoodMasterView: React.FC = () => {
                           </div>
                         )}
 
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0 whitespace-nowrap">
-                          {catName}
-                        </span>
-
-                        <div className="min-w-0">
-                          <div className="font-bold text-slate-800 truncate">{ev.event_name}</div>
+                        <div className="flex flex-col items-start gap-1 min-w-0">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0 whitespace-nowrap leading-none">
+                            {catName}
+                          </span>
+                          <div className="text-sm sm:text-base font-bold text-slate-800 leading-snug break-words">
+                            {ev.event_name}
+                          </div>
                           {ev.memo && (
-                            <div className="sm:hidden text-[11px] text-slate-400 truncate">
+                            <div className="sm:hidden text-xs text-slate-400 truncate max-w-full">
                               {ev.memo}
                             </div>
                           )}
                         </div>
                       </div>
 
-                      <div className="hidden sm:block sm:col-span-4 text-xs text-slate-500 truncate">
+                      <div className="hidden sm:block sm:col-span-4 text-xs sm:text-sm text-slate-500 truncate">
                         {ev.memo || '—'}
                       </div>
 
-                      <div className="col-span-5 sm:col-span-2 text-right tabular-nums">
-                        <span className="text-sm sm:text-base font-black text-emerald-700">
+                      <div className="col-span-4 sm:col-span-2 text-right tabular-nums">
+                        <span className="text-base sm:text-lg font-black text-emerald-700">
                           {ev.default_duration}
                         </span>
-                        <span className="text-[11px] text-slate-400 font-bold ml-0.5">分</span>
+                        <span className="text-xs text-slate-400 font-bold ml-0.5">分</span>
                       </div>
                     </div>
                   );
@@ -1002,64 +936,165 @@ export const FoodMasterView: React.FC = () => {
         </aside>
       </div>
 
-      {/* モバイル・タブレット用 下部固定操作バー (絞り込み・並び替え・カテゴリ編集・追加) */}
+      {/* モバイル・タブレット用 ボトムナビ直上固定アコーディオン (検索・絞り込み・並び替え・カテゴリ編集・追加) */}
       <div
         data-testid="food-master-bottom-bar"
-        className="lg:hidden sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-20 -mx-3 px-3 py-2 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_12px_-4px_rgba(15,23,42,0.08)]"
+        onTouchStart={(e) => {
+          const touch = e.touches?.[0] ?? e.changedTouches?.[0];
+          if (touch) sheetTouchStartY.current = touch.clientY;
+        }}
+        onTouchEnd={(e) => {
+          if (sheetTouchStartY.current === null) return;
+          const touch = e.changedTouches?.[0] ?? e.touches?.[0];
+          const startY = sheetTouchStartY.current;
+          sheetTouchStartY.current = null;
+          if (!touch) return;
+          const deltaY = touch.clientY - startY;
+          if (deltaY < -25) setIsBottomSheetOpen(true);
+          if (deltaY > 25) setIsBottomSheetOpen(false);
+        }}
+        className="lg:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_16px_-4px_rgba(15,23,42,0.12)]"
       >
-        <div className="max-w-3xl mx-auto flex items-center gap-2">
-          <select
-            aria-label="カテゴリ絞り込み"
-            value={selectedCategoryId}
-            onChange={(e) => handleSelectCategory(e.target.value)}
-            className="flex-1 min-w-0 min-h-[44px] px-2.5 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
-          >
-            <option value="all">すべて ({totalCount})</option>
-            {activeCategories.map((cat) => (
-              <option key={cat.id} value={cat.id}>
-                {cat.category_name}
-              </option>
-            ))}
-          </select>
-
-          <button
-            type="button"
-            onClick={cycleMobileSort}
-            title="並び替え"
-            className="min-h-[44px] shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 cursor-pointer active:scale-95"
-          >
-            <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
-            <span>{mobileSortLabel}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsCategoryModalOpen(true)}
-            title="カテゴリ編集"
-            aria-label="カテゴリ編集"
-            className="min-h-[44px] shrink-0 inline-flex items-center justify-center px-2.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer active:scale-95"
-          >
-            <Tag className="w-4 h-4 text-sky-500" />
-          </button>
-
-          <button
-            type="button"
-            disabled={isReadOnly}
-            onClick={sectionTab === 'food' ? handleOpenAddFood : handleOpenAddEvent}
-            aria-label={sectionTab === 'food' ? '食品を追加' : '活動を追加'}
-            className={cn(
-              'min-h-[44px] shrink-0 inline-flex items-center gap-1 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-xs',
-              isReadOnly
-                ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                : sectionTab === 'food'
-                  ? 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer active:scale-95'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-95'
+        {/* アコーディオンハンドル（閉じた状態はスリムに「上に開ける」視覚ヒントを表示） */}
+        <button
+          type="button"
+          onClick={() => setIsBottomSheetOpen((v) => !v)}
+          aria-expanded={isBottomSheetOpen}
+          aria-label={isBottomSheetOpen ? '操作パネルを閉じる' : '検索・絞り込み・追加を開く'}
+          className="w-full h-9 px-3.5 flex items-center justify-between text-xs font-bold text-slate-600 hover:bg-slate-50/70 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-6 h-1 rounded-full bg-slate-300 shrink-0" />
+            <span className="truncate text-slate-700">
+              {selectedCategoryId === 'all'
+                ? `すべて (${totalCount})`
+                : activeCategories.find((c) => c.id === selectedCategoryId)?.category_name || '絞り込み中'}
+              {searchQuery.trim() ? ` ・「${searchQuery.trim()}」` : ''}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
+            <span>{isBottomSheetOpen ? '閉じる' : '検索・絞り込み・追加'}</span>
+            {isBottomSheetOpen ? (
+              <ChevronDown className="w-4 h-4 text-slate-500" />
+            ) : (
+              <ChevronUp className="w-4 h-4 text-slate-500" />
             )}
-          >
-            {isReadOnly ? <Lock className="w-3.5 h-3.5" /> : <Plus className="w-4 h-4" />}
-            <span>追加</span>
-          </button>
-        </div>
+          </div>
+        </button>
+
+        {/* 展開時コンテンツ（複数行レイアウト） */}
+        {isBottomSheetOpen && (
+          <div className="px-3 pb-3 pt-1.5 space-y-2.5 border-t border-slate-100 max-h-[55vh] overflow-y-auto">
+            {/* 1行目: 検索入力 */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={
+                  sectionTab === 'food'
+                    ? '食品名で検索...'
+                    : '活動名やメモで検索...'
+                }
+                className="w-full min-h-[42px] pl-9 pr-8 py-2 rounded-xl border border-slate-300 bg-white text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="検索クリア"
+                  className="absolute right-2.5 top-2.5 p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* 2行目: カテゴリ絞り込み（複数行折り返し） */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleSelectCategory('all')}
+                className={cn(
+                  'min-h-[36px] px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer',
+                  selectedCategoryId === 'all'
+                    ? 'bg-slate-900 text-white shadow-2xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                )}
+              >
+                すべて ({totalCount})
+              </button>
+              {activeCategories.map((cat) => {
+                const count =
+                  sectionTab === 'food'
+                    ? foods.filter((f) => f.category_id === cat.id).length
+                    : eventItems.filter((e) => e.category_id === cat.id).length;
+                return (
+                  <button
+                    type="button"
+                    key={cat.id}
+                    onClick={() => handleSelectCategory(cat.id)}
+                    className={cn(
+                      'min-h-[36px] px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer',
+                      selectedCategoryId === cat.id
+                        ? 'bg-slate-900 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    )}
+                  >
+                    {cat.category_name} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 3行目: 並び替え・カテゴリ編集・追加 */}
+            <div className="flex items-center gap-2 pt-0.5">
+              <button
+                type="button"
+                onClick={cycleMobileSort}
+                className="min-h-[42px] flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 cursor-pointer active:scale-95"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
+                <span>並び替え: {mobileSortLabel}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="min-h-[42px] inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer active:scale-95"
+              >
+                <Tag className="w-3.5 h-3.5 text-sky-500" />
+                <span>カテゴリ</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isReadOnly}
+                onClick={() => {
+                  setIsBottomSheetOpen(false);
+                  if (sectionTab === 'food') {
+                    handleOpenAddFood();
+                  } else {
+                    handleOpenAddEvent();
+                  }
+                }}
+                aria-label={sectionTab === 'food' ? '食品を追加' : '活動を追加'}
+                className={cn(
+                  'min-h-[42px] inline-flex items-center justify-center gap-1 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-xs',
+                  isReadOnly
+                    ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                    : sectionTab === 'food'
+                      ? 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer active:scale-95'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-95'
+                )}
+              >
+                {isReadOnly ? <Lock className="w-3.5 h-3.5" /> : <Plus className="w-4 h-4" />}
+                <span>追加</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 食品登録・編集モーダル */}
@@ -1115,11 +1150,12 @@ export const FoodMasterView: React.FC = () => {
         onConfirm={executeDeleteEvent}
       />
 
-      {/* 複数選択一括削除確認ダイアログ */}
+      {/* 複数選択削除確認ダイアログ */}
       <ConfirmDialog
         isOpen={isBulkDeleteConfirmOpen}
-        title="一括削除の確認"
-        message={`選択中の${sectionTab === 'food' ? '食品' : '活動'}（${selectedIds.size}件）をまとめて削除しますか？`}
+        title="削除の確認"
+        message={`選択中の${sectionTab === 'food' ? '食品' : '活動'}（${selectedIds.size}件）を削除しますか？`}
+        items={selectedItemNames}
         cancelLabel="キャンセル"
         confirmLabel={`${selectedIds.size}件を削除する`}
         variant="danger"

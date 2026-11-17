@@ -350,7 +350,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     // 飲料だった「緑茶」が消えずに残っていることを確認
     await page.getByPlaceholder(/食品名で検索/).fill('緑茶');
-    await expect(page.getByText('緑茶')).toBeVisible();
+    await expect(page.getByText('緑茶', { exact: true })).toBeVisible();
     await page.getByLabel('検索クリア').click();
 
     // 4. カレンダーに戻り、食事記録・活動記録モーダルの選択肢に反映されていることを確認
@@ -1046,15 +1046,15 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await expect(nextMonthBtn).toBeDisabled();
     await dispatchSwipe('.max-sm\\:touch-none', 260, 400, 120, 400);
     await expect(page.getByRole('button', { name: /よく使う食品/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^主食 \(\d+\)$/ })).toBeVisible();
     await expect(tabContainer).toHaveAttribute('data-transition-direction', 'forward');
     await expect(tabContainer).toHaveClass(/cgm-slide-fade-forward/);
 
-    // 6. 誤発火防止ガード検証（input / 実際に横スクロールする .overflow-x-auto / モーダル開表示中 / 閾値50px以下 / 縦スクロール優勢時はタブが切り替わらないこと）
-    await dispatchSwipe('[data-testid="main-content-area"] input[type="text"]', 260, 200, 100, 200);
-    await expect(page.getByRole('button', { name: /よく使う食品/ })).toBeVisible();
+    // 下部ナビ上の縦方向上スワイプでモバイル操作アコーディオンが開くことを検証
+    await dispatchSwipe('nav[aria-label="モバイルナビゲーション"]', 180, 790, 180, 730);
+    await expect(page.getByRole('button', { name: /^主食 \(\d+\)$/ })).toBeVisible();
 
-    await dispatchSwipe('[data-testid="main-content-area"] .overflow-x-auto', 260, 250, 100, 250);
+    // 6. 誤発火防止ガード検証（input / モーダル開表示中 / 閾値50px以下 / 縦スクロール優勢時はタブが切り替わらないこと）
+    await dispatchSwipe('[data-testid="main-content-area"] input[type="text"]', 260, 200, 100, 200);
     await expect(page.getByRole('button', { name: /よく使う食品/ })).toBeVisible();
 
     // 境界値: deltaX = -45 (<= 50px) では切り替わらないこと
@@ -1072,6 +1072,9 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await expect(page.getByRole('heading', { name: '食品を登録' })).toBeVisible();
     await page.getByRole('button', { name: 'キャンセル' }).click();
     await expect(page.getByRole('heading', { name: '食品を登録' })).toBeHidden();
+    // 下スワイプでアコーディオンを閉じる
+    await dispatchSwipe('nav[aria-label="モバイルナビゲーション"]', 180, 730, 180, 790);
+    await expect(page.getByRole('button', { name: /^主食 \(\d+\)$/ })).toBeHidden();
     // 子モーダルを閉じた際にタブ遷移アニメーションが誤って再発火しないことを検証
     const postModalCloseStyle = await page.evaluate(() => {
       const el = document.querySelector('[data-testid="tab-transition-container"]');
@@ -1083,7 +1086,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     // 7. 非カレンダー3画面のコンテンツ領域左右スワイプによる順次タブ遷移（食品タブ -> 活動タブ -> 分析 -> 設定 -> 右端バウンス -> 分析 -> 食品・活動 -> カレンダー）
     await dispatchSwipe('[data-testid="food-master-view"]', 280, 400, 100, 400);
-    await expect(page.getByRole('button', { name: '活動を追加' })).toBeVisible();
+    await expect(page.getByText('ウォーキング')).toBeVisible();
 
     await dispatchSwipe('[data-testid="food-master-view"]', 280, 400, 100, 400);
     await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
@@ -1268,6 +1271,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await expect(welcomeModal).toBeHidden();
 
     await page.locator('button:visible', { hasText: '食品・活動' }).first().click();
+    await page.getByRole('button', { name: '検索・絞り込み・追加を開く' }).click();
     await page.getByRole('button', { name: '食品を追加' }).click();
     await page.getByPlaceholder('例: 白米、食パン、りんご、カレーライス').fill('リロード目印検証食品');
     await page.getByPlaceholder('例: 36.8').fill('30');
@@ -1285,6 +1289,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await expect(page.getByText('リロード目印検証食品')).toHaveCount(0);
 
     // 6.5. ブラウザの bfcache 復帰（pagehide -> pageshow with persisted: true）時にもデータが初期状態へリセットされ、案内モーダルが再表示されることを検証
+    await page.getByRole('button', { name: '検索・絞り込み・追加を開く' }).click();
     await page.getByRole('button', { name: '食品を追加' }).click();
     await page.getByPlaceholder('例: 白米、食パン、りんご、カレーライス').fill('bfcache復元検証食品');
     await page.getByPlaceholder('例: 36.8').fill('25');

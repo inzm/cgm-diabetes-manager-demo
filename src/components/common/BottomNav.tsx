@@ -105,6 +105,13 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       } else if (deltaX > 0 && currentIdx > 0) {
         onTabChange(NAV_TAB_ORDER[currentIdx - 1]);
       }
+    } else if (Math.abs(deltaY) > Math.abs(deltaX) * 1.2 && Math.abs(deltaY) > 30) {
+      didSwipeRef.current = true;
+      window.dispatchEvent(
+        new CustomEvent('cgm-bottom-sheet-swipe', {
+          detail: { direction: deltaY < 0 ? 'open' : 'close' },
+        })
+      );
     }
   };
 

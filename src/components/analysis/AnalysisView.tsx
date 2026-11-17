@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { usePatient } from '@/contexts/PatientContext';
 import { db } from '@/lib/db';
 import { formatLocalDate, shiftLocalDateStr } from '@/lib/dateUtils';
@@ -27,6 +27,8 @@ import {
   TrendingUp,
   RefreshCw,
   FileSpreadsheet,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -100,6 +102,18 @@ export const AnalysisView: React.FC = () => {
   const { currentPatientId, hypoThreshold, hyperThreshold } = usePatient();
 
   const [dateRange, setDateRange] = useState<AnalysisRange>('30d');
+  const [isPeriodSheetOpen, setIsPeriodSheetOpen] = useState<boolean>(false);
+  const periodSheetTouchStartY = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleBottomSwipe = (e: Event) => {
+      const dir = (e as CustomEvent<{ direction?: 'open' | 'close' }>).detail?.direction;
+      if (dir === 'open') setIsPeriodSheetOpen(true);
+      if (dir === 'close') setIsPeriodSheetOpen(false);
+    };
+    window.addEventListener('cgm-bottom-sheet-swipe', handleBottomSwipe);
+    return () => window.removeEventListener('cgm-bottom-sheet-swipe', handleBottomSwipe);
+  }, []);
 
   // 既にメモリ上に構築済みの境界メタデータがあれば初期描画から即座に利用
   const [boundaryMeta, setBoundaryMeta] = useState<AnalysisBoundaryMetadata | null>(() =>
@@ -341,9 +355,15 @@ export const AnalysisView: React.FC = () => {
   ];
 
   const isMonthSelected = dateRange.startsWith('month:');
+  const activeRangeLabel = isMonthSelected
+    ? (() => {
+        const [y, m] = dateRange.slice(6).split('-');
+        return `${y}年${parseInt(m, 10)}月`;
+      })()
+    : rangeOptions.find((o) => o.key === dateRange)?.label || '直近30日';
 
   return (
-    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 pt-3 pb-20 sm:py-4 space-y-3.5 sm:space-y-4">
+    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 pt-3 pb-16 sm:py-4 space-y-3.5 sm:space-y-4">
       {/* 1. タイトル & 集計期間 常時表示ヘッダー（スクロール追従 sticky） */}
       <div className="sticky top-12 z-20 flex items-center justify-between gap-3 bg-white/95 backdrop-blur-md px-3.5 py-2.5 sm:p-3.5 rounded-2xl border border-slate-200 shadow-xs">
         <div className="flex items-center space-x-2.5 min-w-0">
@@ -470,20 +490,112 @@ export const AnalysisView: React.FC = () => {
         </div>
       )}
 
-      {/* 下部固定 期間セレクターバー（スクロール時も常時操作可能） */}
+      {/* モバイル用 ボトムナビ直上固定 期間アコーディオン（縦スワイプ / タップ開閉・複数行表示） */}
       <div
         data-testid="analysis-period-bottom-bar"
-        className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] sm:bottom-3 z-20 pointer-events-none"
+        onTouchStart={(e) => {
+          const touch = e.touches?.[0] ?? e.changedTouches?.[0];
+          if (touch) periodSheetTouchStartY.current = touch.clientY;
+        }}
+        onTouchEnd={(e) => {
+          if (periodSheetTouchStartY.current === null) return;
+          const touch = e.changedTouches?.[0] ?? e.touches?.[0];
+          const startY = periodSheetTouchStartY.current;
+          periodSheetTouchStartY.current = null;
+          if (!touch) return;
+          const deltaY = touch.clientY - startY;
+          if (deltaY < -25) setIsPeriodSheetOpen(true);
+          if (deltaY > 25) setIsPeriodSheetOpen(false);
+        }}
+        className="sm:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_16px_-4px_rgba(15,23,42,0.12)]"
       >
-        <div className="max-w-3xl mx-auto pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl p-1.5 shadow-[0_-4px_16px_-4px_rgba(15,23,42,0.12)] sm:shadow-lg">
-          <div className="flex items-center gap-1.5 overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setIsPeriodSheetOpen((v) => !v)}
+          aria-expanded={isPeriodSheetOpen}
+          aria-label={isPeriodSheetOpen ? '期間選択を閉じる' : '集計期間を変更する'}
+          className="w-full h-9 px-3.5 flex items-center justify-between text-xs font-bold text-slate-600 hover:bg-slate-50/70 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-6 h-1 rounded-full bg-slate-300 shrink-0" />
+            <span className="truncate text-slate-800">期間: {activeRangeLabel}</span>
+          </div>
+          <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
+            <span>{isPeriodSheetOpen ? '閉じる' : '期間を選択'}</span>
+            {isPeriodSheetOpen ? (
+              <ChevronDown className="w-4 h-4 text-slate-500" />
+            ) : (
+              <ChevronUp className="w-4 h-4 text-slate-500" />
+            )}
+          </div>
+        </button>
+
+        {isPeriodSheetOpen && (
+          <div className="px-3 pb-3 pt-1.5 space-y-2.5 border-t border-slate-100">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {rangeOptions.map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => {
+                    setDateRange(opt.key);
+                    setIsPeriodSheetOpen(false);
+                  }}
+                  className={cn(
+                    'min-h-[40px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer',
+                    dateRange === opt.key
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <select
+              aria-label="月単位で集計期間を選択"
+              value={isMonthSelected ? dateRange : ''}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setDateRange(e.target.value as AnalysisRange);
+                  setIsPeriodSheetOpen(false);
+                }
+              }}
+              className={cn(
+                'w-full min-h-[42px] px-3 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500',
+                isMonthSelected
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              )}
+            >
+              <option value="" disabled>
+                📅 月別で選択...
+              </option>
+              {availableMonths.map((ym) => {
+                const [yStr, mStr] = ym.split('-');
+                return (
+                  <option key={ym} value={`month:${ym}`} className="bg-white text-slate-800">
+                    📅 {yStr}年{parseInt(mStr, 10)}月
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* PC用 下部固定 期間セレクターバー */}
+      <div className="hidden sm:block sticky bottom-3 z-20 pointer-events-none">
+        <div className="max-w-3xl mx-auto pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl p-1.5 shadow-lg">
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
             {rangeOptions.map((opt) => (
               <button
                 key={opt.key}
                 type="button"
                 onClick={() => setDateRange(opt.key)}
                 className={cn(
-                  'min-h-[40px] px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0',
+                  'min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap',
                   dateRange === opt.key
                     ? 'bg-slate-900 text-white shadow-xs font-bold'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
@@ -502,7 +614,7 @@ export const AnalysisView: React.FC = () => {
                 }
               }}
               className={cn(
-                'min-h-[40px] px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer shrink-0 focus:outline-none focus:ring-2 focus:ring-indigo-500',
+                'min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500',
                 isMonthSelected
                   ? 'bg-indigo-600 text-white shadow-xs font-bold'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
