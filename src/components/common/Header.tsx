@@ -63,7 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200/90 bg-white/95 backdrop-blur-md text-slate-900 shadow-2xs">
-      <div className="mx-auto flex h-12 max-w-7xl items-center justify-between gap-2 px-3 sm:px-6 lg:px-8">
+      <div className="relative mx-auto flex h-12 max-w-7xl items-center justify-between gap-2 px-3 sm:px-6 lg:px-8">
         {/* Left: Brand Logo & Title（二重枠を排しアイコン本来のグラデーションを鮮明に表示） */}
         <div className="flex items-center space-x-2 sm:space-x-2.5 shrink-0">
           <img
@@ -76,7 +76,20 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         </div>
 
-        {/* Right: カレンダー年月操作部 または 現在画面ピルバッジ ＋ ステータス */}
+        {/* Center: カレンダー以外のタブ表示時の現在画面ピルバッジ（中央配置） */}
+        {!calendarControls && currentTabBadge && (
+          <div
+            className={cn(
+              'pointer-events-none absolute left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-bold whitespace-nowrap max-w-[calc(100%-10rem)] truncate',
+              currentTabBadge.badgeClass
+            )}
+          >
+            {currentTabBadge.icon}
+            <span className="truncate">{currentTabBadge.label}</span>
+          </div>
+        )}
+
+        {/* Right: カレンダー年月操作部 ＋ ステータス */}
         <div className="flex items-center justify-end gap-1.5 sm:gap-2 min-w-0">
           {calendarControls ? (
             <div className="flex items-center gap-1.5 sm:gap-2">
@@ -119,16 +132,6 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <span>今月</span>
               </button>
-            </div>
-          ) : currentTabBadge ? (
-            <div
-              className={cn(
-                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-bold whitespace-nowrap',
-                currentTabBadge.badgeClass
-              )}
-            >
-              {currentTabBadge.icon}
-              <span>{currentTabBadge.label}</span>
             </div>
           ) : null}
 
