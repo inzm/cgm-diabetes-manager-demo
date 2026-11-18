@@ -22,7 +22,7 @@ import {
   Plus,
   Utensils,
   Footprints,
-  Tag,
+  Folders,
   Lock,
   Trash2,
   ArrowUpDown,
@@ -103,6 +103,7 @@ export const FoodMasterView: React.FC = () => {
 
   // モバイル下部アコーディオン開閉状態
   const [isBottomSheetOpen, setIsBottomSheetOpen] = useState<boolean>(false);
+  const [isSheetDragging, setIsSheetDragging] = useState<boolean>(false);
   const sheetTouchStartY = useRef<number | null>(null);
 
   useEffect(() => {
@@ -114,6 +115,20 @@ export const FoodMasterView: React.FC = () => {
     window.addEventListener('cgm-bottom-sheet-swipe', handleBottomSwipe);
     return () => window.removeEventListener('cgm-bottom-sheet-swipe', handleBottomSwipe);
   }, []);
+
+  useEffect(() => {
+    if ((!isBottomSheetOpen && !isSheetDragging) || typeof window === 'undefined' || window.innerWidth >= 1024) {
+      return;
+    }
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, [isBottomSheetOpen, isSheetDragging]);
 
   // モーダル状態
   const [isFoodModalOpen, setIsFoodModalOpen] = useState(false);
@@ -820,7 +835,7 @@ export const FoodMasterView: React.FC = () => {
           <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-800">
-                <Tag className="w-4 h-4 text-sky-500" />
+                <Folders className="w-4 h-4 text-sky-500" />
                 <span>カテゴリ</span>
               </div>
               <span className="text-[11px] font-bold text-slate-400 tabular-nums">
@@ -909,8 +924,8 @@ export const FoodMasterView: React.FC = () => {
                 onClick={() => setIsCategoryModalOpen(true)}
                 className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
               >
-                <Tag className="w-3.5 h-3.5 text-sky-500" />
-                <span>カテゴリを編集</span>
+                <Folders className="w-3.5 h-3.5 text-sky-500" />
+                <span>カテゴリを管理</span>
               </button>
             </div>
           </div>
@@ -922,14 +937,20 @@ export const FoodMasterView: React.FC = () => {
         data-testid="food-master-bottom-bar"
         onTouchStart={(e) => {
           e.stopPropagation();
+          setIsSheetDragging(true);
           const touch = e.touches?.[0] ?? e.changedTouches?.[0];
           if (touch) sheetTouchStartY.current = touch.clientY;
         }}
         onTouchMove={(e) => {
           e.stopPropagation();
         }}
+        onTouchCancel={() => {
+          setIsSheetDragging(false);
+          sheetTouchStartY.current = null;
+        }}
         onTouchEnd={(e) => {
           e.stopPropagation();
+          setIsSheetDragging(false);
           if (sheetTouchStartY.current === null) return;
           const touch = e.changedTouches?.[0] ?? e.touches?.[0];
           const startY = sheetTouchStartY.current;
@@ -1095,8 +1116,8 @@ export const FoodMasterView: React.FC = () => {
                   onClick={() => setIsCategoryModalOpen(true)}
                   className="min-h-[42px] flex-1 inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer active:scale-95"
                 >
-                  <Tag className="w-3.5 h-3.5 text-sky-500" />
-                  <span>カテゴリ</span>
+                  <Folders className="w-4 h-4 text-sky-500" />
+                  <span>カテゴリを管理</span>
                 </button>
 
                 <button

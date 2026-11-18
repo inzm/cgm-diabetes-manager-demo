@@ -7,7 +7,7 @@ import { deterministicUuid, ensureUuid } from '@/lib/uuidUtils';
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { usePatient } from '@/contexts/PatientContext';
 import { useAnimatedModal } from '@/lib/useAnimatedModal';
-import { X, Tag, Plus, Edit3, Trash2, Check } from 'lucide-react';
+import { X, Folders, Plus, Edit3, Trash2, Check } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { cn, getErrorMessage } from '@/lib/utils';
 
@@ -314,7 +314,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50">
           <div className="flex items-center gap-2">
             <span className="p-2 rounded-lg bg-sky-100 text-sky-700">
-              <Tag className="w-4 h-4" />
+              <Folders className="w-4 h-4" />
             </span>
             <h3 className="text-sm sm:text-base font-bold text-slate-800">{titleLabel}</h3>
           </div>

@@ -157,14 +157,15 @@ export const TimeAnomalyTab: React.FC<TimeAnomalyTabProps> = ({
             <ArrowDownCircle className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <div className="text-[11px] font-bold text-slate-500 truncate">
-              低血糖 (&lt;{hypoThreshold})
+            <div className="flex items-baseline gap-1.5 truncate">
+              <span className="text-xs font-bold text-slate-700">低血糖</span>
+              <span className="text-[11px] font-medium text-slate-400">&lt;{hypoThreshold}</span>
             </div>
             <div className="flex items-baseline space-x-1">
-              <span className="text-xl font-extrabold text-blue-600 tracking-tight">
+              <span className="text-xl sm:text-2xl font-extrabold text-blue-600 tracking-tight">
                 {totalHypo}
               </span>
-              <span className="text-xs text-slate-500 font-semibold">件</span>
+              <span className="text-xs sm:text-sm text-slate-500 font-semibold">件</span>
             </div>
           </div>
         </div>
@@ -174,14 +175,15 @@ export const TimeAnomalyTab: React.FC<TimeAnomalyTabProps> = ({
             <ArrowUpCircle className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <div className="text-[11px] font-bold text-slate-500 truncate">
-              高血糖 (&gt;{hyperThreshold})
+            <div className="flex items-baseline gap-1.5 truncate">
+              <span className="text-xs font-bold text-slate-700">高血糖</span>
+              <span className="text-[11px] font-medium text-slate-400">&gt;{hyperThreshold}</span>
             </div>
             <div className="flex items-baseline space-x-1">
-              <span className="text-xl font-extrabold text-rose-600 tracking-tight">
+              <span className="text-xl sm:text-2xl font-extrabold text-rose-600 tracking-tight">
                 {totalHyper}
               </span>
-              <span className="text-xs text-slate-500 font-semibold">件</span>
+              <span className="text-xs sm:text-sm text-slate-500 font-semibold">件</span>
             </div>
           </div>
         </div>
@@ -191,11 +193,18 @@ export const TimeAnomalyTab: React.FC<TimeAnomalyTabProps> = ({
             <AlertTriangle className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <div className="text-[11px] font-bold text-slate-500 truncate">
+            <div className="text-xs font-bold text-slate-700 truncate">
               最多集中時間帯
             </div>
-            <div className="text-sm font-extrabold text-slate-800 truncate">
-              {peakPeriod ? `${peakPeriod.periodName} (${peakPeriod.percentage}%)` : '異常値なし'}
+            <div className="flex items-baseline gap-1.5 truncate">
+              <span className="text-base sm:text-lg font-extrabold text-slate-900">
+                {peakPeriod ? peakPeriod.periodName : '異常値なし'}
+              </span>
+              {peakPeriod && (
+                <span className="text-xs font-bold text-indigo-600">
+                  {peakPeriod.percentage}%
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -206,17 +215,17 @@ export const TimeAnomalyTab: React.FC<TimeAnomalyTabProps> = ({
         {/* 左側：4時間帯 集計データテーブル */}
         <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden flex flex-col justify-between">
           <div>
-            <div className="px-3 sm:px-4 py-2.5 border-b border-slate-200 bg-slate-50">
-              <h4 className="text-xs font-bold text-slate-700">
-                4時間帯 集計データ（朝・昼・夕夜・夜間）
+            <div className="px-3.5 sm:px-4 py-2.5 border-b border-slate-200 bg-slate-50">
+              <h4 className="text-sm font-bold text-slate-900">
+                時間帯別 集計データ
               </h4>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-[11px] sm:text-xs text-slate-600">
-                <thead className="bg-slate-100 text-slate-500 font-bold text-[10px] sm:text-[11px] border-b border-slate-200">
+              <table className="w-full text-left text-xs sm:text-sm text-slate-600">
+                <thead className="bg-slate-100 text-slate-600 font-bold text-[11px] sm:text-xs border-b border-slate-200">
                   <tr>
-                    <th className="py-2 pl-2 sm:pl-3 pr-1 whitespace-nowrap">時間帯</th>
-                    <th className="py-2 px-1 sm:px-2 whitespace-nowrap">時刻</th>
+                    <th className="py-2 pl-2.5 sm:pl-3 pr-1 whitespace-nowrap">時間帯</th>
+                    <th className="hidden sm:table-cell py-2 px-1 sm:px-2 whitespace-nowrap">時刻</th>
                     <th className="py-2 px-1 sm:px-2 text-right text-blue-600 whitespace-nowrap">
                       ▼低血糖
                     </th>
@@ -224,16 +233,19 @@ export const TimeAnomalyTab: React.FC<TimeAnomalyTabProps> = ({
                       ▲高血糖
                     </th>
                     <th className="py-2 px-1 sm:px-2 text-right font-bold whitespace-nowrap">合計</th>
-                    <th className="py-2 pl-1 pr-2 sm:pr-3 text-right whitespace-nowrap">割合</th>
+                    <th className="py-2 pl-1 pr-2.5 sm:pr-3 text-right whitespace-nowrap">割合</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {periodData.map((p) => (
                     <tr key={p.periodName} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-2 pl-2 sm:pl-3 pr-1 font-bold text-slate-800 whitespace-nowrap">
-                        {p.periodName}
+                      <td className="py-2 pl-2.5 sm:pl-3 pr-1 whitespace-nowrap">
+                        <div className="font-bold text-slate-800">{p.periodName}</div>
+                        <div className="sm:hidden text-[10px] font-mono text-slate-400 leading-tight mt-0.5">
+                          {p.timeRange.replace(' 〜 ', '-')}
+                        </div>
                       </td>
-                      <td className="py-2 px-1 sm:px-2 text-slate-500 font-mono text-[10px] sm:text-[11px] whitespace-nowrap">
+                      <td className="hidden sm:table-cell py-2 px-1 sm:px-2 text-slate-500 font-mono text-[11px] whitespace-nowrap">
                         {p.timeRange.replace(' 〜 ', '-')}
                       </td>
                       <td className="py-2 px-1 sm:px-2 text-right font-mono font-bold text-blue-600 whitespace-nowrap">
@@ -245,8 +257,8 @@ export const TimeAnomalyTab: React.FC<TimeAnomalyTabProps> = ({
                       <td className="py-2 px-1 sm:px-2 text-right font-mono font-extrabold text-slate-900 whitespace-nowrap">
                         {p.totalCount}件
                       </td>
-                      <td className="py-2 pl-1 pr-2 sm:pr-3 text-right whitespace-nowrap">
-                        <span className="inline-block px-1.5 sm:px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono font-bold text-[10px] sm:text-xs">
+                      <td className="py-2 pl-1 pr-2.5 sm:pr-3 text-right whitespace-nowrap">
+                        <span className="inline-block px-1.5 sm:px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono font-bold text-[11px] sm:text-xs">
                           {p.percentage.toFixed(1)}%
                         </span>
                       </td>
@@ -255,7 +267,10 @@ export const TimeAnomalyTab: React.FC<TimeAnomalyTabProps> = ({
                 </tbody>
                 <tfoot className="bg-slate-50 border-t border-slate-200 font-bold text-slate-800">
                   <tr>
-                    <td colSpan={2} className="py-2 pl-2 sm:pl-3 pr-1">
+                    <td className="sm:hidden py-2 pl-2.5 pr-1">
+                      全時間帯 合計
+                    </td>
+                    <td colSpan={2} className="hidden sm:table-cell py-2 pl-3 pr-1">
                       全時間帯 合計
                     </td>
                     <td className="py-2 px-1 sm:px-2 text-right text-blue-600 font-mono">
@@ -291,9 +306,9 @@ export const TimeAnomalyTab: React.FC<TimeAnomalyTabProps> = ({
         {/* 右側：横棒グラフ */}
         <div className="lg:col-span-7 bg-slate-50/60 p-4 sm:p-5 rounded-2xl border border-slate-200/80 flex flex-col">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-xs sm:text-sm font-bold text-slate-800 flex items-center space-x-2">
+            <h4 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
               <Clock className="w-4 h-4 text-rose-500" />
-              <span>時間帯別の異常値発生件数 ({hypoLabel} / {hyperLabel})</span>
+              <span>時間帯別の異常値発生件数</span>
             </h4>
           </div>
 

@@ -103,6 +103,7 @@ export const AnalysisView: React.FC = () => {
 
   const [dateRange, setDateRange] = useState<AnalysisRange>('30d');
   const [isPeriodSheetOpen, setIsPeriodSheetOpen] = useState<boolean>(false);
+  const [isPeriodSheetDragging, setIsPeriodSheetDragging] = useState<boolean>(false);
   const periodSheetTouchStartY = useRef<number | null>(null);
 
   useEffect(() => {
@@ -114,6 +115,20 @@ export const AnalysisView: React.FC = () => {
     window.addEventListener('cgm-bottom-sheet-swipe', handleBottomSwipe);
     return () => window.removeEventListener('cgm-bottom-sheet-swipe', handleBottomSwipe);
   }, []);
+
+  useEffect(() => {
+    if ((!isPeriodSheetOpen && !isPeriodSheetDragging) || typeof window === 'undefined' || window.innerWidth >= 640) {
+      return;
+    }
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, [isPeriodSheetOpen, isPeriodSheetDragging]);
 
   // 既にメモリ上に構築済みの境界メタデータがあれば初期描画から即座に利用
   const [boundaryMeta, setBoundaryMeta] = useState<AnalysisBoundaryMetadata | null>(() =>
@@ -371,10 +386,10 @@ export const AnalysisView: React.FC = () => {
             <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm sm:text-base font-extrabold text-slate-900 tracking-tight truncate">
+            <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight truncate">
               血糖・食事の傾向分析
             </h2>
-            <p className="text-[11px] sm:text-xs font-semibold text-slate-500 tabular-nums truncate">
+            <p className="text-xs sm:text-sm font-semibold text-slate-500 tabular-nums truncate">
               集計期間: {startDate} 〜 {endDate}
             </p>
           </div>
@@ -409,8 +424,8 @@ export const AnalysisView: React.FC = () => {
                 <span className="p-1.5 rounded-xl bg-amber-100/90 text-amber-600">
                   <Utensils className="w-4 h-4" />
                 </span>
-                <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                  食品別の血糖変化（食前・ピーク・上昇幅Δ）
+                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+                  食品別の血糖変化
                 </h3>
               </div>
               <div className="flex-1 flex flex-col min-h-0">
@@ -436,8 +451,8 @@ export const AnalysisView: React.FC = () => {
                 <span className="p-1.5 rounded-xl bg-emerald-100/90 text-emerald-600">
                   <CalendarDays className="w-4 h-4" />
                 </span>
-                <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                  曜日別の傾向（平日 vs 休日）
+                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+                  曜日別の傾向
                 </h3>
               </div>
               <div className="flex-1 flex flex-col min-h-0">
@@ -458,8 +473,8 @@ export const AnalysisView: React.FC = () => {
               <span className="p-1.5 rounded-xl bg-rose-100/90 text-rose-600">
                 <Clock className="w-4 h-4" />
               </span>
-              <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                時間帯別の傾向（4区分）
+              <h3 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+                時間帯別の傾向
               </h3>
             </div>
             <TimeAnomalyTab
@@ -475,7 +490,7 @@ export const AnalysisView: React.FC = () => {
               <span className="p-1.5 rounded-xl bg-sky-100/90 text-sky-600">
                 <TrendingUp className="w-4 h-4" />
               </span>
-              <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+              <h3 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
                 日次 糖質・インスリン推移
               </h3>
             </div>
@@ -495,14 +510,20 @@ export const AnalysisView: React.FC = () => {
         data-testid="analysis-period-bottom-bar"
         onTouchStart={(e) => {
           e.stopPropagation();
+          setIsPeriodSheetDragging(true);
           const touch = e.touches?.[0] ?? e.changedTouches?.[0];
           if (touch) periodSheetTouchStartY.current = touch.clientY;
         }}
         onTouchMove={(e) => {
           e.stopPropagation();
         }}
+        onTouchCancel={() => {
+          setIsPeriodSheetDragging(false);
+          periodSheetTouchStartY.current = null;
+        }}
         onTouchEnd={(e) => {
           e.stopPropagation();
+          setIsPeriodSheetDragging(false);
           if (periodSheetTouchStartY.current === null) return;
           const touch = e.changedTouches?.[0] ?? e.touches?.[0];
           const startY = periodSheetTouchStartY.current;

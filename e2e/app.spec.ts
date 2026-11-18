@@ -337,7 +337,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     // 3. カテゴリ削除時の「未分類」自動移動（孤児データ防止）
     await page.getByRole('button', { name: /よく使う食品/ }).click();
-    await page.getByRole('button', { name: 'カテゴリを編集' }).click();
+    await page.getByRole('button', { name: 'カテゴリを管理' }).click();
     await expect(page.getByRole('heading', { name: '食品カテゴリ管理' })).toBeVisible();
 
     // 「飲料」カテゴリの行にある削除ボタンをクリック
@@ -620,7 +620,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     // 2. システム保護カテゴリ「未分類」に削除ボタンが存在しないことを検証
     await page.getByRole('button', { name: '食品・活動' }).first().click();
-    await page.getByRole('button', { name: 'カテゴリを編集' }).click();
+    await page.getByRole('button', { name: 'カテゴリを管理' }).click();
     const uncategorizedRow = page.locator('div.justify-between', {
       has: page.getByText('未分類', { exact: true }),
     });
@@ -1368,7 +1368,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     // 1. カテゴリ削除後に同じ名前のカテゴリを再追加すると、エラーにならず既存レコードが復活（is_deleted: false）すること
     await page.getByRole('button', { name: '食品・活動' }).first().click();
     await expect(page.getByRole('button', { name: /よく使う食品/ })).toBeVisible();
-    await page.getByRole('button', { name: 'カテゴリを編集' }).click();
+    await page.getByRole('button', { name: 'カテゴリを管理' }).click();
     await expect(page.getByRole('heading', { name: '食品カテゴリ管理' })).toBeVisible();
 
     const drinkRow = page.locator('div.justify-between', {

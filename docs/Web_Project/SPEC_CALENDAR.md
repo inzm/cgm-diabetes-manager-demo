@@ -107,7 +107,7 @@
     - 誤発火防止ガード：横スクロール可能な要素（`.overflow-x-auto` 等）やフォーム入力要素（`input` / `select` / `textarea`）上でのタッチ操作、およびモーダル・ダイアログ開表示中はタブスワイプを発火させない。
   - **下部メニューバー（`BottomNav.tsx`）上の左右・上下スワイプ操作**:
     - カレンダー画面で過去の月を閲覧している時でも1回のスワイプで隣のタブへ移動できるよう、下部ナビゲーションバー（`BottomNav`）領域上での左右スワイプ（`Math.abs(deltaX) > Math.abs(deltaY) * 1.2` かつ `Math.abs(deltaX) > 50`）で下部メニュー順にタブを切り替えられるようにする。
-    - 食品・活動管理画面および分析画面では、下部ナビゲーションバー領域上での縦方向スワイプ（`Math.abs(deltaY) > Math.abs(deltaX) * 1.2` かつ `Math.abs(deltaY) > 30`）によって下部アコーディオンの開閉（上スワイプで開く、下スワイプで閉じる）も連動して操作できるようにする。
+    - 食品・活動管理画面および分析画面では、下部ナビゲーションバー領域上での縦方向スワイプ（`Math.abs(deltaY) > Math.abs(deltaX) * 1.2` かつ `Math.abs(deltaY) > 30`）によって下部アコーディオンの開閉（上スワイプで開く、下スワイプで閉じる）も連動して操作できるようにし、`BottomNav.tsx` の `<nav>` 要素に `touch-none overscroll-contain` を付与してスワイプ時の背面ページスクロールを防止する。
   - **画面タブ切り替え時の方向連動マイクロ・スライド＆フェードアニメーション (`src/index.css`, `src/App.tsx`)**:
     - `NAV_TAB_ORDER`（`['calendar', 'events', 'analysis', 'settings']`）における遷移前後のインデックス差から移動方向（右側のタブへ進む＝`'forward'`、左側のタブへ戻る＝`'backward'`）を判定し、タブ切り替え時（PCサブナビ・モバイルボトムナビ・コンテンツ左右スワイプ・下部バースワイプすべて）に **180ms（`cubic-bezier(0.16, 1, 0.3, 1)`、移動幅 `14px`）の軽量GPU合成マイクロ・スライド＆フェードアニメーション**（`.cgm-slide-fade-forward`: 右から左へスライドイン / `.cgm-slide-fade-backward`: 左から右へスライドイン）を適用する。
     - アニメーション完了時（`100%`）には必ず `transform: none` に戻し、子孫要素の `sticky` / `fixed` 配置や ECharts の幅計算に一切悪影響を与えない構造とする。また、コンテナに `overflow-x: clip` を適用して遷移中の横スクロールバー発生を防止し、`@media (prefers-reduced-motion: reduce)` 環境ではアニメーションを無効化する。

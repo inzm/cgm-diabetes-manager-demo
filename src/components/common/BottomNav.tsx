@@ -231,7 +231,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         aria-label="モバイルナビゲーション"
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
-        className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-lg sm:hidden pb-[env(safe-area-inset-bottom)]"
+        className="fixed bottom-0 left-0 right-0 z-40 touch-none overscroll-contain bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-lg sm:hidden pb-[env(safe-area-inset-bottom)]"
       >
         <div className="grid grid-cols-5 h-[4.5rem] max-w-lg mx-auto px-1.5 items-stretch">
           {/* 1. カレンダー */}

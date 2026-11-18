@@ -189,55 +189,55 @@ export const CarbInsulinTrendTab: React.FC<CarbInsulinTrendTabProps> = ({
     <div className="space-y-4">
       {/* 1. 期間サマリーカード（第2層：淡いスレートグレー bg-slate-50/80） */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5">
-        <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold whitespace-nowrap">1日平均糖質</span>
-            <Flame className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+        <div className="bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center justify-between text-slate-600 mb-1">
+            <span className="text-xs font-bold whitespace-nowrap">1日平均糖質</span>
+            <Flame className="w-4 h-4 text-amber-500 shrink-0" />
           </div>
           <div className="flex items-baseline space-x-1">
-            <span className="text-xl font-extrabold text-amber-600 tracking-tight">
+            <span className="text-xl sm:text-2xl font-extrabold text-amber-600 tracking-tight">
               {summary.avgDailyCarbs}
             </span>
-            <span className="text-xs font-semibold text-slate-500">g/日</span>
+            <span className="text-xs sm:text-sm font-semibold text-slate-500">g/日</span>
           </div>
         </div>
 
-        <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold whitespace-nowrap">1日平均インスリン</span>
-            <Syringe className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+        <div className="bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center justify-between text-slate-600 mb-1">
+            <span className="text-xs font-bold whitespace-nowrap">1日平均インスリン</span>
+            <Syringe className="w-4 h-4 text-sky-500 shrink-0" />
           </div>
           <div className="flex items-baseline space-x-1">
-            <span className="text-xl font-extrabold text-sky-600 tracking-tight">
+            <span className="text-xl sm:text-2xl font-extrabold text-sky-600 tracking-tight">
               {summary.avgDailyInsulin}
             </span>
-            <span className="text-xs font-semibold text-slate-500">U/日</span>
+            <span className="text-xs sm:text-sm font-semibold text-slate-500">U/日</span>
           </div>
         </div>
 
-        <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold whitespace-nowrap">期間平均血糖</span>
-            <TrendingUp className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+        <div className="bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center justify-between text-slate-600 mb-1">
+            <span className="text-xs font-bold whitespace-nowrap">期間平均血糖</span>
+            <TrendingUp className="w-4 h-4 text-indigo-500 shrink-0" />
           </div>
           <div className="flex items-baseline space-x-1">
-            <span className="text-xl font-extrabold text-indigo-700 tracking-tight">
+            <span className="text-xl sm:text-2xl font-extrabold text-indigo-700 tracking-tight">
               {summary.overallAvgGlucose ?? '-'}
             </span>
-            <span className="text-[11px] font-semibold text-slate-500">mg/dL</span>
+            <span className="text-xs sm:text-sm font-semibold text-slate-500">mg/dL</span>
           </div>
         </div>
 
-        <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold whitespace-nowrap">対象日数</span>
-            <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+        <div className="bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center justify-between text-slate-600 mb-1">
+            <span className="text-xs font-bold whitespace-nowrap">対象日数</span>
+            <Info className="w-4 h-4 text-slate-400 shrink-0" />
           </div>
           <div className="flex items-baseline space-x-1">
-            <span className="text-xl font-extrabold text-slate-800 tracking-tight">
+            <span className="text-xl sm:text-2xl font-extrabold text-slate-800 tracking-tight">
               {trendData.length}
             </span>
-            <span className="text-xs font-semibold text-slate-500">日間</span>
+            <span className="text-xs sm:text-sm font-semibold text-slate-500">日間</span>
           </div>
         </div>
       </div>
@@ -245,9 +245,9 @@ export const CarbInsulinTrendTab: React.FC<CarbInsulinTrendTabProps> = ({
       {/* 2. ECharts 複合時系列グラフ */}
       <div className="bg-slate-50/60 p-3.5 sm:p-5 rounded-2xl border border-slate-200/80">
         <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs sm:text-sm font-bold text-slate-800 flex items-center space-x-2">
+          <h4 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
             <Flame className="w-4 h-4 text-amber-500" />
-            <span>日次 糖質摂取量 (棒グラフ) × インスリン投与量 (折れ線)</span>
+            <span>糖質摂取量 × インスリン投与量</span>
           </h4>
         </div>
 

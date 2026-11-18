@@ -204,7 +204,7 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
           <div>
             <label
               htmlFor="analysis-food-category-select"
-              className="block text-[11px] font-bold text-slate-500 mb-1"
+              className="block text-xs font-bold text-slate-600 mb-1.5"
             >
               カテゴリで絞り込み
             </label>
@@ -233,7 +233,7 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
           <div>
             <label
               htmlFor="analysis-food-item-select"
-              className="block text-[11px] font-bold text-slate-500 mb-1"
+              className="block text-xs font-bold text-slate-600 mb-1.5"
             >
               分析する食品を選択
             </label>
@@ -260,60 +260,60 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
       {/* 2. 4大サマリーカード (第2層：淡いスレートグレー bg-slate-50/80 で親セクション bg-white との主従階層を明確化) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5 shrink-0">
         {/* 食べた回数 */}
-        <div className="bg-slate-50/80 p-2.5 sm:p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-500 mb-0.5 sm:mb-1">
-            <span className="text-[11px] font-bold whitespace-nowrap">食べた回数</span>
-            <Utensils className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+        <div className="bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center justify-between text-slate-600 mb-1">
+            <span className="text-xs font-bold whitespace-nowrap">食べた回数</span>
+            <Utensils className="w-4 h-4 text-amber-500 shrink-0" />
           </div>
           <div className="flex items-baseline space-x-1">
-            <span className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
+            <span className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
               {impactSummary.totalCount}
             </span>
-            <span className="text-xs font-semibold text-slate-500">回</span>
+            <span className="text-xs sm:text-sm font-semibold text-slate-500">回</span>
           </div>
         </div>
 
         {/* 平均インスリン */}
-        <div className="bg-slate-50/80 p-2.5 sm:p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-500 mb-0.5 sm:mb-1">
-            <span className="text-[11px] font-bold whitespace-nowrap">平均インスリン</span>
-            <Syringe className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+        <div className="bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center justify-between text-slate-600 mb-1">
+            <span className="text-xs font-bold whitespace-nowrap">平均インスリン</span>
+            <Syringe className="w-4 h-4 text-sky-500 shrink-0" />
           </div>
           <div className="flex items-baseline space-x-1">
-            <span className="text-lg sm:text-xl font-extrabold text-sky-600 tracking-tight">
+            <span className="text-xl sm:text-2xl font-extrabold text-sky-600 tracking-tight">
               {impactSummary.totalCount > 0 ? impactSummary.avgInsulin.toFixed(1) : '-'}
             </span>
-            <span className="text-xs font-semibold text-slate-500">U</span>
+            <span className="text-xs sm:text-sm font-semibold text-slate-500">U</span>
           </div>
         </div>
 
         {/* 食前 / ピーク平均 */}
-        <div className="bg-slate-50/80 p-2.5 sm:p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-500 mb-0.5 sm:mb-1">
-            <span className="text-[11px] font-bold whitespace-nowrap">食前 → ピーク</span>
-            <Activity className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+        <div className="bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center justify-between text-slate-600 mb-1">
+            <span className="text-xs font-bold whitespace-nowrap">食前 → ピーク</span>
+            <Activity className="w-4 h-4 text-emerald-500 shrink-0" />
           </div>
           <div className="flex items-baseline space-x-1">
-            <span className="text-base sm:text-lg font-extrabold text-slate-800">
+            <span className="text-lg sm:text-xl font-extrabold text-slate-800">
               {impactSummary.avgPreGlucose != null ? impactSummary.avgPreGlucose : '-'}
             </span>
             <span className="text-xs text-slate-400">→</span>
-            <span className="text-base sm:text-lg font-extrabold text-amber-600">
+            <span className="text-lg sm:text-xl font-extrabold text-amber-600">
               {impactSummary.avgPeakGlucose != null ? impactSummary.avgPeakGlucose : '-'}
             </span>
           </div>
         </div>
 
-        {/* 平均上昇幅 (Δ) */}
-        <div className="bg-slate-50/80 p-2.5 sm:p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-500 mb-0.5 sm:mb-1">
-            <span className="text-[11px] font-bold whitespace-nowrap">平均上昇幅 (Δ)</span>
-            <TrendingUp className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+        {/* 平均上昇幅 */}
+        <div className="bg-slate-50/80 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+          <div className="flex items-center justify-between text-slate-600 mb-1">
+            <span className="text-xs font-bold whitespace-nowrap">平均上昇幅</span>
+            <TrendingUp className="w-4 h-4 text-rose-500 shrink-0" />
           </div>
           <div className="flex items-baseline space-x-1">
             <span
               className={cn(
-                'text-lg sm:text-xl font-extrabold tracking-tight',
+                'text-xl sm:text-2xl font-extrabold tracking-tight',
                 impactSummary.avgDelta != null && impactSummary.avgDelta >= 50
                   ? 'text-rose-600'
                   : impactSummary.avgDelta != null && impactSummary.avgDelta >= 30
@@ -325,23 +325,23 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
                 ? `${impactSummary.avgDelta > 0 ? '+' : ''}${impactSummary.avgDelta}`
                 : '-'}
             </span>
-            <span className="text-[11px] font-semibold text-slate-500">mg/dL</span>
+            <span className="text-xs sm:text-sm font-semibold text-slate-500">mg/dL</span>
           </div>
         </div>
       </div>
 
       {/* 3. 食事履歴テーブル（スマホ横スクロール完全ゼロ・1文字区分バッジ・ピル型アコーディオン） */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden flex-1 flex flex-col min-h-0">
-        <div className="px-3 py-2.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
-          <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 min-w-0">
+        <div className="px-3.5 py-2.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
+          <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2 min-w-0">
             <span className="truncate">「{activeFoodName}」の食事履歴</span>
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-semibold whitespace-nowrap shrink-0">
+            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-200/90 text-slate-800 font-bold whitespace-nowrap shrink-0">
               {impactSummary.items.length} 件
             </span>
           </h4>
           {impactSummary.items.some((i) => i.otherFoods.length > 0) && (
-            <span className="text-[10px] sm:text-[11px] text-slate-400 whitespace-nowrap shrink-0">
-              ※行タップで他品目を表示
+            <span className="text-xs text-slate-500 whitespace-nowrap shrink-0">
+              ※タップで内訳表示
             </span>
           )}
         </div>
@@ -361,14 +361,14 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
             )}
           >
             <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-slate-100 text-slate-500 font-bold text-[10px] sm:text-[11px] border-b border-slate-200 sticky top-0 z-10 shadow-2xs">
+              <thead className="bg-slate-100 text-slate-600 font-bold text-[11px] sm:text-xs border-b border-slate-200 sticky top-0 z-10 shadow-2xs">
                 <tr>
                   <th className="py-2 pl-2 pr-0.5 sm:px-2.5 whitespace-nowrap">日時</th>
                   <th className="py-2 px-1 sm:px-2 whitespace-nowrap">量・糖質</th>
                   <th className="py-2 px-0.5 sm:px-2 text-right whitespace-nowrap">インスリン</th>
                   <th className="py-2 px-0.5 sm:px-2 text-center whitespace-nowrap">食前→ピーク</th>
                   <th className="py-2 pl-0.5 pr-2 sm:px-2.5 text-right font-extrabold whitespace-nowrap">
-                    Δ上昇幅
+                    上昇幅
                   </th>
                 </tr>
               </thead>
@@ -401,7 +401,7 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
                         {/* 列1: 1行目＝日付＋1文字区分バッジ（朝/昼/夕/間）、2行目＝時刻 */}
                         <td className="py-2 pl-2 pr-0.5 sm:px-2.5 whitespace-nowrap align-middle">
                           <div className="flex items-center gap-0.5 sm:gap-1">
-                            <span className="font-bold text-slate-800 text-[10.5px] sm:text-xs">
+                            <span className="font-bold text-slate-800 text-xs sm:text-sm">
                               {dateLabel}
                             </span>
                             <span
@@ -422,7 +422,7 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
                         {/* 列2: 1行目＝量・糖質、2行目＝他品目アコーディオンボタン */}
                         <td className="py-2 px-1 sm:px-2 align-middle">
                           <div className="flex items-baseline gap-0.5 whitespace-nowrap">
-                            <span className="font-bold text-slate-800 text-[10.5px] sm:text-xs">
+                            <span className="font-bold text-slate-800 text-xs sm:text-sm">
                               {compactAmount}
                             </span>
                             <span className="text-[10px] sm:text-[11px] font-mono font-semibold text-slate-500">
@@ -451,12 +451,12 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
                         </td>
 
                         {/* 列3: インスリン */}
-                        <td className="py-2 px-0.5 sm:px-2 text-right font-mono font-semibold text-sky-600 text-[10.5px] sm:text-xs whitespace-nowrap align-middle">
+                        <td className="py-2 px-0.5 sm:px-2 text-right font-mono font-semibold text-sky-600 text-xs sm:text-sm whitespace-nowrap align-middle">
                           {item.insulinUnits > 0 ? `${item.insulinUnits.toFixed(1)}U` : '-'}
                         </td>
 
                         {/* 列4: 食前→ピーク（後続記録干渉時は2段目にコンパクトな参考値バッジ） */}
-                        <td className="py-2 px-0.5 sm:px-2 text-center font-mono text-[10.5px] sm:text-xs whitespace-nowrap align-middle">
+                        <td className="py-2 px-0.5 sm:px-2 text-center font-mono text-xs sm:text-sm whitespace-nowrap align-middle">
                           <div>
                             <span className="font-semibold text-slate-700">
                               {item.preGlucose ?? '-'}
@@ -482,7 +482,7 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
                         <td className="py-2 pl-0.5 pr-2 sm:px-2.5 text-right whitespace-nowrap align-middle">
                           <span
                             className={cn(
-                              'font-mono font-extrabold text-[10.5px] sm:text-xs',
+                              'font-mono font-extrabold text-xs sm:text-sm',
                               item.delta != null && item.delta >= 50
                                 ? 'text-rose-600'
                                 : item.delta != null && item.delta >= 30

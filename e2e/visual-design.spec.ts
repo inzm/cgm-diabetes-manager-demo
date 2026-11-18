@@ -229,7 +229,7 @@ test.describe('AI Orchestration Visual Design & Multimodal Screenshot Suite @vis
     );
 
     // Open Category Manage Modal on Desktop
-    await page.getByRole('button', { name: 'カテゴリを編集' }).click();
+    await page.getByRole('button', { name: 'カテゴリを管理' }).click();
     await expect(page.getByRole('heading', { name: '食品カテゴリ管理' })).toBeVisible();
 
     await captureAndAuditScreen(

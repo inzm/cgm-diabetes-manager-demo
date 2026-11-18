@@ -33,39 +33,7 @@ export const WeekdayTrendsTab: React.FC<WeekdayTrendsTabProps> = ({
     return calculateWeekdayTrends(events, readings, startDate, endDate);
   }, [precomputedData, events, readings, startDate, endDate]);
 
-  // 平日（月〜金: index 1〜5）と休日（日:0, 土:6）の比較
-  const comparison = useMemo(() => {
-    const weekdays = weekdayData.filter((w) => w.dayOfWeek >= 1 && w.dayOfWeek <= 5);
-    const weekends = weekdayData.filter((w) => w.dayOfWeek === 0 || w.dayOfWeek === 6);
-
-    const avgWeekdayCarbs =
-      weekdays.reduce((a, b) => a + b.avgCarbs, 0) / (weekdays.length || 1);
-    const avgWeekendCarbs =
-      weekends.reduce((a, b) => a + b.avgCarbs, 0) / (weekends.length || 1);
-
-    const validWeekdayGlucose = weekdays
-      .map((w) => w.avgGlucose)
-      .filter((g): g is number => g !== null);
-    const avgWeekdayGlucose =
-      validWeekdayGlucose.length > 0
-        ? validWeekdayGlucose.reduce((a, b) => a + b, 0) / validWeekdayGlucose.length
-        : null;
-
-    const validWeekendGlucose = weekends
-      .map((w) => w.avgGlucose)
-      .filter((g): g is number => g !== null);
-    const avgWeekendGlucose =
-      validWeekendGlucose.length > 0
-        ? validWeekendGlucose.reduce((a, b) => a + b, 0) / validWeekendGlucose.length
-        : null;
-
-    return {
-      avgWeekdayCarbs: Math.round(avgWeekdayCarbs * 10) / 10,
-      avgWeekendCarbs: Math.round(avgWeekendCarbs * 10) / 10,
-      avgWeekdayGlucose: avgWeekdayGlucose ? Math.round(avgWeekdayGlucose) : null,
-      avgWeekendGlucose: avgWeekendGlucose ? Math.round(avgWeekendGlucose) : null,
-    };
-  }, [weekdayData]);
+  // 曜日別集計データ（平日・休日の固定区分は設けず7曜日の実データを表示）
 
   // ECharts 複合チャート (平均糖質 [棒: Amber] × 平均血糖 [折れ線: Indigo])
   const chartOption = useMemo(() => {
@@ -194,68 +162,17 @@ export const WeekdayTrendsTab: React.FC<WeekdayTrendsTabProps> = ({
   }, [weekdayData]);
 
   return (
-    <div className="flex flex-col flex-1 h-full space-y-3">
-      {/* 1. 平日 vs 休日 比較カード（第2層：淡いスレートグレー bg-slate-50/80） */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 shrink-0">
-        <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-600 mb-1">
-            <span className="text-xs font-bold">平日 (月〜金) リズム</span>
-            <span className="text-[11px] px-2 py-0.5 rounded-md bg-white text-slate-600 font-semibold border border-slate-200/80">
-              仕事・生活習慣
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-200/70">
-            <div>
-              <div className="text-[11px] text-slate-500">平均糖質 / 日</div>
-              <div className="text-base sm:text-lg font-extrabold text-amber-600">
-                {comparison.avgWeekdayCarbs} <span className="text-xs font-semibold">g</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-slate-500">平均血糖値</div>
-              <div className="text-base sm:text-lg font-extrabold text-indigo-600">
-                {comparison.avgWeekdayGlucose ?? '-'}{' '}
-                <span className="text-xs font-semibold">mg/dL</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80">
-          <div className="flex items-center justify-between text-slate-600 mb-1">
-            <span className="text-xs font-bold">休日 (土・日) リズム</span>
-            <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 font-semibold border border-amber-200/80">
-              外食・間食傾向
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-200/70">
-            <div>
-              <div className="text-[11px] text-slate-500">平均糖質 / 日</div>
-              <div className="text-base sm:text-lg font-extrabold text-amber-600">
-                {comparison.avgWeekendCarbs} <span className="text-xs font-semibold">g</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-slate-500">平均血糖値</div>
-              <div className="text-base sm:text-lg font-extrabold text-indigo-600">
-                {comparison.avgWeekendGlucose ?? '-'}{' '}
-                <span className="text-xs font-semibold">mg/dL</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. ECharts 複合チャート（第2層：淡いスレートグレー枠） */}
-      <div className="bg-slate-50/60 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80 shrink-0">
-        <div className="flex items-center justify-between mb-1">
-          <h4 className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+    <div className="flex flex-col flex-1 h-full space-y-3.5">
+      {/* 1. ECharts 複合チャート（第2層：淡いスレートグレー枠） */}
+      <div className="bg-slate-50/60 p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shrink-0">
+        <div className="flex items-center justify-between mb-1.5">
+          <h4 className="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
             <CalendarDays className="w-4 h-4 text-emerald-500" />
-            <span>曜日別の1日平均糖質 ＆ 平均血糖値</span>
+            <span>1日平均糖質と平均血糖値</span>
           </h4>
         </div>
 
-        <div className="w-full h-44 sm:h-48">
+        <div className="w-full h-52 sm:h-56">
           <ReactECharts
             option={chartOption}
             style={{ height: '100%', width: '100%' }}
@@ -264,15 +181,15 @@ export const WeekdayTrendsTab: React.FC<WeekdayTrendsTabProps> = ({
         </div>
       </div>
 
-      {/* 3. 7曜日 集計内訳テーブル（常時表示・モバイルでも横スクロールゼロで全5列収容） */}
+      {/* 2. 7曜日 集計内訳テーブル（常時表示・モバイルでも横スクロールゼロで全5列収容） */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden flex-1 flex flex-col">
-        <div className="px-3 sm:px-4 py-2 bg-slate-50 border-b border-slate-200 shrink-0">
-          <h4 className="text-xs font-bold text-slate-700">曜日別 集計内訳（日〜土）</h4>
+        <div className="px-3.5 sm:px-4 py-2.5 bg-slate-50 border-b border-slate-200 shrink-0">
+          <h4 className="text-sm font-bold text-slate-900">曜日別 集計内訳</h4>
         </div>
 
         <div className="overflow-x-auto flex-1">
-          <table className="w-full text-left text-[11px] sm:text-xs text-slate-600 h-full">
-            <thead className="bg-slate-100 text-slate-500 font-bold text-[10px] sm:text-[11px] border-b border-slate-200">
+          <table className="w-full text-left text-xs sm:text-sm text-slate-600 h-full">
+            <thead className="bg-slate-100 text-slate-600 font-bold text-[11px] sm:text-xs border-b border-slate-200">
               <tr>
                 <th className="py-1.5 pl-2.5 pr-1 sm:px-3 whitespace-nowrap">曜日</th>
                 <th className="py-1.5 px-1 sm:px-3 text-center whitespace-nowrap">対象日数</th>
