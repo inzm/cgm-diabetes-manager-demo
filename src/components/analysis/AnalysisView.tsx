@@ -490,14 +490,19 @@ export const AnalysisView: React.FC = () => {
         </div>
       )}
 
-      {/* モバイル用 ボトムナビ直上固定 期間アコーディオン（縦スワイプ / タップ開閉・複数行表示） */}
+      {/* モバイル用 ボトムナビ直上固定 期間アコーディオン（アニメーション・背面スクロール抑止・縦スワイプ / タップ開閉・複数行表示） */}
       <div
         data-testid="analysis-period-bottom-bar"
         onTouchStart={(e) => {
+          e.stopPropagation();
           const touch = e.touches?.[0] ?? e.changedTouches?.[0];
           if (touch) periodSheetTouchStartY.current = touch.clientY;
         }}
+        onTouchMove={(e) => {
+          e.stopPropagation();
+        }}
         onTouchEnd={(e) => {
+          e.stopPropagation();
           if (periodSheetTouchStartY.current === null) return;
           const touch = e.changedTouches?.[0] ?? e.touches?.[0];
           const startY = periodSheetTouchStartY.current;
@@ -507,7 +512,7 @@ export const AnalysisView: React.FC = () => {
           if (deltaY < -25) setIsPeriodSheetOpen(true);
           if (deltaY > 25) setIsPeriodSheetOpen(false);
         }}
-        className="sm:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_16px_-4px_rgba(15,23,42,0.12)]"
+        className="sm:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] inset-x-0 z-30 touch-none overscroll-contain bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_16px_-4px_rgba(15,23,42,0.12)]"
       >
         <button
           type="button"
@@ -530,59 +535,68 @@ export const AnalysisView: React.FC = () => {
           </div>
         </button>
 
-        {isPeriodSheetOpen && (
-          <div className="px-3 pb-3 pt-1.5 space-y-2.5 border-t border-slate-100">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {rangeOptions.map((opt) => (
-                <button
-                  key={opt.key}
-                  type="button"
-                  onClick={() => {
-                    setDateRange(opt.key);
-                    setIsPeriodSheetOpen(false);
-                  }}
-                  className={cn(
-                    'min-h-[40px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer',
-                    dateRange === opt.key
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  )}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
+        <div
+          className={cn(
+            'grid transition-[grid-template-rows,opacity] duration-250 ease-[cubic-bezier(0.16,1,0.3,1)]',
+            isPeriodSheetOpen
+              ? 'grid-rows-[1fr] opacity-100 visible'
+              : 'grid-rows-[0fr] opacity-0 invisible pointer-events-none'
+          )}
+        >
+          <div className="overflow-hidden">
+            <div className="px-3 pb-3 pt-1.5 space-y-2.5 border-t border-slate-100">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {rangeOptions.map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => {
+                      setDateRange(opt.key);
+                      setIsPeriodSheetOpen(false);
+                    }}
+                    className={cn(
+                      'min-h-[40px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer',
+                      dateRange === opt.key
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
 
-            <select
-              aria-label="月単位で集計期間を選択"
-              value={isMonthSelected ? dateRange : ''}
-              onChange={(e) => {
-                if (e.target.value) {
-                  setDateRange(e.target.value as AnalysisRange);
-                  setIsPeriodSheetOpen(false);
-                }
-              }}
-              className={cn(
-                'w-full min-h-[42px] px-3 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500',
-                isMonthSelected
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-              )}
-            >
-              <option value="" disabled>
-                📅 月別で選択...
-              </option>
-              {availableMonths.map((ym) => {
-                const [yStr, mStr] = ym.split('-');
-                return (
-                  <option key={ym} value={`month:${ym}`} className="bg-white text-slate-800">
-                    📅 {yStr}年{parseInt(mStr, 10)}月
-                  </option>
-                );
-              })}
-            </select>
+              <select
+                aria-label="月単位で集計期間を選択"
+                value={isMonthSelected ? dateRange : ''}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setDateRange(e.target.value as AnalysisRange);
+                    setIsPeriodSheetOpen(false);
+                  }
+                }}
+                className={cn(
+                  'w-full min-h-[42px] px-3 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500',
+                  isMonthSelected
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                )}
+              >
+                <option value="" disabled>
+                  📅 月別で選択...
+                </option>
+                {availableMonths.map((ym) => {
+                  const [yStr, mStr] = ym.split('-');
+                  return (
+                    <option key={ym} value={`month:${ym}`} className="bg-white text-slate-800">
+                      📅 {yStr}年{parseInt(mStr, 10)}月
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
           </div>
-        )}
+        </div>
       </div>
 
       {/* PC用 下部固定 期間セレクターバー */}

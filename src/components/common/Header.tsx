@@ -78,11 +78,11 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center space-x-2 sm:space-x-2.5 shrink-0">
           <img
             src="/icons/icon-192.svg"
-            alt="リブレ・食事管理"
+            alt="糖質管理"
             className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg drop-shadow-2xs shrink-0"
           />
           <span className="font-extrabold tracking-tight text-slate-900 text-xs sm:text-sm whitespace-nowrap">
-            リブレ・食事管理
+            糖質管理
           </span>
         </div>
 

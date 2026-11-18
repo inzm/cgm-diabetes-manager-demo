@@ -349,9 +349,9 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await page.getByRole('button', { name: '閉じる' }).click();
 
     // 飲料だった「緑茶」が消えずに残っていることを確認
-    await page.getByPlaceholder(/食品名で検索/).fill('緑茶');
+    await page.locator('input[placeholder*="食品名で検索"]:visible').fill('緑茶');
     await expect(page.getByText('緑茶', { exact: true })).toBeVisible();
-    await page.getByLabel('検索クリア').click();
+    await page.getByLabel('検索クリア').first().click();
 
     // 4. カレンダーに戻り、食事記録・活動記録モーダルの選択肢に反映されていることを確認
     await page.getByRole('button', { name: 'カレンダー' }).first().click();
@@ -621,9 +621,11 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     // 2. システム保護カテゴリ「未分類」に削除ボタンが存在しないことを検証
     await page.getByRole('button', { name: '食品・活動' }).first().click();
     await page.getByRole('button', { name: 'カテゴリを編集' }).click();
-    await expect(page.getByText('保護（受け皿）')).toBeVisible();
-    const protectedRow = page.getByText('保護（受け皿）').locator('../..');
-    await expect(protectedRow.locator('button[title="削除"]')).toHaveCount(0);
+    const uncategorizedRow = page.locator('div.justify-between', {
+      has: page.getByText('未分類', { exact: true }),
+    });
+    await expect(uncategorizedRow).toBeVisible();
+    await expect(uncategorizedRow.locator('button[title="削除"]')).toHaveCount(0);
     await page.getByRole('button', { name: '閉じる' }).click();
 
     // 3. 削除確認ダイアログのキャンセル保護 & 削除実行時の減算一致検証

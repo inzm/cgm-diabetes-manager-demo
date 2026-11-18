@@ -191,37 +191,38 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({
             )}
           </div>
 
-          {/* 4行目: 血糖値平均 (日付と競合しないよう正常時は落ち着いたスレート色、閾値超過時のみ青/赤) */}
-          <div className="flex items-center leading-none shrink-0 mt-0.5 sm:mt-0">
-            {avgGlucose !== null ? (
-              <span
-                className={cn(
-                  'inline-flex items-center gap-0.5 text-[11px] sm:text-xs font-bold tabular-nums leading-none whitespace-nowrap',
-                  avgGlucose < hypoThreshold
-                    ? 'text-blue-600'
-                    : avgGlucose > hyperThreshold
-                    ? 'text-rose-600'
-                    : 'text-slate-700'
-                )}
-                title={`平均血糖値 ${avgGlucose} mg/dL`}
-              >
-                <span className="text-[9px] sm:text-[10px] leading-none opacity-75">🩸</span>
-                <span>{avgGlucose}</span>
-              </span>
-            ) : (
-              <span className="text-[8px] text-transparent select-none leading-none">-</span>
-            )}
-          </div>
+          {/* 4行目〜5行目: 血糖値平均 ＋ 24Hスパークライン（スパークラインのすぐ上に血糖値平均を配置） */}
+          <div className="mt-auto w-full flex flex-col gap-0.5">
+            <div className="flex items-center leading-none shrink-0">
+              {avgGlucose !== null ? (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-0.5 text-[11px] sm:text-xs font-bold tabular-nums leading-none whitespace-nowrap',
+                    avgGlucose < hypoThreshold
+                      ? 'text-blue-600'
+                      : avgGlucose > hyperThreshold
+                      ? 'text-rose-600'
+                      : 'text-slate-700'
+                  )}
+                  title={`平均血糖値 ${avgGlucose} mg/dL`}
+                >
+                  <span className="text-[9px] sm:text-[10px] leading-none opacity-75">🩸</span>
+                  <span>{avgGlucose}</span>
+                </span>
+              ) : (
+                <span className="text-[8px] text-transparent select-none leading-none">-</span>
+              )}
+            </div>
 
-          {/* 5行目: 24Hスパークライン (目標帯を設定閾値と連動、スマホの残りセル高さに柔軟フィット) */}
-          <div className="w-full flex-1 min-h-[12px] max-h-[18px] sm:max-h-[20px] mt-auto flex items-end">
-            <Sparkline
-              data={sparklineData}
-              height={16}
-              targetMin={hypoThreshold}
-              targetMax={hyperThreshold}
-              className="h-full"
-            />
+            <div className="w-full h-[14px] sm:h-[18px] flex items-end">
+              <Sparkline
+                data={sparklineData}
+                height={16}
+                targetMin={hypoThreshold}
+                targetMax={hyperThreshold}
+                className="h-full"
+              />
+            </div>
           </div>
         </>
       )}

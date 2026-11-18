@@ -7,7 +7,7 @@ import { invalidateAnalysisDatasetCache, isPortfolioMode } from '@/lib/realGluco
 import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import { X, Sparkles, Loader2, Check, AlertCircle, Trash2 } from 'lucide-react';
-import { cn, getErrorMessage } from '@/lib/utils';
+import { cn, getErrorMessage, showToast } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { invalidateFoodMasterMemoryCache } from './FoodMasterView';
 
@@ -170,6 +170,7 @@ export const FoodEditModal: React.FC<FoodEditModalProps> = ({
       invalidateFoodMasterMemoryCache(currentPatientId);
       invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
+      showToast(foodToEdit ? '食品を更新しました' : '食品を登録しました');
       onSaveSuccess();
       onClose();
     } catch (err: unknown) {

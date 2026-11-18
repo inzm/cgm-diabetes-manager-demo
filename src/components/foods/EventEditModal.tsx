@@ -6,7 +6,7 @@ import { triggerBackgroundCloudSync } from '@/lib/syncEngine';
 import { useAnimatedModal } from '@/lib/useAnimatedModal';
 import { usePatient } from '@/contexts/PatientContext';
 import { X, Footprints, Check, Trash2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, showToast } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { invalidateFoodMasterMemoryCache } from './FoodMasterView';
 
@@ -137,6 +137,7 @@ export const EventEditModal: React.FC<EventEditModalProps> = ({
       invalidateFoodMasterMemoryCache(currentPatientId);
       invalidateAnalysisDatasetCache(currentPatientId);
       triggerBackgroundCloudSync(currentPatientId);
+      showToast(editItem ? '活動を更新しました' : '活動を登録しました');
       onSaved();
       onClose();
     } catch (err) {

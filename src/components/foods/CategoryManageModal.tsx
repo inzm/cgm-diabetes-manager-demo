@@ -343,13 +343,13 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
                 maxLength={MAX_CATEGORY_NAME_LENGTH}
                 onChange={(e) => setNewCategoryName(e.target.value)}
                 placeholder="新しいカテゴリ名を入力..."
-                className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                className="flex-1 min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 text-sm sm:text-base focus:outline-hidden focus:ring-2 focus:ring-sky-500"
               />
               <button
                 type="submit"
-                className="inline-flex items-center gap-1 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold cursor-pointer shrink-0 active:scale-95"
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-sm font-bold cursor-pointer shrink-0 active:scale-95"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-4 h-4" />
                 <span>追加</span>
               </button>
             </form>
@@ -358,7 +358,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
           {/* カテゴリ一覧 */}
           <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl">
             {categories.map((cat) => (
-              <div key={cat.id} className="flex items-center justify-between px-3.5 py-2.5 bg-white">
+              <div key={cat.id} className="flex items-center justify-between px-4 py-3 bg-white">
                 {editingId === cat.id ? (
                   <div className="flex items-center gap-2 flex-1 mr-2">
                     <input
@@ -366,37 +366,32 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
                       value={editingName}
                       maxLength={MAX_CATEGORY_NAME_LENGTH}
                       onChange={(e) => setEditingName(e.target.value)}
-                      className="flex-1 px-2.5 py-1 rounded-lg border border-sky-400 text-xs font-semibold focus:outline-hidden"
+                      className="flex-1 min-h-[40px] px-3 py-1.5 rounded-lg border border-sky-400 text-sm font-semibold focus:outline-hidden"
                       autoFocus
                     />
                     <button
                       type="button"
                       onClick={() => handleSaveEdit(cat.id)}
-                      className="p-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
+                      className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
                       title="保存"
                     >
-                      <Check className="w-3.5 h-3.5" />
+                      <Check className="w-4 h-4" />
                     </button>
                     <button
                       type="button"
                       onClick={() => setEditingId(null)}
-                      className="p-1.5 rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 cursor-pointer"
+                      className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 cursor-pointer"
                       title="キャンセル"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <X className="w-4 h-4" />
                     </button>
                   </div>
                 ) : (
                   <>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs sm:text-sm font-semibold text-slate-800">
+                      <span className="text-sm sm:text-base font-bold text-slate-800">
                         {cat.category_name}
                       </span>
-                      {cat.is_protected && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-medium">
-                          保護（受け皿）
-                        </span>
-                      )}
                     </div>
 
                     {!isReadOnly && (
@@ -404,19 +399,19 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
                         <button
                           type="button"
                           onClick={() => handleStartEdit(cat)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 cursor-pointer transition-colors"
+                          className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 cursor-pointer transition-colors"
                           title="名称を編集"
                         >
-                          <Edit3 className="w-3.5 h-3.5" />
+                          <Edit3 className="w-4 h-4" />
                         </button>
                         {!cat.is_protected && (
                           <button
                             type="button"
                             onClick={() => handleRequestDeleteCategory(cat)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+                            className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
                             title="削除"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
                       </div>
@@ -431,7 +426,7 @@ export const CategoryManageModal: React.FC<CategoryManageModalProps> = ({
             <button
               type="button"
               onClick={handleRequestClose}
-              className="px-4 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 cursor-pointer"
+              className="min-h-[44px] px-5 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 cursor-pointer"
             >
               閉じる
             </button>
