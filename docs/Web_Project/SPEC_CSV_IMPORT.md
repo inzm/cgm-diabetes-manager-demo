@@ -118,6 +118,7 @@ CSV取込Worker（`src/workers/csvParser.worker.ts`）では、各測定値レ�
 ## 5. UIコンポーネント仕様 (`src/components/import/CsvImportModal.tsx`, `src/lib/useAnimatedModal.ts`)
 
 - 見出しはシンプルに「リブレCSVデータの取込」とし、「Web Worker」「並列パース」「バインド」などの技術用語は画面上に表示しない。
+- **スマートフォンでの確実なファイル選択・文字コード対応**: Android / iOS のファイルピッカーで `.csv` ファイルが MIME タイプ不一致によりグレーアウトして選択できなくなる問題および `display: none` 要素へのプログラムクリック制限を回避するため、ドロップゾーン全体をネイティブ `<label htmlFor="csv-file-upload-input">` と `sr-only` な `<input type="file">` で構成し、`accept` 属性によるOS側フィルタを行わず `processFile` 内で `.csv` / `.txt` 拡張子検証を行う。また、`handleFileChange` で `e.target.value = ''` をリセットし、UTF-8 で文字化け（`\uFFFD`）を検知した場合は `shift-jis` へ自動フォールバックしてデコードする。
 - **デモアプリ（ポートフォリオモード）における非活性化制御**: デモアプリ環境（`isPortfolioMode()`）では、PCサブナビ（`src/App.tsx`）およびモバイル下部ナビのスピードダイヤル（`src/components/common/BottomNav.tsx`）のCSV取込ボタンを `disabled`（非活性化）にし、**「デモアプリでは利用できません」** というメッセージを明示する（万一モーダル内でファイル処理が呼ばれた場合も `isDemoCsvImportDisabled()` により「デモアプリでは利用できません」と表示して中断する）。
 - オープン・クローズ時は `useAnimatedModal(isOpen, 220)`（`src/lib/useAnimatedModal.ts`）による2段階マウント制御により、背景オーバーレイのフェードイン/アウトとモーダル本体のズーム＆フェードトランジションを滑らかに実行し、アンマウント時には進行中の Worker インスタンス（`activeWorkerRef`）を確実に `terminate()` してメモリリークを防止する。
 - `usePatient()` から現在の `hypoThreshold` および `hyperThreshold` を取得し、Worker の `START_IMPORT` メッセージへ引き渡す。

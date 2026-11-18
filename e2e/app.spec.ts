@@ -685,7 +685,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     const tmpCsvPath = path.join(os.tmpdir(), `libre_e2e_${Date.now()}.csv`);
     fs.writeFileSync(tmpCsvPath, sampleCsv, 'utf8');
 
-    const fileInput = page.locator('input[type="file"][accept=".csv,.txt"]');
+    const fileInput = page.locator('#csv-file-upload-input');
     await fileInput.setInputFiles(tmpCsvPath);
 
     await expect(page.getByText('データの取込が完了しました！')).toBeVisible();

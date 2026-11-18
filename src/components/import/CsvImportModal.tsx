@@ -77,8 +77,10 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      processFile(e.target.files[0]);
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) {
+      processFile(file);
     }
   };
 
@@ -107,7 +109,15 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
     setCompleteStats(null);
 
     try {
-      const text = await file.text();
+      const buffer = await file.arrayBuffer();
+      let text = new TextDecoder('utf-8').decode(buffer);
+      if (text.includes('\uFFFD')) {
+        try {
+          text = new TextDecoder('shift-jis').decode(buffer);
+        } catch {
+          // UTF-8デコード結果をそのまま利用
+        }
+      }
 
       activeWorkerRef.current?.terminate();
       const worker = new Worker(
@@ -266,11 +276,11 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
 
           {!isProcessing && !completeStats && (
             <>
-              <div
+              <label
+                htmlFor="csv-file-upload-input"
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
                 className={cn(
                   'border-2 border-dashed rounded-2xl p-8 text-center transition-all cursor-pointer select-none flex flex-col items-center justify-center gap-3',
                   isDragging
@@ -279,12 +289,12 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                 )}
               >
                 <input
+                  id="csv-file-upload-input"
                   ref={fileInputRef}
                   type="file"
-                  accept=".csv,.txt"
                   disabled={isReadOnly}
                   onChange={handleFileChange}
-                  className="hidden"
+                  className="sr-only"
                 />
 
                 <div className="w-12 h-12 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center">
@@ -303,7 +313,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                 <div className="text-[11px] text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
                   FreeStyleリブレ標準形式 (日本語 / 英語) 対応
                 </div>
-              </div>
+              </label>
 
               <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200/60 text-xs text-slate-600 space-y-1.5">
                 <div className="flex items-center gap-2">
