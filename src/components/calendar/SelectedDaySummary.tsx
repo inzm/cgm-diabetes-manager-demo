@@ -66,71 +66,44 @@ export const SelectedDaySummary: React.FC<SelectedDaySummaryProps> = ({
 
   return (
     <div className="shrink-0 sticky top-12 max-sm:relative max-sm:top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-slate-200/90 shadow-xs">
-      <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 py-1.5 sm:py-2 relative">
-        {/* モバイル用: 省スペース1行スリム表示 (M/D (曜) バッジ・アイコン+数値・凡例アイコンボタン) */}
-        <div className="sm:hidden flex items-center justify-between gap-1.5 py-0.5">
-          <div
-            onClick={onOpenDetails}
-            role="button"
-            tabIndex={0}
-            className="flex-1 flex items-center justify-between gap-1.5 min-w-0 cursor-pointer active:opacity-75"
-          >
-            <span
-              className={cn(
-                'inline-flex items-baseline gap-1 px-2.5 py-0.5 rounded-lg border shadow-2xs whitespace-nowrap shrink-0',
-                dateBadgeStyle
-              )}
-            >
-              <span className="text-sm font-black tracking-tight tabular-nums">
-                {compactMobileDate}
-              </span>{' '}
-              {weekdayLabel && (
-                <span className="text-xs font-extrabold">{weekdayLabel}</span>
-              )}
-            </span>
-
-            <div className="flex items-center gap-1.5 text-xs overflow-x-auto no-scrollbar">
-              {/* 平均血糖 (テキスト廃止・アイコンのみ) */}
-              <span className="inline-flex items-baseline gap-0.5 whitespace-nowrap">
-                <span className="text-[10px]">🩸</span>
-                <span className={cn('font-black tabular-nums', glucoseColor)}>
-                  {avg !== null ? avg : '--'}
-                </span>
-                <span className="text-[8.5px] text-slate-400">mg/dL</span>
+      <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 py-2 sm:py-2.5 relative">
+        {/* モバイル用: 2段構成の視認性重視サマリー (1段目: 日付・異常値・凡例 / 2段目: 血糖・糖質・インスリン) */}
+        <div
+          onClick={onOpenDetails}
+          role="button"
+          tabIndex={0}
+          className="sm:hidden space-y-1.5 cursor-pointer"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1 flex items-center justify-between gap-2 min-w-0 active:opacity-75">
+              <span
+                className={cn(
+                  'inline-flex items-baseline gap-1 px-3 py-1 rounded-lg border shadow-2xs whitespace-nowrap shrink-0',
+                  dateBadgeStyle
+                )}
+              >
+                <span className="text-[15px] font-black tracking-tight tabular-nums">
+                  {compactMobileDate}
+                </span>{' '}
+                {weekdayLabel && (
+                  <span className="text-xs font-extrabold">{weekdayLabel}</span>
+                )}
               </span>
-
-              <span className="text-slate-200">|</span>
-
-              {/* 糖質 (テキスト廃止・アイコンのみ) */}
-              <span className="inline-flex items-baseline gap-0.5 whitespace-nowrap">
-                <span className="text-[10px]">🍚</span>
-                <span className="font-bold text-amber-700 tabular-nums">{totalCarbsDisplay}</span>
-                <span className="text-[9px] text-slate-400">g</span>
-              </span>
-
-              <span className="text-slate-200">|</span>
-
-              {/* インスリン */}
-              <span className="inline-flex items-baseline gap-0.5 whitespace-nowrap">
-                <span className="text-[10px]">💉</span>
-                <span className="font-bold text-sky-700 tabular-nums">
-                  {daySummary.totalInsulin}
-                </span>
-                <span className="text-[9px] text-slate-400">U</span>
-              </span>
-
-              <span className="text-slate-200">|</span>
 
               {/* 異常値回数 (▼=青系, ▲=赤系) */}
-              <span className="inline-flex items-center gap-1 whitespace-nowrap font-bold tabular-nums">
-                <span className="text-blue-600 text-[11px]">▼{daySummary.hypoCount}</span>
-                <span className="text-rose-600 text-[11px]">▲{daySummary.hyperCount}</span>
+              <span className="inline-flex items-center gap-2 whitespace-nowrap font-extrabold tabular-nums text-xs bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200/80">
+                <span className="text-blue-600">▼低 {daySummary.hypoCount}</span>
+                <span className="text-slate-300">/</span>
+                <span className="text-rose-600">▲高 {daySummary.hyperCount}</span>
               </span>
             </div>
-          </div>
 
-          {/* 右端: スマホ用 凡例ポップオーバートグルボタン (「！」アイコン) */}
-          <div ref={popoverRef} className="relative shrink-0">
+            {/* 右端: スマホ用 凡例ポップオーバートグルボタン (「！」アイコン) */}
+            <div
+              ref={popoverRef}
+              onClick={(e) => e.stopPropagation()}
+              className="relative shrink-0"
+            >
             <button
               type="button"
               aria-label="凡例を表示"
@@ -139,14 +112,14 @@ export const SelectedDaySummary: React.FC<SelectedDaySummaryProps> = ({
                 setIsLegendOpen((prev) => !prev);
               }}
               className={cn(
-                'w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer active:scale-95',
+                'w-7 h-7 rounded-full flex items-center justify-center border transition-all cursor-pointer active:scale-95',
                 isLegendOpen
                   ? 'bg-sky-600 text-white border-sky-600 shadow-xs'
                   : 'bg-slate-100 text-slate-500 border-slate-200/90 hover:bg-slate-200'
               )}
               title="カレンダー記号の凡例"
             >
-              <AlertCircle className="w-3.5 h-3.5" />
+              <AlertCircle className="w-4 h-4" />
             </button>
 
             {isLegendOpen && (
@@ -198,6 +171,34 @@ export const SelectedDaySummary: React.FC<SelectedDaySummaryProps> = ({
                 </div>
               </div>
             )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1.5 active:opacity-75">
+            {/* 平均血糖 */}
+            <div className="flex items-center justify-center gap-1 py-1 px-1.5 rounded-lg bg-slate-50 border border-slate-200/80 whitespace-nowrap">
+              <span className="text-xs">🩸</span>
+              <span className={cn('text-sm font-black tabular-nums', glucoseColor)}>
+                {avg !== null ? avg : '--'}
+              </span>
+              <span className="text-[10px] font-semibold text-slate-400">mg/dL</span>
+            </div>
+
+            {/* 糖質 */}
+            <div className="flex items-center justify-center gap-1 py-1 px-1.5 rounded-lg bg-slate-50 border border-slate-200/80 whitespace-nowrap">
+              <span className="text-xs">🍚</span>
+              <span className="text-sm font-black text-amber-700 tabular-nums">{totalCarbsDisplay}</span>
+              <span className="text-[10px] font-semibold text-slate-400">g</span>
+            </div>
+
+            {/* インスリン */}
+            <div className="flex items-center justify-center gap-1 py-1 px-1.5 rounded-lg bg-slate-50 border border-slate-200/80 whitespace-nowrap">
+              <span className="text-xs">💉</span>
+              <span className="text-sm font-black text-sky-700 tabular-nums">
+                {daySummary.totalInsulin}
+              </span>
+              <span className="text-[10px] font-semibold text-slate-400">U</span>
+            </div>
           </div>
         </div>
 
@@ -209,10 +210,10 @@ export const SelectedDaySummary: React.FC<SelectedDaySummaryProps> = ({
           className="hidden sm:flex items-center justify-between gap-4 cursor-pointer group"
         >
           {/* 左側: 選択日付（曜日別カラー強調バッジ） */}
-          <div className="flex items-center gap-2 shrink-0 min-w-[140px]">
+          <div className="flex items-center gap-2 shrink-0 min-w-[150px]">
             <span
               className={cn(
-                'inline-flex items-center px-3.5 py-1.5 rounded-xl border text-base font-black tracking-tight tabular-nums shadow-2xs',
+                'inline-flex items-center px-4 py-2 rounded-xl border text-lg font-black tracking-tight tabular-nums shadow-2xs',
                 dateBadgeStyle
               )}
             >
@@ -223,62 +224,62 @@ export const SelectedDaySummary: React.FC<SelectedDaySummaryProps> = ({
           {/* 右側: 4大指標コンパクトグリッド */}
           <div className="flex-1 grid grid-cols-4 gap-2.5">
             {/* 1. 平均血糖値 */}
-            <div className="flex items-center justify-between px-3.5 py-1.5 rounded-xl border border-slate-200/90 bg-slate-50/60 group-hover:border-rose-300 transition-colors">
-              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-                <Droplets className="w-3.5 h-3.5 text-rose-500" />
+            <div className="flex items-center justify-between px-3.5 py-2 rounded-xl border border-slate-200/90 bg-slate-50/60 group-hover:border-rose-300 transition-colors">
+              <span className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-600">
+                <Droplets className="w-4 h-4 text-rose-500" />
                 平均血糖値
               </span>
               <div className="flex items-baseline gap-1">
-                <span className={cn('text-base font-black tabular-nums', glucoseColor)}>
+                <span className={cn('text-lg font-black tabular-nums', glucoseColor)}>
                   {avg !== null ? avg : '--'}
                 </span>
-                <span className="text-[11px] text-slate-400 font-medium">mg/dL</span>
+                <span className="text-xs text-slate-400 font-medium">mg/dL</span>
               </div>
             </div>
 
             {/* 2. 糖質量合計 */}
-            <div className="flex items-center justify-between px-3.5 py-1.5 rounded-xl border border-slate-200/90 bg-slate-50/60 group-hover:border-amber-300 transition-colors">
-              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-                <Utensils className="w-3.5 h-3.5 text-amber-500" />
+            <div className="flex items-center justify-between px-3.5 py-2 rounded-xl border border-slate-200/90 bg-slate-50/60 group-hover:border-amber-300 transition-colors">
+              <span className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-600">
+                <Utensils className="w-4 h-4 text-amber-500" />
                 糖質量合計
               </span>
               <div className="flex items-baseline gap-1">
-                <span className="text-base font-black text-amber-700 tabular-nums">
+                <span className="text-lg font-black text-amber-700 tabular-nums">
                   {totalCarbsDisplay}
                 </span>
-                <span className="text-[11px] text-slate-400 font-medium">g</span>
+                <span className="text-xs text-slate-400 font-medium">g</span>
               </div>
             </div>
 
             {/* 3. インスリン量 */}
-            <div className="flex items-center justify-between px-3.5 py-1.5 rounded-xl border border-slate-200/90 bg-slate-50/60 group-hover:border-sky-300 transition-colors">
-              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-                <Syringe className="w-3.5 h-3.5 text-sky-500" />
+            <div className="flex items-center justify-between px-3.5 py-2 rounded-xl border border-slate-200/90 bg-slate-50/60 group-hover:border-sky-300 transition-colors">
+              <span className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-600">
+                <Syringe className="w-4 h-4 text-sky-500" />
                 インスリン量
               </span>
               <div className="flex items-baseline gap-1">
-                <span className="text-base font-black text-sky-700 tabular-nums">
+                <span className="text-lg font-black text-sky-700 tabular-nums">
                   {daySummary.totalInsulin}
                 </span>
-                <span className="text-[11px] text-slate-400 font-medium">単位</span>
+                <span className="text-xs text-slate-400 font-medium">単位</span>
               </div>
             </div>
 
             {/* 4. 異常値回数 (▼低=青系, ▲高=赤系) */}
-            <div className="flex items-center justify-between px-3.5 py-1.5 rounded-xl border border-slate-200/90 bg-slate-50/60 group-hover:border-slate-300 transition-colors">
-              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-                <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
+            <div className="flex items-center justify-between px-3.5 py-2 rounded-xl border border-slate-200/90 bg-slate-50/60 group-hover:border-slate-300 transition-colors">
+              <span className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-600">
+                <AlertTriangle className="w-4 h-4 text-slate-400" />
                 異常値回数
               </span>
               <div className="flex items-center gap-2.5 tabular-nums">
                 <span className="inline-flex items-baseline gap-0.5 text-blue-600 font-extrabold text-sm">
                   <span className="text-xs">▼低</span>
-                  <span className="text-base font-black">{daySummary.hypoCount}</span>
+                  <span className="text-lg font-black">{daySummary.hypoCount}</span>
                 </span>
                 <span className="text-slate-300">/</span>
                 <span className="inline-flex items-baseline gap-0.5 text-rose-600 font-extrabold text-sm">
                   <span className="text-xs">▲高</span>
-                  <span className="text-base font-black">{daySummary.hyperCount}</span>
+                  <span className="text-lg font-black">{daySummary.hyperCount}</span>
                 </span>
               </div>
             </div>

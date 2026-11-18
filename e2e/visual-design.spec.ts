@@ -204,7 +204,7 @@ test.describe('AI Orchestration Visual Design & Multimodal Screenshot Suite @vis
 
     // Navigate to Analysis Dashboard on Desktop
     await page.getByRole('button', { name: '分析' }).first().click();
-    await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
+    await expect(page.getByText('集計期間')).toBeVisible();
     await expect(page.getByLabel('分析する食品を選択')).toBeVisible();
 
     await captureAndAuditScreen(
@@ -291,7 +291,7 @@ test.describe('AI Orchestration Visual Design & Multimodal Screenshot Suite @vis
 
     // Navigate to Analysis Dashboard on Mobile
     await page.locator('button:visible', { hasText: '分析' }).first().click();
-    await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
+    await expect(page.getByText('集計期間')).toBeVisible();
     await expect(page.getByLabel('分析する食品を選択')).toBeVisible();
 
     await captureAndAuditScreen(

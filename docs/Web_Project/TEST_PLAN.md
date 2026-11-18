@@ -54,7 +54,7 @@
 | 検証項目 | 手法・判定基準 |
 | :--- | :--- |
 | **DDD 仕様書・図面・DDL・型定義・ユーザーガイド・コード同期 & セキュリティ検査 (`scripts/verify-docs-sync.mjs` / `scripts/gates/*.ts`)** | ソースコード（`src/`, `functions/`, `supabase/`）変更時に対応する `SPEC_*.md` / `ARCHITECTURE.md` / `USER_GUIDE.md` / `diagrams/*`（重要変更時は `requiredSpecs` 全件）が直前の純粋先行仕様コミット（`docs(spec): ...`）または同一変更セット内で更新されていること、仕様書・ルート `README.md`・`AGENTS.md` 内の参照ファイルパス（日本語パス含む）・リンク・`.agents/hooks.json` スクリプトおよびバッククォート識別子（Check 8：仕様先行コミット段階の新規追加識別子のみ実装完了まで段階的許容し、出荷検証・CIでは全件厳格エラー）がすべて実在すること、`src/`・`functions/` の全モジュールが `SOURCE_TO_SPEC_RULES` にマッピングされクライアント全モジュールがスモークテストで自動導出されていること、連番マイグレーション（`supabase/migrations/*.sql`）・`supabase/schema_snapshot.json`・`ARCHITECTURE.md` Section 5・`src/types/database.ts`・`src/lib/db.ts`・`SEQUENCE_AND_ERD.md` の6層スキーマ（全テーブル・全カラム・文字長上限・`app_private` `SECURITY DEFINER` 分離）が完全一致すること、E2Eテストスイート数・Vitest件数表記が実コードと一致すること、仕様書内に未完了ステータスタグ（`【未決事項】`・`【要確認】`・`【改修予定】`・`【実装予定】`・`【将来案】`）や内部 `Issue #XX` 参照が含まれていないこと、置換破損・文字化け・UTF-8 BOM・表崩れ・旧VBA資産のGit追跡が存在しないこと、`src/`・`functions/` 内に `localStorage` へのAPIキー保存や `window` テストバックドアフラグ・虚偽の「安全に保管」表示が存在しないこと |
-| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | OS 空きポート自動割当による隔離エフェメラル Vite 開発サーバーに対して全56エンドポイント（全UIコンポーネント・Context・Lib・Types・Worker）の8並列リクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
+| **Vite Error Overlay ゼロ検証 (`scripts/smoke-test.mjs`)** | OS 空きポート自動割当による隔離エフェメラル Vite 開発サーバーに対して全57エンドポイント（全UIコンポーネント・Context・Lib・Types・Worker）の8並列リクエストを行い、実ファイル存在確認・SPAフォールバック除外・`vite-error-overlay` 等のエラーゼロを確認すること |
 
 ### 2.3 Layer 4: Browser E2E テスト計画 (Playwright)
 

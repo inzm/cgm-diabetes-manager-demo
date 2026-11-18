@@ -90,7 +90,7 @@
   - 清潔感のある白基調（`bg-white/95 backdrop-blur-md border-b border-slate-200/90`）のモダンな医療アプリヘッダーとし、二重枠線を排してCGM水滴＆波形アイコン（`public/icons/icon-192.svg`）自体の鮮やかなグラデーションが映えるデザインとする。
   - **左右の視覚バランス設計 & 未来月への遷移制限**:
     - 左側: アプリアイコン（`public/icons/icon-192.svg`）＋ブランドタイトル「リブレ・食事管理」を配置。
-    - 右側: カレンダー表示時は `◀ YYYY年 M月 ▶` ＋ 独立した **`[今月]` ボタン**（現在の日付の月への移動）＋ 独立した **`[↻]` ボタン**（カレンダーデータの再読み込み更新）を配置。他画面表示時は、中央に中途半端にテキストが浮くのを防ぐため、右側にアイコン付きの現在画面ピルバッジ（`よく使う食品・活動` / `データ分析` / `設定`）およびオフライン・閲覧専用バッジを整然と右寄せ配置する。
+    - 右側: カレンダー表示時は視認性とタップ性を高めた `◀ YYYY年 M月 ▶`（`text-sm sm:text-base`）＋ 独立した **`[今月]` ボタン**（現在の日付の月への移動）を配置する（データ変更は自動反映されるため手動更新ボタンは設けない）。また、ヘッダー直下の選択日サマリーバー（`SelectedDaySummary.tsx`）も視認性を重視した大きめの数値・日付表示とする。他画面表示時は、中央に中途半端にテキストが浮くのを防ぐため、右側にアイコン付きの現在画面ピルバッジ（`よく使う食品・活動` / `データ分析` / `設定`）およびオフライン・閲覧専用バッジを整然と右寄せ配置する。
     - **現在の日付の月までの表示・未来月の遷移制限**: データ取込にはCSVダウンロードが必要なため常に最新データが取得されているとは限らないことから、デモアプリ・通常モードを問わずカレンダーは**「現在の日付の月（`new Date()` の年月）」まで表示・移動可能**とし、それより未来の月は表示・遷移しない（初期表示は最新データが存在する `2026年 8月` を表示し、`[今月]` ボタンや `▶` ボタンで現在の日付の月まで移動可能とする）。カレンダーが現在の日付の月（上限月）を表示している時は、ヘッダーの「翌月（`▶`）」ボタンを `disabled`（非活性・視覚的にも薄く表示）にする。
 - **ナビゲーションタブ & 片手操作向け左右スワイプ画面遷移**:
   - PC用サブナビ・モバイル用ボトムナビともに以下の構成（並び順：`calendar` ⇔ `events` ⇔ `analysis` ⇔ `settings`）に統一：
@@ -199,7 +199,7 @@
   - `index.html` にはデモ用JSONの無条件 `<link rel="preload">` を含めず、`vite.config.ts` で `mode === 'personal'` ビルド時には `dist-personal/data/real_glucose_*.json` を出力から除外する。
   - `src/components/calendar/CalendarView.tsx` の初回マウント時、本番モード（`!isPortfolioMode()`）では当月データが0件であっても過去月への自動ジャンプを行わず、**常に「今日（現在の年月・当日）」を表示**する（過去月にデータがある場合は上部の案内バナーからユーザーの任意操作で移動可能）。
 - **ポートフォリオモード (`VITE_APP_MODE=portfolio`) におけるリアル血糖値・実測連動食事データ基盤・2フェーズ高速段階的同期 (`src/lib/realGlucoseLoader.ts`, `src/lib/demoMealGenerator.ts`, `public/data/real_glucose_recent.json`, `public/data/real_glucose_readings.json`)**:
-  - 合成されたデモデータ（サイン波血糖値や不自然なランダム食事記録）は一切生成せず、ポートフォリオモードでのみ実測CGMデータを2フェーズで段階ロードする。食事・活動履歴は `generateRealisticEventsFromReadings`（`src/lib/demoMealGenerator.ts`）により、整理後の初期登録食品（28品目）に基づく献立テンプレート（`MEAL_TEMPLATES`）および週3回程度の運動イベントを生成し、持効型インスリン投与イベントの自動生成は行わない。生成される測定値・異常値・食事・活動・明細のIDはすべて `src/lib/uuidUtils.ts` の `deterministicUuid` による正規UUIDとする。
+  - 合成されたデモデータ（サイン波血糖値や不自然なランダム食事記録）は一切生成せず、ポートフォリオモードでのみ実測CGMデータを2フェーズで段階ロードする。食事・活動履歴は `generateRealisticEventsFromReadings`（`src/lib/demoMealGenerator.ts`）により、整理後の初期登録食品（28品目）に基づく整数分量（`1` / `2`、`0.8杯` 等の端数分量を含まない）の献立テンプレート（`MEAL_TEMPLATES`）および週3回程度の運動イベントを生成し、持効型インスリン投与イベントの自動生成は行わない。生成される測定値・異常値・食事・活動・明細のIDはすべて `src/lib/uuidUtils.ts` の `deterministicUuid` による正規UUIDとする。
   - **Memory-First 2フェーズ段階的同期（Memory-First Lazy Sync）による初期描画 0.3秒化**:
     - **Phase 1（Memory-First 即時初期描画）**: `portfolio` ビルド時に注入される `<link rel="preload">` およびモジュール初期化時の先行プリフェッチにより直近期間データ（`public/data/real_glucose_recent.json`：3,482件、約91KB / gzip 18KB）をJSバンドルと並列取得し、メモリ上（`inMemoryRecentCache`）で即座に展開する。IndexedDB の重いトランザクション完了を待たずに `CalendarView.tsx` および `DailyDetailDrawer.tsx` へメモリから直接データを提供（初期データ準備完了時に User Timing API マーク `cgm-calendar-data-ready` を記録）するため、初回アクセス・リロードともに **0.3〜0.5秒以内** でカレンダーが即座に描画される。
     - **Phase 1.5 & Phase 2（バックグラウンド非ブロッキング オンメモリDB格納＆過去データ展開）**: カレンダー初期描画完了後に、裏側で直近データのオンメモリDBへの格納・初期食品シード（`seedFoodMasterIfEmpty`）を実行し、続いて Stage 2 完了から 1,800ms 待機した上で全期間データ（`public/data/real_glucose_readings.json`：79,479件、2024年9月〜2026年8月）を取得して小チャンク（測定値は6,000件単位＋40ms休止）で順次オンメモリDBへ格納する。これらはすべて RAM 上の処理であり、端末の物理 IndexedDB には書き込まない（下記参照）。完了時に `cgm-background-hydration-complete` イベントで最新データ月（`latestDataDate` から動的導出）以外の過去月キャッシュ・分析期間境界を自動更新する。

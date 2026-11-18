@@ -68,7 +68,7 @@ flowchart LR
 2. **タイムゾーンズレ（-9時間問題）を根絶する Wall-Clock 日時エンジン（[`src/lib/dateUtils.ts`](src/lib/dateUtils.ts)）**:
    - `toISOString()` の UTC 変換によって「22時の夕食や就寝前インスリンが前日・翌日にズレる」問題を防ぐため、日時文字列の生成・比較・曜日判定をすべてローカル時刻基準のヘルパーに統一しています。
 3. **7重の自動品質ゲートウェイ（[`docs/Web_Project/TEST_PLAN.md`](docs/Web_Project/TEST_PLAN.md)）**:
-   - 仕様書・図面・DDL・型定義とコードの同期・秘密情報検査・開発者用語排除（`npm run test:docs`）、厳格な型検査（`npm run typecheck`）、臨床計算＆画面間データ整合性テスト（`npm test`）、チャンク最適化ビルド（`npm run build`）、開発サーバー全56エンドポイントの実通信スモークテスト（`npm run test:smoke`）、および Playwright 全14スイート（`E2E-1`〜`E2E-14`）＋11画面ビジュアル監査のブラウザE2Eリグレッションゲート（`npm run test:e2e:regression` / `npm run test:visual`）を Stop Hook・Git フック・CI で自動化しています。
+   - 仕様書・図面・DDL・型定義とコードの同期・秘密情報検査・開発者用語排除（`npm run test:docs`）、厳格な型検査（`npm run typecheck`）、臨床計算＆画面間データ整合性テスト（`npm test`）、チャンク最適化ビルド（`npm run build`）、開発サーバー全57エンドポイントの実通信スモークテスト（`npm run test:smoke`）、および Playwright 全14スイート（`E2E-1`〜`E2E-14`）＋11画面ビジュアル監査のブラウザE2Eリグレッションゲート（`npm run test:e2e:regression` / `npm run test:visual`）を Stop Hook・Git フック・CI で自動化しています。
 
 ---
 

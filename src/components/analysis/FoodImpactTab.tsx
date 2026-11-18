@@ -11,6 +11,7 @@ import {
   FoodImpactSummary,
 } from '@/lib/analysisCalculators';
 import { extractDateStr, extractTimeStr } from '@/lib/dateUtils';
+import { SelectPickerModal } from '@/components/common/SelectPickerModal';
 import {
   Utensils,
   TrendingUp,
@@ -81,6 +82,8 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
   isDashboardMode = false,
 }) => {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('ALL');
+  const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState<boolean>(false);
+  const [isFoodPickerOpen, setIsFoodPickerOpen] = useState<boolean>(false);
 
   // 食品名 -> category_id のマップ（登録済み食品から構築し、未登録の自由入力食品は「未分類」に紐付け）
   const uncategorizedCategoryId = useMemo(() => {
@@ -111,7 +114,7 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
       if (!d.is_deleted && d.food_name) set.add(d.food_name);
     });
     events.forEach((e) => {
-      if (e.event_type === '食事' && e.memo) {
+      if (e.event_type === '食事' && e.memo && !detailsByEventId?.has(e.id)) {
         const words = e.memo.split(/[\s,、]+/);
         words.forEach((w) => {
           if (w.length >= 2 && !set.has(w)) set.add(w);
@@ -200,60 +203,86 @@ export const FoodImpactTab: React.FC<FoodImpactTabProps> = ({
       {/* 1. カテゴリ絞り込み ➔ 食品選択エリア（第2層：淡いスレートグレーのインナーボックス＋白いセレクトボックス） */}
       <div className="bg-slate-50/90 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80 shrink-0">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          {/* カテゴリ選択セレクトボックス */}
+          {/* カテゴリ選択トリガー */}
           <div>
-            <label
-              htmlFor="analysis-food-category-select"
-              className="block text-xs font-bold text-slate-600 mb-1.5"
-            >
+            <span className="block text-xs font-bold text-slate-600 mb-1.5">
               カテゴリで絞り込み
-            </label>
-            <select
+            </span>
+            <button
               id="analysis-food-category-select"
-              value={selectedCategoryId}
-              onChange={(e) => setSelectedCategoryId(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              type="button"
+              aria-label="カテゴリで絞り込み"
+              aria-haspopup="dialog"
+              onClick={() => setIsCategoryPickerOpen(true)}
+              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 shadow-2xs flex items-center justify-between gap-2 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
             >
-              <option value="ALL">すべてのカテゴリ ({allFoodOptions.length}品)</option>
-              {foodCategories.map((cat) => {
-                const count = allFoodOptions.filter(
-                  (name) => (foodCategoryMap.get(name) || uncategorizedCategoryId) === cat.id
-                ).length;
-                if (count === 0) return null;
-                return (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.category_name} ({count}品)
-                  </option>
-                );
-              })}
-            </select>
+              <span className="truncate">
+                {selectedCategoryId === 'ALL'
+                  ? `すべてのカテゴリ (${allFoodOptions.length}品)`
+                  : (() => {
+                      const cat = foodCategories.find((c) => c.id === selectedCategoryId);
+                      const count = allFoodOptions.filter(
+                        (name) => (foodCategoryMap.get(name) || uncategorizedCategoryId) === selectedCategoryId
+                      ).length;
+                      return cat ? `${cat.category_name} (${count}品)` : 'すべてのカテゴリ';
+                    })()}
+              </span>
+              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+            </button>
           </div>
 
-          {/* 食品選択セレクトボックス */}
+          {/* 食品選択トリガー */}
           <div>
-            <label
-              htmlFor="analysis-food-item-select"
-              className="block text-xs font-bold text-slate-600 mb-1.5"
-            >
+            <span className="block text-xs font-bold text-slate-600 mb-1.5">
               分析する食品を選択
-            </label>
-            <select
+            </span>
+            <button
               id="analysis-food-item-select"
-              value={selectedFood}
-              onChange={(e) => setSelectedFood(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              type="button"
+              aria-label="分析する食品を選択"
+              aria-haspopup="dialog"
+              onClick={() => setIsFoodPickerOpen(true)}
+              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 shadow-2xs flex items-center justify-between gap-2 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
             >
-              {filteredFoodOptions.length === 0 ? (
-                <option value="ごはん">🍚 ごはん</option>
-              ) : (
-                filteredFoodOptions.map((name) => (
-                  <option key={name} value={name}>
-                    🍚 {name}
-                  </option>
-                ))
-              )}
-            </select>
+              <span className="truncate">🍚 {activeFoodName}</span>
+              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+            </button>
           </div>
+
+          <SelectPickerModal
+            isOpen={isCategoryPickerOpen}
+            onClose={() => setIsCategoryPickerOpen(false)}
+            title="カテゴリで絞り込み"
+            selectedValue={selectedCategoryId}
+            onSelect={(val) => setSelectedCategoryId(val)}
+            options={[
+              { value: 'ALL', label: `すべてのカテゴリ (${allFoodOptions.length}品)` },
+              ...foodCategories
+                .map((cat) => {
+                  const count = allFoodOptions.filter(
+                    (name) => (foodCategoryMap.get(name) || uncategorizedCategoryId) === cat.id
+                  ).length;
+                  return count > 0
+                    ? { value: cat.id, label: `${cat.category_name} (${count}品)` }
+                    : null;
+                })
+                .filter((x): x is { value: string; label: string } => x !== null),
+            ]}
+          />
+
+          <SelectPickerModal
+            isOpen={isFoodPickerOpen}
+            onClose={() => setIsFoodPickerOpen(false)}
+            title="分析する食品を選択"
+            selectedValue={activeFoodName}
+            onSelect={(val) => setSelectedFood(val)}
+            searchable
+            searchPlaceholder="食品名で絞り込み..."
+            options={(filteredFoodOptions.length === 0 ? ['ごはん'] : filteredFoodOptions).map((name) => ({
+              value: name,
+              label: `🍚 ${name}`,
+            }))}
+          />
         </div>
       </div>
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { usePatient } from '@/contexts/PatientContext';
 import { useOnlineStatus } from '@/lib/pwa';
 import {
@@ -6,7 +6,6 @@ import {
   WifiOff,
   ChevronLeft,
   ChevronRight,
-  RefreshCw,
   FolderKanban,
   BarChart3,
   Settings,
@@ -21,7 +20,6 @@ export interface CalendarHeaderControls {
   onPrevMonth: () => void;
   onNextMonth: () => void;
   onToday: () => void;
-  onRefresh?: () => void;
   isNextMonthDisabled?: boolean;
 }
 
@@ -38,7 +36,6 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { isReadOnly, isCloudEnabled, authUser, isSyncing } = usePatient();
   const isOnline = useOnlineStatus();
-  const [isSpinning, setIsSpinning] = useState(false);
 
   // カレンダー以外のタブ表示時のバッジ定義（右寄せでバランス良く表示）
   const tabBadgeConfig: Record<
@@ -64,13 +61,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   const currentTabBadge = tabBadgeConfig[activeTab];
 
-  const handleRefreshClick = () => {
-    if (!calendarControls?.onRefresh) return;
-    setIsSpinning(true);
-    calendarControls.onRefresh();
-    window.setTimeout(() => setIsSpinning(false), 550);
-  };
-
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200/90 bg-white/95 backdrop-blur-md text-slate-900 shadow-2xs">
       <div className="mx-auto flex h-12 max-w-7xl items-center justify-between gap-2 px-3 sm:px-6 lg:px-8">
@@ -89,16 +79,16 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Right: カレンダー年月操作部 または 現在画面ピルバッジ ＋ ステータス */}
         <div className="flex items-center justify-end gap-1.5 sm:gap-2 min-w-0">
           {calendarControls ? (
-            <div className="flex items-center gap-1 sm:gap-1.5">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <div className="flex items-center rounded-xl border border-slate-200 bg-slate-100/90 p-0.5">
                 <button
                   onClick={calendarControls.onPrevMonth}
                   aria-label="前月"
-                  className="p-1 sm:p-1.5 rounded-lg hover:bg-white text-slate-600 hover:text-slate-900 hover:shadow-2xs transition-all cursor-pointer active:scale-95"
+                  className="p-1.5 sm:p-2 rounded-lg hover:bg-white text-slate-600 hover:text-slate-900 hover:shadow-2xs transition-all cursor-pointer active:scale-95"
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
-                <span className="px-2 sm:px-3 text-xs sm:text-sm font-extrabold text-slate-800 whitespace-nowrap tabular-nums">
+                <span className="px-2.5 sm:px-3.5 text-sm sm:text-base font-extrabold text-slate-900 whitespace-nowrap tabular-nums tracking-tight">
                   {calendarControls.year}年 {calendarControls.month}月
                 </span>
                 <button
@@ -111,41 +101,24 @@ export const Header: React.FC<HeaderProps> = ({
                       : '翌月'
                   }
                   className={cn(
-                    'p-1 sm:p-1.5 rounded-lg transition-all',
+                    'p-1.5 sm:p-2 rounded-lg transition-all',
                     calendarControls.isNextMonthDisabled
                       ? 'text-slate-300 opacity-50 cursor-not-allowed'
                       : 'hover:bg-white text-slate-600 hover:text-slate-900 hover:shadow-2xs cursor-pointer active:scale-95'
                   )}
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
               </div>
 
               {/* 今月のカレンダーを表示する独立ボタン */}
               <button
                 onClick={calendarControls.onToday}
-                className="inline-flex items-center justify-center px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl border border-sky-200/90 bg-sky-50 hover:bg-sky-100 text-[11px] sm:text-xs font-bold text-sky-700 transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                className="inline-flex items-center justify-center px-3 sm:px-3.5 py-1.5 rounded-xl border border-sky-200/90 bg-sky-50 hover:bg-sky-100 text-xs sm:text-sm font-bold text-sky-700 transition-all cursor-pointer whitespace-nowrap active:scale-95"
                 title="今月のカレンダーを表示"
               >
                 <span>今月</span>
               </button>
-
-              {/* カレンダーを更新（再読み込み）する独立ボタン */}
-              {calendarControls.onRefresh && (
-                <button
-                  onClick={handleRefreshClick}
-                  aria-label="カレンダーを更新"
-                  className="inline-flex items-center justify-center p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl border border-slate-200 bg-slate-100/80 hover:bg-slate-200/70 text-[11px] sm:text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all cursor-pointer active:scale-95"
-                  title="カレンダーを更新"
-                >
-                  <RefreshCw
-                    className={cn(
-                      'w-3.5 h-3.5 text-sky-600 transition-transform',
-                      isSpinning && 'animate-spin'
-                    )}
-                  />
-                </button>
-              )}
             </div>
           ) : currentTabBadge ? (
             <div

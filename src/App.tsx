@@ -384,7 +384,6 @@ export const App: React.FC = () => {
                 onPrevMonth: handlePrevMonth,
                 onNextMonth: handleNextMonth,
                 onToday: handleToday,
-                onRefresh: () => setRefreshKey((k) => k + 1),
                 isNextMonthDisabled: isAtLatestMonth,
               }
             : undefined

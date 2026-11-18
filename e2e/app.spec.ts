@@ -517,7 +517,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await dismissDemoWelcomeIfOpen(page);
     await page.getByRole('button', { name: '分析' }).first().click();
 
-    await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
+    await expect(page.getByText('集計期間')).toBeVisible();
     await expect(page.getByLabel('カテゴリで絞り込み')).toBeVisible();
 
     // 食品別インパクトで「一緒に食べたもの」アコーディオンが開閉できること
@@ -1091,7 +1091,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     await expect(page.getByText('ウォーキング')).toBeVisible();
 
     await dispatchSwipe('[data-testid="food-master-view"]', 280, 400, 100, 400);
-    await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
+    await expect(page.getByText('集計期間')).toBeVisible();
     await expect(tabContainer).toHaveAttribute('data-transition-direction', 'forward');
     await expect(tabContainer).toHaveClass(/cgm-slide-fade-forward/);
     await expect(page.locator('[data-testid="main-content-area"] table').first()).toBeVisible({ timeout: 1500 });
@@ -1109,7 +1109,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
 
     // 右スワイプで 分析 -> 食品・活動 -> カレンダー へ順番に backward アニメーション付きで戻れること
     await dispatchSwipe('[data-testid="main-content-area"]', 100, 400, 280, 400);
-    await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
+    await expect(page.getByText('集計期間')).toBeVisible();
     await expect(tabContainer).toHaveAttribute('data-transition-direction', 'backward');
     await expect(tabContainer).toHaveClass(/cgm-slide-fade-backward/);
 
@@ -1404,7 +1404,7 @@ test.describe('CGM Diabetes Manager Web - Comprehensive E2E Suite (E2E-1 to E2E-
     expect(parseSummaryInsulin(await desktopSummary.innerText())).toBe(0);
 
     await page.getByRole('button', { name: '分析' }).first().click();
-    await expect(page.getByText('血糖・食事の傾向分析')).toBeVisible();
+    await expect(page.getByText('集計期間')).toBeVisible();
 
     // 3. バックアップJSONをエクスポートし、シードされた全テーブルIDおよび外部キーが正規UUID形式であることを検証
     await page.getByRole('button', { name: '設定' }).first().click();

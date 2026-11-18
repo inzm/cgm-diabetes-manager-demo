@@ -19,8 +19,8 @@ import { FoodImpactTab } from './FoodImpactTab';
 import { TimeAnomalyTab } from './TimeAnomalyTab';
 import { WeekdayTrendsTab } from './WeekdayTrendsTab';
 import { CarbInsulinTrendTab } from './CarbInsulinTrendTab';
+import { SelectPickerModal } from '@/components/common/SelectPickerModal';
 import {
-  BarChart3,
   Utensils,
   Clock,
   CalendarDays,
@@ -102,6 +102,7 @@ export const AnalysisView: React.FC = () => {
   const { currentPatientId, hypoThreshold, hyperThreshold } = usePatient();
 
   const [dateRange, setDateRange] = useState<AnalysisRange>('30d');
+  const [isMonthPickerOpen, setIsMonthPickerOpen] = useState<boolean>(false);
   const [isPeriodSheetOpen, setIsPeriodSheetOpen] = useState<boolean>(false);
   const [isPeriodSheetDragging, setIsPeriodSheetDragging] = useState<boolean>(false);
   const periodSheetTouchStartY = useRef<number | null>(null);
@@ -378,22 +379,23 @@ export const AnalysisView: React.FC = () => {
     : rangeOptions.find((o) => o.key === dateRange)?.label || '直近30日';
 
   return (
-    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 pt-3 pb-16 sm:py-4 space-y-3.5 sm:space-y-4">
-      {/* 1. タイトル & 集計期間 常時表示ヘッダー（スクロール追従 sticky） */}
-      <div className="sticky top-12 z-20 flex items-center justify-between gap-3 bg-white/95 backdrop-blur-md px-3.5 py-2.5 sm:p-3.5 rounded-2xl border border-slate-200 shadow-xs">
-        <div className="flex items-center space-x-2.5 min-w-0">
-          <div className="p-1.5 sm:p-2 rounded-xl bg-indigo-50 text-indigo-600 shrink-0">
-            <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" />
+    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 pt-0 pb-16 sm:py-4 space-y-3 sm:space-y-4">
+      {/* 1. 集計期間 常時表示バー（ヘッダー直下・余白レス・スクロール追従 sticky） */}
+      <div className="sticky top-12 z-20 -mx-2.5 px-3.5 sm:mx-0 sm:px-4 py-2.5 bg-white/95 backdrop-blur-md border-b border-slate-200 sm:border sm:rounded-2xl sm:shadow-2xs flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="p-1.5 rounded-xl bg-indigo-50 text-indigo-600 shrink-0">
+            <CalendarDays className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight truncate">
-              血糖・食事の傾向分析
-            </h2>
-            <p className="text-xs sm:text-sm font-semibold text-slate-500 tabular-nums truncate">
-              集計期間: {startDate} 〜 {endDate}
-            </p>
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className="text-xs font-bold text-slate-500 shrink-0">集計期間</span>
+            <span className="text-sm sm:text-base font-extrabold text-slate-900 tabular-nums truncate">
+              {startDate} 〜 {endDate}
+            </span>
           </div>
         </div>
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-bold shrink-0">
+          {activeRangeLabel}
+        </span>
       </div>
 
       {/* 2. 1画面統合ダッシュボード（第1層：4大分析セクションすべてを純白カード bg-white に統一してグルーピングを明確化） */}
@@ -587,34 +589,20 @@ export const AnalysisView: React.FC = () => {
                 ))}
               </div>
 
-              <select
+              <button
+                type="button"
                 aria-label="月単位で集計期間を選択"
-                value={isMonthSelected ? dateRange : ''}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    setDateRange(e.target.value as AnalysisRange);
-                    setIsPeriodSheetOpen(false);
-                  }
-                }}
+                onClick={() => setIsMonthPickerOpen(true)}
                 className={cn(
-                  'w-full min-h-[42px] px-3 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500',
+                  'w-full min-h-[42px] px-3 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center justify-between focus:outline-none focus:ring-2 focus:ring-indigo-500',
                   isMonthSelected
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                 )}
               >
-                <option value="" disabled>
-                  📅 月別で選択...
-                </option>
-                {availableMonths.map((ym) => {
-                  const [yStr, mStr] = ym.split('-');
-                  return (
-                    <option key={ym} value={`month:${ym}`} className="bg-white text-slate-800">
-                      📅 {yStr}年{parseInt(mStr, 10)}月
-                    </option>
-                  );
-                })}
-              </select>
+                <span>{isMonthSelected ? `📅 ${activeRangeLabel}` : '📅 月別で選択...'}</span>
+                <ChevronDown className="w-4 h-4 opacity-70 shrink-0" />
+              </button>
             </div>
           </div>
         </div>
@@ -640,36 +628,41 @@ export const AnalysisView: React.FC = () => {
               </button>
             ))}
 
-            <select
+            <button
+              type="button"
               aria-label="月単位で集計期間を選択"
-              value={isMonthSelected ? dateRange : ''}
-              onChange={(e) => {
-                if (e.target.value) {
-                  setDateRange(e.target.value as AnalysisRange);
-                }
-              }}
+              onClick={() => setIsMonthPickerOpen(true)}
               className={cn(
-                'min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500',
+                'min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer inline-flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500',
                 isMonthSelected
                   ? 'bg-indigo-600 text-white shadow-xs font-bold'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
               )}
             >
-              <option value="" disabled>
-                📅 月別...
-              </option>
-              {availableMonths.map((ym) => {
-                const [yStr, mStr] = ym.split('-');
-                return (
-                  <option key={ym} value={`month:${ym}`} className="bg-white text-slate-800">
-                    📅 {yStr}年{parseInt(mStr, 10)}月
-                  </option>
-                );
-              })}
-            </select>
+              <span>{isMonthSelected ? `📅 ${activeRangeLabel}` : '📅 月別...'}</span>
+              <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
+            </button>
           </div>
         </div>
       </div>
+
+      <SelectPickerModal
+        isOpen={isMonthPickerOpen}
+        onClose={() => setIsMonthPickerOpen(false)}
+        title="月別で集計期間を選択"
+        selectedValue={isMonthSelected ? dateRange : ''}
+        onSelect={(val) => {
+          setDateRange(val as AnalysisRange);
+          setIsPeriodSheetOpen(false);
+        }}
+        options={availableMonths.map((ym) => {
+          const [yStr, mStr] = ym.split('-');
+          return {
+            value: `month:${ym}`,
+            label: `📅 ${yStr}年${parseInt(mStr, 10)}月`,
+          };
+        })}
+      />
     </div>
   );
 };

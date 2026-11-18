@@ -54,6 +54,11 @@ export const SOURCE_TO_SPEC_RULES: readonly SourceToSpecRule[] = [
     description: 'デモアプリ初回アクセス案内モーダル',
   },
   {
+    prefix: 'src/components/common/SelectPickerModal.tsx',
+    specs: ['docs/Web_Project/SPEC_ANALYSIS.md'],
+    description: 'キャンセル可能なカスタム選択ピッカーモーダル',
+  },
+  {
     prefix: 'src/components/common/AuthGateScreen.tsx',
     specs: [
       'docs/Web_Project/ARCHITECTURE.md',

@@ -266,7 +266,7 @@ export function buildAndCacheLocalizedPeriodSlice(
     }
     if (dStr >= startDate && dStr <= endDate) {
       activeEvents.push(e);
-      if (e.event_type === '食事' && e.memo) {
+      if (e.event_type === '食事' && e.memo && !detailsByEventId.has(e.id)) {
         const words = e.memo.split(/[\s,、]+/);
         for (let wIdx = 0; wIdx < words.length; wIdx++) {
           const w = words[wIdx];
@@ -418,7 +418,7 @@ export function buildAndCacheAnalysisDataset(
       eventsByDate.set(dStr, [e]);
     }
 
-    if (e.event_type === '食事' && e.memo) {
+    if (e.event_type === '食事' && e.memo && !detailsByEventId.has(e.id)) {
       const words = e.memo.split(/[\s,、]+/);
       for (let wIdx = 0; wIdx < words.length; wIdx++) {
         const w = words[wIdx];
